@@ -488,7 +488,7 @@ function prepareImplementFixupFixture(dir: string, taskId: string, options: {
         '#!/bin/sh',
         'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
         'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
-        'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' "$@"',
+        'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' -- "$@"',
         'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
         'if [ "$is_resume" = "1" ] && [ -n "${FAKE_AGENT_EDIT_SCRIPT:-}" ]; then node "$FAKE_AGENT_EDIT_SCRIPT" codex "$@"; fi',
         'if [ "$is_resume" = "1" ] && [ "${FAKE_AGENT_FAIL_RESUME:-0}" = "1" ]; then exit 7; fi',
@@ -771,6 +771,7 @@ function runReviewLoopMain(
         '.catch(err => { console.error(err); process.exit(1); });',
     ].join('\n'), {
         ...process.env,
+        CANON_PROVIDER: undefined,
         PATH: `${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
         CANON_NO_DETACH: '1',
         CANON_TASKS_DIR_OVERRIDE: tasksRoot,
@@ -823,6 +824,8 @@ function runNodeInline(
         cwd,
         env: {
             ...env,
+            CLAUDE_MODEL_SPEC_REVIEW: undefined,
+            CLAUDE_MODEL_IMPLEMENT: undefined,
             CANON_METRICS_FILE_OVERRIDE: env.CANON_METRICS_FILE_OVERRIDE ?? telemetryFile,
         },
         encoding: 'utf8',
@@ -2208,7 +2211,7 @@ void test('review-entry docs-refs fix-up contains a non-zero Codex resume and co
             '#!/bin/sh',
             'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
             'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
-            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' "$@"',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' -- "$@"',
             'fail_resume=0; for arg in "$@"; do if [ "$arg" = "stored-implement-session" ]; then fail_resume=1; fi; done',
             'if [ "$fail_resume" = "1" ]; then exit 7; fi',
             'node -e \'console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"clean review"}})); console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}}))\'',
@@ -5675,7 +5678,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
                 `  const status = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(localDir, 'tasks', taskId, 'status.json'))}, 'utf8'));`,
                 '  await m.runImplementPhase({',
                 `    tasks: [{ taskId: ${JSON.stringify(taskId)}, title: ${JSON.stringify(taskId)}, specReviewVerdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 0, rerouteCount: 0, status }],`,
-                "    tier: 'full',",
+                "    provider: 'mixed', tier: 'full',",
                 '    isBundle: false,',
                 '  }, false, null);',
                 '})',
@@ -5714,7 +5717,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
                 `  const status = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(worktreeDir, 'tasks', taskId, 'status.json'))}, 'utf8'));`,
                 '  await m.runImplementPhase({',
                 `    tasks: [{ taskId: ${JSON.stringify(taskId)}, title: ${JSON.stringify(taskId)}, specReviewVerdict: 'approved', iterations: 0, iterations_current_loop: 0, iterations_total: 0, rerouteCount: 0, status }],`,
-                "    tier: 'full',",
+                "    provider: 'mixed', tier: 'full',",
                 '    isBundle: false,',
                 '  }, false, null);',
                 '})',
@@ -8743,7 +8746,7 @@ void test('implement docs-refs fix-up retries twice then preserves the rejecting
             '#!/bin/sh',
             'if [ "${1:-}" = "--version" ]; then printf "%s\\n" "fake-agent 1.0"; exit 0; fi',
             'printf "%s\\n" "codex" >> "$FAKE_AGENT_LOG"',
-            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' "$@"',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG, JSON.stringify(process.argv.slice(1))+"\\n")\' -- "$@"',
             'is_resume=0; for arg in "$@"; do if [ "$arg" = "resume" ]; then is_resume=1; fi; done',
             'if [ "$is_resume" = "1" ]; then exit 0; fi',
             'printf "fixture\\n" > initial-fixture.txt',
@@ -10942,7 +10945,7 @@ for (const row of [
                 PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
                 FAKE_AGENT_LOG: path.join(dir, 'agents.log'), FAKE_AGENT_ARGV_LOG: capture,
             };
-            for (const key of Object.keys(env)) if (/^(CLAUDE_MODEL|CLAUDE_BUDGET|CODEX_MODEL|MAX_REVIEW_LOOPS)/.test(key)) delete env[key as keyof typeof env];
+            for (const key of Object.keys(env)) if (/^(CANON_PROVIDER|CLAUDE_MODEL|CLAUDE_BUDGET|CODEX_MODEL|MAX_REVIEW_LOOPS)/.test(key)) delete env[key as keyof typeof env];
             const result = runNodeInline(String.raw`
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10988,7 +10991,8 @@ assert.deepEqual(actual,captured()[1]);
     });
 }
 
-void test('implement hallucination clears only implementer pair on every bundle member', () => {
+for (const provider of ['mixed', 'claude'] as const) {
+void test(`implement hallucination clears only implementer pair on every bundle member (${provider})`, () => {
     withTempDir('role-hallucination-', dir => {
         const fixture = prepareReviewEntryMainFixture(dir, 'leader', true, false);
         const sessions = { author: 'a', claude_spec: 'la', spec_reviewer: 's', codex_spec_review: 'ls',
@@ -10998,6 +11002,8 @@ void test('implement hallucination clears only implementer pair on every bundle 
         status.phases.code_review!.iterations = 1;
         status.phases.implement!.status = 'pending';
         status.sessions = sessions;
+        status.provider = provider;
+        status.session_backends = { implementer: provider === 'claude' ? 'claude' : 'codex' };
         for (const id of ['leader', 'secondary']) writeTaskStatus(fixture.tasksRoot, id, { ...status, id });
         gitIn(fixture.worktreeDir, 'add', 'tasks');
         gitIn(fixture.worktreeDir, 'commit', '-m', 'clean revision fixture');
@@ -11008,6 +11014,7 @@ await runImplementPhase(buildPipelineState(['leader','secondary']),false,'i');
 `, { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot,
             CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
             PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+            FAKE_AGENT_LOG: path.join(dir, 'agents.log'),
         }, fixture.localDir);
         assert.equal(result.status, 2, combinedOutput(result));
         assert.match(combinedOutput(result), /hallucination signature/);
@@ -11016,9 +11023,14 @@ await runImplementPhase(buildPipelineState(['leader','secondary']),false,'i');
         for (const id of ['leader','secondary']) {
             const after = JSON.parse(fs.readFileSync(path.join(fixture.tasksRoot, id, 'status.json'), 'utf8')) as StatusJson;
             assert.deepEqual(after.sessions, expected);
+            assert.equal(after.session_backends?.implementer, undefined);
+            assert.match(after.escalations?.at(-1)?.reason ?? '', new RegExp(provider === 'claude' ? 'Claude resumed-session' : 'Codex resumed-session'));
+            assert.match(combinedOutput(result), new RegExp('Phase: implement \\(' + (provider === 'claude' ? 'Claude' : 'Codex')));
         }
     });
 });
+
+}
 
 void test('recordPhaseAgent writes only the canonical worktree status', () => {
     withTempDir('role-record-worktree-', dir => {
@@ -11185,3 +11197,309 @@ for (const text of ['No summary heading in the normalized text.', '', '# QA Summ
         });
     });
 }
+
+for (const phase of ['spec_review', 'implement'] as const) for (const hasSession of [true, false]) {
+    void test(`Claude provider ${phase} park/resume (session=${hasSession})`, () => {
+        withTempDir('provider-park-', dir => {
+            const taskId = 'provider-park';
+            const fixture = prepareReviewEntryMainFixture(dir, taskId, true, false);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            status.provider = 'claude';
+            status.phases[phase]!.status = 'pending';
+            writeTaskStatus(fixture.tasksRoot, taskId, status);
+            const argvLog = path.join(dir, 'argv.jsonl');
+            writeExecutable(fixture.fakeBins, 'claude', [
+                'if [ "${1:-}" = "--version" ]; then echo "fake-agent 1.0"; exit 0; fi',
+                'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG,JSON.stringify(process.argv.slice(1))+"\\n")\' -- "$@"',
+                ...(hasSession ? ['printf \'{"type":"result","session_id":"park-session","result":"partial"}\\n\''] : []),
+                'exit 1',
+            ]);
+            const extraEnv = { FAKE_AGENT_ARGV_LOG: argvLog };
+            const first = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, taskId, 3, [], extraEnv);
+            assert.equal(first.status, 2, combinedOutput(first));
+            const parked = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            const slot = phase === 'implement' ? 'implementer' : 'spec_reviewer';
+            assert.equal(parked.phases[phase]?.status, 'blocked');
+            assert.equal(parked.sessions?.[slot], hasSession ? 'park-session' : undefined);
+            assert.equal(parked.session_backends?.[slot], hasSession ? 'claude' : undefined);
+            setupInvocationLoggingCliTools(fixture.fakeBins);
+            const second = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, taskId, 3, [], {
+                ...extraEnv, FAKE_AGENT_COMPLETE_PHASE: phase, FAKE_CLAUDE_SESSION_ID: 'completed-session',
+            });
+            assert.equal(second.status, 0, combinedOutput(second));
+            const entries = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { argv: string[] } | string[]);
+            const last = entries.at(-1) as { argv: string[] };
+            assert.equal(last.argv.includes('--resume'), hasSession);
+            if (hasSession) assert.equal(last.argv[last.argv.indexOf('--resume') + 1], 'park-session');
+            const prompt = last.argv[1];
+            assert.match(prompt, /Always end by writing the phase artifact and running the phase command\(s\).*including when you recorded Blockers/);
+            if (phase === 'implement' && hasSession) {
+                assert.match(prompt, /previous session stopped before finishing.*claude session exited 1/);
+                assert.match(prompt, /[Ww]ork may be partial/);
+                assert.doesNotMatch(prompt, /already complete/);
+            }
+            if (phase === 'spec_review') assert.doesNotMatch(prompt, /has been revised since your last review/);
+            const done = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            assert.equal(done.phases[phase]?.agent, 'claude');
+            assert.equal(done.session_backends?.[slot], 'claude');
+            if (phase === 'implement') assert.match(second.stdout, /Phase: implement \(Claude/);
+        });
+    });
+}
+
+void test('provider validation refuses invalid pins and mixed bundles before task mutation or agent spawn', () => {
+    withTempDir('provider-validation-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const tasksRoot = writeReviewLoopFixture(localDir, 'a', 'spec_review', 0, 0, true);
+        writeReviewLoopFixture(localDir, 'b', 'spec_review', 0, 0, true);
+        const bins = path.join(dir, 'bin'); fs.mkdirSync(bins); setupInvocationLoggingCliTools(bins);
+        for (const provider of ['codex', 'Claude', 'claude']) {
+            const statusFile = path.join(tasksRoot, 'a', 'status.json');
+            const status = JSON.parse(fs.readFileSync(statusFile, 'utf8')) as Record<string, unknown>;
+            status.provider = provider; fs.writeFileSync(statusFile, JSON.stringify(status));
+            const before = ['a', 'b'].map(id => fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8'));
+            const result = runReviewLoopMain(localDir, tasksRoot, bins, 'a', 3, provider === 'claude' ? ['b'] : []);
+            assert.equal(result.status, 1, combinedOutput(result));
+            assert.match(combinedOutput(result), provider === 'claude' ? /a: claude, b: mixed/ : /Accepted values: mixed, claude/);
+            assert.doesNotMatch(result.stderr, /at .*\.ts:/);
+            assert.deepEqual(['a', 'b'].map(id => fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8')), before);
+            assert.equal(fs.existsSync(path.join(localDir, 'agent-invocations.log')), false);
+        }
+    });
+});
+
+for (const provider of ['claude', 'mixed'] as const) {
+    void test(`main routes full-tier ${provider} spec review through implementation using a single pinned provider`, () => {
+        withTempDir('provider-routing-', dir => {
+            const taskId = 'provider-route';
+            const fixture = prepareReviewEntryMainFixture(dir, taskId, true, false);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            status.provider = provider;
+            status.delicate = false; status.task_size = 'M';
+            for (const phase of ['spec_review', 'plan', 'implement'] as const) status.phases[phase]!.status = 'pending';
+            // A stale implementer must not be inspected while spec_review is running.
+            status.sessions = { implementer: 'stale-impl' }; status.session_backends = { implementer: 'codex' };
+            writeTaskStatus(fixture.tasksRoot, taskId, status);
+            const log = path.join(dir, 'routing.jsonl');
+            for (const binary of ['claude', 'codex']) fs.writeFileSync(path.join(fixture.fakeBins, binary), `#!${process.execPath}
+const fs = require('fs'); const path = require('path');
+if(process.argv[2]==='--version'){console.log('fake-agent 1.0');process.exit(0);}
+const argv=process.argv.slice(2); const statusFile=path.join(process.env.CANON_TASKS_DIR_OVERRIDE,'${taskId}','status.json');
+const status=JSON.parse(fs.readFileSync(statusFile,'utf8'));
+const phase=['spec_review','plan','implement'].find(p=>status.phases[p].status!=='done');
+fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({binary:'${binary}',phase,argv})+'\\n');
+if(phase==='implement'){console.log(JSON.stringify({type:'result',session_id:'route-session',result:'partial'}));process.kill(process.pid,'SIGTERM');}
+else {
+status.phases[phase].status='done'; if(phase==='spec_review'){
+status.phases[phase].verdict='approved';
+fs.writeFileSync(path.join(path.dirname(statusFile),'spec-review.md'),'# Review\\n\\n- [x] **Approved**\\n');
+// Change the disk pin during this process; implementation must retain the startup assignment.
+status.provider='${provider === 'claude' ? 'mixed' : 'claude'}';
+} else fs.writeFileSync(path.join(path.dirname(statusFile),'plan.md'),'# Plan\\n\\n1. Continue.\\n');
+fs.writeFileSync(statusFile,JSON.stringify(status));
+console.log(JSON.stringify({type:'result',session_id:'route-session',result:'done'}));
+console.log(JSON.stringify({type:'thread.started',thread_id:'route-session'}));
+}
+`, { mode: 0o755 });
+            const limitedPath = `${fixture.fakeBins}:/usr/bin:/bin`;
+            fs.symlinkSync(process.execPath, path.join(fixture.fakeBins, 'node'));
+            if (provider === 'claude') fs.renameSync(path.join(fixture.fakeBins, 'codex'), path.join(fixture.fakeBins, 'unused-codex'));
+            const result = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, taskId, 3, [], { PATH: limitedPath }, false);
+            assert.equal(result.status, 2, combinedOutput(result));
+            const entries = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { binary: string; phase: string; argv: string[] });
+            assert.deepEqual(entries.map(entry => entry.phase), ['spec_review', 'plan', 'implement']);
+            assert.deepEqual(entries.map(entry => entry.binary), provider === 'claude' ? ['claude', 'claude', 'claude'] : ['codex', 'claude', 'codex']);
+            if (provider === 'claude') {
+                assert.match(result.stderr, /Session implementer: stored backend codex, current backend claude/);
+                assert.equal(entries[2].argv.includes('--resume'), false);
+            }
+            for (const entry of entries.filter(entry => entry.phase !== 'plan')) {
+                assert.equal(entry.argv[entry.argv.indexOf(provider === 'claude' ? '--model' : '-m') + 1], provider === 'claude' ? 'opus' : 'gpt-6-luna');
+            }
+            const after = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            assert.equal(after.phases.spec_review?.agent, provider === 'claude' ? 'claude' : 'codex');
+            assert.equal(after.phases.implement?.agent, provider === 'claude' ? 'claude' : 'codex');
+            const beforeImplement = combinedOutput(result).split('Phase: implement')[0];
+            assert.doesNotMatch(beforeImplement, /Session implementer:/);
+        });
+    });
+}
+
+for (const phase of ['spec_review', 'implement'] as const) for (const mismatch of [false, true]) {
+    void test(`Claude provider ${phase} retry checks backend tags (mismatch=${mismatch})`, () => {
+        withTempDir('provider-retry-', dir => {
+            const fixture = prepareReviewEntryMainFixture(dir, 'provider-retry', true, false);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            status.provider = 'claude'; status.delicate = false; status.task_size = 'M';
+            status.phases[phase]!.status = 'in_progress';
+            const slot = phase === 'implement' ? 'implementer' : 'spec_reviewer';
+            status.sessions = { [slot]: 'retry-session' }; status.session_backends = { [slot]: mismatch ? 'codex' : 'claude' };
+            writeTaskStatus(fixture.tasksRoot, 'provider-retry', status);
+            const log = path.join(dir, 'argv');
+            const result = runNodeInline(`
+import { retryAgentForPhase } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+console.log('RETRY=' + await retryAgentForPhase('provider-retry','${phase}','fixture evidence'));
+`, { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot, CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
+                PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`, FAKE_AGENT_LOG: path.join(dir, 'agents'), FAKE_AGENT_ARGV_LOG: log,
+            }, fixture.localDir);
+            assert.equal(result.status, 0, combinedOutput(result));
+            if (mismatch) {
+                assert.match(result.stdout, /RETRY=no_session/);
+                assert.match(result.stderr, new RegExp(`Session ${slot}: stored backend codex, current backend claude`));
+                assert.equal(fs.existsSync(log), false);
+            } else {
+                const entries = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
+                assert.equal(entries.length, 1);
+                assert.equal(entries[0].agent, 'claude');
+                assert.equal(entries[0].argv[entries[0].argv.indexOf('--model') + 1], 'opus');
+                assert.match(entries[0].argv[1], /orchestrator owns commits/);
+                assert.doesNotMatch(entries[0].argv[1], /\bCodex\b/);
+                assert.equal(entries[0].argv.at(-1), 'retry-session');
+            }
+        });
+    });
+}
+
+for (const mismatch of [false, true]) {
+    void test(`Claude provider artifact fix-up resumes only a matching backend (mismatch=${mismatch})`, () => {
+        withTempDir('provider-fixup-', dir => {
+            const id = 'provider-fixup';
+            const fixture = prepareReviewEntryMainFixture(dir, id, false, true);
+            installDocsRefsChecker(fixture.localDir, { hook: false });
+            const handoff = path.join(fixture.tasksRoot, id, 'handoff.md');
+            fs.appendFileSync(handoff, '\nSee `src/removed-by-task.ts` for details.\n');
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            status.provider = 'claude'; status.sessions = { implementer: 'fixup-session' }; status.session_backends = { implementer: mismatch ? 'codex' : 'claude' };
+            writeTaskStatus(fixture.tasksRoot, id, status);
+            const edit = path.join(dir, 'edit.mjs');
+            fs.writeFileSync(edit, `import fs from 'node:fs'; const file=${JSON.stringify(handoff)}; fs.writeFileSync(file,fs.readFileSync(file,'utf8').replace('\`src/removed-by-task.ts\`','[src/removed-by-task.ts](src/removed-by-task.ts)'));`);
+            const log = path.join(dir, 'argv.jsonl');
+            const result = runNodeInline(`
+import { retryImplementAutoCommitAtReviewEntry } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+await retryImplementAutoCommitAtReviewEntry(['${id}'], ${JSON.stringify(fixture.worktreeDir)});
+`, { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot, CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
+                PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`, FAKE_AGENT_LOG: path.join(dir, 'agents.log'),
+                FAKE_AGENT_ARGV_LOG: log, FAKE_AGENT_EDIT_SCRIPT: edit,
+            }, fixture.localDir);
+            assert.equal(result.status, 0, combinedOutput(result));
+            if (mismatch) {
+                assert.match(result.stderr, /Session implementer: stored backend codex, current backend claude/);
+                assert.match(result.stderr, /no claude session is available/);
+                assert.equal(fs.existsSync(log), false);
+            } else {
+                const entries = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
+                assert.equal(entries[0].agent, 'claude'); assert.equal(entries[0].argv.at(-1), 'fixup-session');
+                assert.doesNotMatch(entries[0].argv[1], /\bCodex\b/);
+                assert.doesNotMatch(fs.readFileSync(handoff, 'utf8'), /See `src\/removed/);
+            }
+        });
+    });
+}
+
+void test('Claude dry run resolves all phase configs without requiring Codex', () => {
+    withTempDir('provider-dry-run-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const tasksRoot = writeReviewLoopFixture(localDir, 'dry', 'spec_review', 0);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'dry/status.json'), 'utf8')) as StatusJson;
+        status.provider = 'claude'; writeTaskStatus(tasksRoot, 'dry', status);
+        const bins = path.join(dir, 'bin'); fs.mkdirSync(bins); setupInvocationLoggingCliTools(bins);
+        const result = runReviewLoopMain(localDir, tasksRoot, bins, 'dry', 3, ['--dry-run']);
+        assert.equal(result.status, 0, combinedOutput(result));
+        for (const phase of ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa']) assert.match(result.stdout, new RegExp(`- ${phase}: Claude /`));
+        assert.equal(fs.existsSync(path.join(localDir, 'agent-invocations.log')), false);
+    });
+});
+
+void test('Claude spec re-review keeps the revised-spec preamble after changes requested', () => {
+    withTempDir('provider-rereview-', dir => {
+        const fixture = prepareReviewEntryMainFixture(dir, 'rereview', true, false);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        status.provider = 'claude'; status.phases.spec_review!.status = 'pending';
+        status.phases.spec_review!.iterations_current_loop = 1;
+        status.sessions = { spec_reviewer: 'review-session' }; status.session_backends = { spec_reviewer: 'claude' };
+        writeTaskStatus(fixture.tasksRoot, 'rereview', status);
+        const log = path.join(dir, 'argv');
+        const result = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, 'rereview', 3, [], { FAKE_AGENT_ARGV_LOG: log, FAKE_AGENT_COMPLETE_PHASE: 'spec_review' });
+        assert.equal(result.status, 0, combinedOutput(result));
+        const entry = JSON.parse(fs.readFileSync(log, 'utf8').trim()) as { argv: string[] };
+        assert.match(entry.argv[1], /has been revised since your last review/);
+    });
+});
+
+void test('Claude fast-tier reroute note names the pinned implementer and clears reviewer tags', () => {
+    withTempDir('provider-reroute-', dir => {
+        const id = 'provider-reroute';
+        const fixture = prepareReviewEntryMainFixture(dir, id, true, false);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        status.provider = 'claude'; status.task_size = 'XS'; status.delicate = false;
+        status.sessions = { reviewer: 'reviewer', claude_review: 'legacy-reviewer', implementer: 'implementer' };
+        status.session_backends = { reviewer: 'claude', implementer: 'claude' };
+        writeTaskStatus(fixture.tasksRoot, id, status);
+        fs.appendFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), '\n## Amendment\n\nContinue the change.\n');
+        const result = runNodeInline(`
+import { rerouteFromHumanReview } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+rerouteFromHumanReview(['${id}']);
+`, { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot, CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees') }, fixture.localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.match(result.stdout, /Note: Claude will re-read spec.md carefully/);
+        const after = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        assert.deepEqual(after.sessions, { implementer: 'implementer' });
+        assert.deepEqual(after.session_backends, { implementer: 'claude' });
+    });
+});
+
+for (const provider of ['mixed', 'claude'] as const) for (const phase of ['spec', 'code_review'] as const) {
+    void test(`${provider} ${phase} park does not persist a failed Claude session`, () => {
+        withTempDir('provider-no-park-store-', dir => {
+            const tasksRoot = path.join(dir, 'tasks');
+            const status = makeReviewLoopStatus('no-store', 'code_review', 0) as StatusJson;
+            status.provider = provider; status.sessions = {};
+            status.phases[phase]!.status = 'in_progress';
+            writeTaskStatus(tasksRoot, 'no-store', status);
+            const result = runNodeInline(`
+import { withAgentSessionPark } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+import { AgentSessionError } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/agents/errors.ts')).href}';
+await withAgentSessionPark('${phase}',['no-store'],async()=>{ throw new AgentSessionError({agent:'claude',kind:'exit_code',reason:'failed session',sessionId:'do-not-store'}); });
+`, { ...process.env, CANON_TASKS_DIR_OVERRIDE: tasksRoot });
+            assert.equal(result.status, 2, combinedOutput(result));
+            const after = JSON.parse(fs.readFileSync(path.join(tasksRoot, 'no-store/status.json'), 'utf8')) as StatusJson;
+            assert.deepEqual(after.sessions, {});
+            assert.equal(after.session_backends, undefined);
+        });
+    });
+}
+
+for (const entry of ['revision', 'reroute'] as const) {
+    void test(`Claude parked implement preserves ${entry} prompt precedence`, () => {
+        withTempDir('provider-prompt-precedence-', dir => {
+            const id = 'precedence';
+            const fixture = prepareReviewEntryMainFixture(dir, id, true, false);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            status.provider = 'claude'; status.phases.implement!.status = 'blocked';
+            status.sessions = { implementer: 'park-session' }; status.session_backends = { implementer: 'claude' };
+            if (entry === 'revision') status.phases.code_review!.iterations_current_loop = 1;
+            else { status.phases.implement!.rerouted = true; status.phases.implement!.reroute_count = 1; }
+            writeTaskStatus(fixture.tasksRoot, id, status);
+            const log = path.join(dir, 'argv');
+            const result = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, id, 3, [], { FAKE_AGENT_ARGV_LOG: log, FAKE_AGENT_COMPLETE_PHASE: 'implement' });
+            assert.equal(result.status, 0, combinedOutput(result));
+            const argv = (JSON.parse(fs.readFileSync(log, 'utf8').trim()) as { argv: string[] }).argv;
+            assert.match(argv[1], new RegExp(`Mode: \\*\\*${entry}\\*\\*`));
+            assert.doesNotMatch(argv[1], /previous session stopped before finishing/);
+            assert.equal(argv.at(-1), 'park-session');
+        });
+    });
+}
+
+void test('mixed run requires Codex even when the environment selects Claude', () => {
+    withTempDir('provider-required-binary-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const tasksRoot = writeReviewLoopFixture(localDir, 'mixed-deps', 'spec_review', 0, 0, true);
+        const bins = path.join(dir, 'bin'); fs.mkdirSync(bins);
+        writeExecutable(bins, 'claude', ['exit 0']);
+        fs.symlinkSync(process.execPath, path.join(bins, 'node'));
+        const result = runReviewLoopMain(localDir, tasksRoot, bins, 'mixed-deps', 3, [], { PATH: `${bins}:/usr/bin:/bin`, CANON_PROVIDER: 'claude' });
+        assert.equal(result.status, 1, combinedOutput(result));
+        assert.match(result.stderr, /Codex CLI is required/);
+    });
+});

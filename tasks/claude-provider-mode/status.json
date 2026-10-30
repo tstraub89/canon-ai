@@ -1,10 +1,10 @@
 {
   "id": "claude-provider-mode",
   "title": "Claude-only provider mode",
-  "status": "implement",
+  "status": "code_review",
   "created": "2026-10-30",
   "updated": "2026-10-30",
-  "branch": "",
+  "branch": "task/claude-provider-mode",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,7 +41,7 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
@@ -66,7 +66,8 @@
   "escalations": [],
   "sessions": {
     "codex_spec_review": "01a18d4c-702c-7a42-9ee7-15461cfb77d0",
-    "claude_spec": "67d9e836-d9c1-4967-9770-babf05f7c025"
+    "claude_spec": "67d9e836-d9c1-4967-9770-babf05f7c025",
+    "codex": "01a18ddf-c60f-7433-87ce-68e64b09134a"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

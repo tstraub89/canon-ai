@@ -1012,7 +1012,7 @@ void test('code_review pre-flight auto-block: the printed reset-code-review is a
         };
       },
     };
-    await runCodeReviewPhase({ tasks: [task], tier: 'full', isBundle: false }, false, null, deps);
+    await runCodeReviewPhase({ tasks: [task], provider: 'mixed', tier: 'full', isBundle: false }, false, null, deps);
   `, { CANON_TASKS_DIR_OVERRIDE: tasks });
   const blocked = runReview();
   assert.equal(blocked.status, 2, `exit ${blocked.status}: ${blocked.stderr}${blocked.stdout}`);

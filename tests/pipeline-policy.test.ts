@@ -1,3 +1,4 @@
+import { MIXED_ROLE_ASSIGNMENT } from '../src/lib/pipeline-policy.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -311,6 +312,7 @@ void test('claude matrix: every effort is medium or high', () => {
 // ── Override precedence ────────────────────────────────────────────────────
 
 const CLAUDE_MODEL_ENV_VARS = [
+    'CANON_PROVIDER', 'CLAUDE_MODEL_SPEC_REVIEW', 'CLAUDE_MODEL_IMPLEMENT',
     'CLAUDE_MODEL', 'CLAUDE_MODEL_SPEC', 'CLAUDE_MODEL_PLAN', 'CLAUDE_MODEL_REVIEW',
     'CLAUDE_MODEL_REVIEW_LARGE', 'CLAUDE_MODEL_QA', 'CLAUDE_MODEL_LIGHT', 'CLAUDE_MODEL_STRONG',
 ];
@@ -566,7 +568,7 @@ void test('role assignment and phase continuity maps cover every pipeline phase'
     for (const [role, backend] of [
         ['author', 'claude'], ['spec_reviewer', 'codex'], ['implementer', 'codex'],
         ['reviewer', 'claude'], ['cold_reviewer', 'codex'], ['qa', 'claude'],
-    ] as const) assert.equal(roleBackendId(role), backend);
+    ] as const) assert.equal(roleBackendId(role, MIXED_ROLE_ASSIGNMENT), backend);
     for (const [phase, role, slot] of [
         ['spec', 'author', 'author'], ['spec_review', 'spec_reviewer', 'spec_reviewer'],
         ['plan', 'author', null], ['implement', 'implementer', 'implementer'],
@@ -575,7 +577,60 @@ void test('role assignment and phase continuity maps cover every pipeline phase'
         assert.equal(phasePrimaryRole(phase), role, phase);
         assert.equal(phaseSessionSlot(phase), slot, phase);
     }
-    assert.deepEqual(new Set(requiredAgentBackends()), new Set(['claude', 'codex']));
+    assert.deepEqual(new Set(requiredAgentBackends(MIXED_ROLE_ASSIGNMENT)), new Set(['claude', 'codex']));
     assert.deepEqual(requiredAgentBackends({ author: 'claude', spec_reviewer: 'claude', implementer: 'claude',
         reviewer: 'claude', cold_reviewer: 'claude', qa: 'claude' }), ['claude']);
 });
+
+void test('provider setting is resolved at call time and rejects unsupported values', async () => {
+    const { resolveProviderSetting, resolveTaskProvider, roleAssignmentFor, parseProvider } = await import('../src/orchestrator/policy.js');
+    const previous = process.env.CANON_PROVIDER;
+    try {
+        for (const [value, expected] of [[undefined, 'mixed'], ['', 'mixed'], ['mixed', 'mixed'], ['claude', 'claude']] as const) {
+            if (value === undefined) delete process.env.CANON_PROVIDER;
+            else process.env.CANON_PROVIDER = value;
+            assert.equal(resolveProviderSetting(), expected);
+        }
+        for (const value of ['codex', 'bogus', 'Claude', ' claude', 'MIXED']) {
+            process.env.CANON_PROVIDER = value;
+            assert.throws(resolveProviderSetting, /Accepted values: mixed, claude/);
+            if (value === 'codex') assert.throws(resolveProviderSetting, /Codex-only mode is not supported yet/);
+        }
+        for (const value of [null, '', 42, {}, 'codex', 'Claude']) assert.throws(() => parseProvider(value), /mixed, claude/);
+        assert.equal(resolveTaskProvider({ id: 'old', phases: {} }), 'mixed');
+        assert.deepEqual(roleAssignmentFor('mixed'), MIXED_ROLE_ASSIGNMENT);
+        assert.deepEqual(Object.values(roleAssignmentFor('claude')), Array(6).fill('claude'));
+        const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', "await import('./src/orchestrator/policy.ts');"], {
+            cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, CANON_PROVIDER: 'bogus' },
+        });
+        assert.equal(result.status, 0, result.stderr);
+    } finally {
+        if (previous === undefined) delete process.env.CANON_PROVIDER;
+        else process.env.CANON_PROVIDER = previous;
+    }
+});
+
+for (const phase of ['spec_review', 'implement'] as const) {
+    void test(`Claude ${phase} cells, delicate promotion and override precedence`, () => {
+        const budgets = phase === 'spec_review' ? ['5.00', '5.00', '10.00', '10.00', '20.00'] : ['10.00', '15.00', '25.00', '40.00', '60.00'];
+        for (const [i, task_size] of (['XS', 'S', 'M', 'L', 'XL'] as const).entries()) {
+            const cfg = getPipelinePolicy([{ task_size }], TEST_CONFIG).claude(phase);
+            assert.deepEqual(cfg, { model: i < 2 ? 'sonnet' : 'opus', effort: i === 4 ? 'high' : 'medium', budget: budgets[i] });
+            const pinned = getPipelinePolicy([{ task_size }], { ...TEST_CONFIG, claudeModelSpecReview: 'pin', claudeModelImplement: 'pin' }).claude(phase);
+            assert.deepEqual(pinned, { ...cfg, model: 'pin' });
+        }
+        assert.deepEqual(getPipelinePolicy([{ task_size: 'XS', delicate: true }], TEST_CONFIG).claude(phase),
+            { model: 'opus', effort: 'high', budget: budgets[4] });
+        const pin = phase === 'spec_review' ? 'CLAUDE_MODEL_SPEC_REVIEW' : 'CLAUDE_MODEL_IMPLEMENT';
+        for (const [task_size, tier] of [['S', 'CLAUDE_MODEL_LIGHT'], ['M', 'CLAUDE_MODEL_STRONG']] as const) {
+            for (const [env, expected] of [
+                [{ CLAUDE_MODEL: 'legacy' }, 'legacy'],
+                [{ CLAUDE_MODEL: 'legacy', [tier]: 'tier' }, 'tier'],
+                [{ CLAUDE_MODEL: 'legacy', [tier]: 'tier', [pin]: 'pin' }, 'pin'],
+            ] as const) {
+                const cfg = getPipelinePolicy([{ task_size }], loadPolicyConfigForEnv({ ...env, CLAUDE_BUDGET: '7.77' })).claude(phase);
+                assert.deepEqual(cfg, { model: expected, effort: 'medium', budget: '7.77' });
+            }
+        }
+    });
+}

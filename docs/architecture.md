@@ -103,6 +103,7 @@ Every artifact in `tasks/<id>/` is markdown for human consumption; `status.json`
 
 - Top-level `status` is **derived** — it points at the first non-`done` phase. Hand-editing it produces inconsistent state. Use `canon task phase` instead.
 - Each phase has at least `{ status, agent }`. Review phases also have `{ verdict, iterations }`.
+- Optional `provider` (`mixed | claude`) pins role routing; absence means mixed. `canon run` resolves it once per run and refuses mixed-provider bundles. Optional `session_backends` records the creating backend for each stored role session; absent tags inherit the mixed assignment. `state.ts` writes and clears tags with session pairs and checks compatibility at slot use. The status template deliberately omits these optional fields; task creation stamps the provider.
 - `task_size` (`XS | S | M | L | XL`) and `delicate` (boolean) are set at task creation; both feed `pipeline-policy.ts` to choose tier, model, and loop cap.
 
 ### File-based handoff (not in-memory)

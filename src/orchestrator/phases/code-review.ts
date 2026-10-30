@@ -1,3 +1,4 @@
+import { roleAssignmentFor, providerRunsColdLens } from '../policy.js';
 import { AgentSessionError } from '../agents/errors.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -416,45 +417,57 @@ export async function runCodeReviewPhase(
         ? deps.getScopedDiffInRange(`${scope.base}..${headSha}`, activeCwd)
         : null;
 
-    const coldBackend = deps.agentBackendFor('cold_reviewer');
-    const coldReviewStartMs = Date.now();
-    const coldReview = await coldBackend.coldReview({ role: 'cold_reviewer', phase: 'code_review', tasks, baseBranch: scope.base, cwd: activeCwd, metricsContext: {
-        taskId: taskIds.join('+'),
-        phase: 'code_review',
-        iteration: maxIter,
-        activeCwd,
-    } });
-    const coldReviewDurationMs = Date.now() - coldReviewStartMs;
+    let coldFindings: string | null = null;
+    if (providerRunsColdLens(state.provider)) {
+        const coldBackend = deps.agentBackendFor('cold_reviewer', roleAssignmentFor(state.provider));
+        const coldReviewStartMs = Date.now();
+        const coldReview = await coldBackend.coldReview({ role: 'cold_reviewer', phase: 'code_review', tasks, baseBranch: scope.base, cwd: activeCwd, metricsContext: {
+            taskId: taskIds.join('+'),
+            phase: 'code_review',
+            iteration: maxIter,
+            activeCwd,
+        } });
+        const coldReviewDurationMs = Date.now() - coldReviewStartMs;
 
-    if (!coldReview.success) {
-        // The cold review reports success only, without a specific failure kind.
-        throw new AgentSessionError({
-            agent: coldBackend.id,
-            kind: 'exit_code',
-            reason: `cold-Codex review could not be obtained for task(s) ${taskIds.join(', ')} ` +
-                `(no findings output / spawn error / stall / signal). Re-run when Codex is available — ` +
-                `the code_review phase has not advanced.`,
-        });
+        if (!coldReview.success) {
+            // The cold review reports success only, without a specific failure kind.
+            throw new AgentSessionError({
+                agent: coldBackend.id,
+                kind: 'exit_code',
+                reason: `cold-Codex review could not be obtained for task(s) ${taskIds.join(', ')} ` +
+                    `(no findings output / spawn error / stall / signal). Re-run when Codex is available — ` +
+                    `the code_review phase has not advanced.`,
+            });
+        }
+
+        for (const t of tasks) {
+            fs.writeFileSync(
+                path.join(taskDirFor(t.taskId), 'review-cold-codex.md'),
+                coldReview.findings,
+                'utf8',
+            );
+        }
+        coldFindings = coldReview.findings;
+        for (const t of tasks) {
+            deps.writeColdCodexArchive(taskDirFor(t.taskId), {
+                round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
+            }, coldReview.findings);
+        }
+        info(`→ cold-codex review (${taskIds.join(', ')}): ${Math.round(coldReviewDurationMs / 1000)}s`);
+
+    } else {
+        for (const t of tasks) {
+            fs.rmSync(path.join(taskDirFor(t.taskId), 'review-cold-codex.md'), { force: true });
+            deps.writeColdCodexArchive(taskDirFor(t.taskId), {
+                round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
+            }, 'No orchestrator cold lens runs in Claude mode.');
+        }
     }
 
-    for (const t of tasks) {
-        fs.writeFileSync(
-            path.join(taskDirFor(t.taskId), 'review-cold-codex.md'),
-            coldReview.findings,
-            'utf8',
-        );
-    }
-    for (const t of tasks) {
-        deps.writeColdCodexArchive(taskDirFor(t.taskId), {
-            round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
-        }, coldReview.findings);
-    }
-    info(`→ cold-codex review (${taskIds.join(', ')}): ${Math.round(coldReviewDurationMs / 1000)}s`);
-
-    const backend = deps.agentBackendFor('reviewer');
+    const backend = deps.agentBackendFor('reviewer', roleAssignmentFor(state.provider));
     const reviewResumeId = maxIter > 0 ? resumeId : null;
     const scopedDiff = scope.scope === 'delta' ? null : deps.getScopedDiff(baseBranch, activeCwd);
-    const result = await backend.run({ role: 'reviewer', phase: 'code_review', tasks, prompt: promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, resumeId: reviewResumeId, metricsContext: {
+    const result = await backend.run({ role: 'reviewer', phase: 'code_review', tasks, prompt: promptCodeReview(state, baseBranch, scopedDiff, coldFindings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, resumeId: reviewResumeId, metricsContext: {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,

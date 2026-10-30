@@ -10,6 +10,8 @@ import { REPO_ROOT } from '../src/orchestrator/env.js';
 import {
     promptCodeReview,
     promptImplement,
+    promptImplementResume,
+    promptImplementParkResume,
     promptImplementReroute,
     promptImplementRevisions,
     promptArtifactFixup,
@@ -167,7 +169,7 @@ function makeReroutedTask(taskId = TASK_ID, rerouteCount = 1, title = 'Prompt fi
 function makeState(task: TaskContext): PipelineState {
     return {
         tasks: [task],
-        tier: 'full',
+        provider: 'mixed', tier: 'full',
         isBundle: false,
     };
 }
@@ -258,7 +260,7 @@ void test('promptSpecReview_reroute_bundle', () => {
     const taskBDir = path.join(tmpRoot, taskBId);
     fs.mkdirSync(taskBDir, { recursive: true });
     fs.writeFileSync(path.join(taskBDir, 'status.json'), JSON.stringify(taskB.status, null, 2));
-    const actual = normalize(promptSpecReview({ tasks: [taskA, taskB], tier: 'full', isBundle: true }));
+    const actual = normalize(promptSpecReview({ tasks: [taskA, taskB], provider: 'mixed', tier: 'full', isBundle: true }));
     recordOrAssert('promptSpecReview_reroute_bundle', actual);
 });
 
@@ -286,7 +288,7 @@ void test('promptPlan_reroute_bundle', () => {
     const taskBDir = path.join(tmpRoot, taskBId);
     fs.mkdirSync(taskBDir, { recursive: true });
     fs.writeFileSync(path.join(taskBDir, 'status.json'), JSON.stringify(taskB.status, null, 2));
-    const actual = normalize(promptPlan({ tasks: [taskA, taskB], tier: 'full', isBundle: true }));
+    const actual = normalize(promptPlan({ tasks: [taskA, taskB], provider: 'mixed', tier: 'full', isBundle: true }));
     recordOrAssert('promptPlan_reroute_bundle', actual);
 });
 
@@ -309,7 +311,7 @@ void test('promptSpecReview and promptPlan reroute bundle lines preserve per-tas
     const taskBDir = path.join(tmpRoot, taskBId);
     fs.mkdirSync(taskBDir, { recursive: true });
     fs.writeFileSync(path.join(taskBDir, 'status.json'), JSON.stringify(taskB.status, null, 2));
-    const state: PipelineState = { tasks: [taskA, taskB], tier: 'full', isBundle: true };
+    const state: PipelineState = { tasks: [taskA, taskB], provider: 'mixed', tier: 'full', isBundle: true };
 
     const specReviewOutput = normalize(promptSpecReview(state));
     assert.match(specReviewOutput, /test-pf-001.*reroute round 1.*`## Amendment`/);
@@ -333,7 +335,7 @@ void test('reroute prompts mark reroute_exempt siblings exempt instead of direct
     const exemptDir = path.join(tmpRoot, exemptId);
     fs.mkdirSync(exemptDir, { recursive: true });
     fs.writeFileSync(path.join(exemptDir, 'status.json'), JSON.stringify(exemptTask.status, null, 2));
-    const state: PipelineState = { tasks: [gapTask, exemptTask], tier: 'full', isBundle: true };
+    const state: PipelineState = { tasks: [gapTask, exemptTask], provider: 'mixed', tier: 'full', isBundle: true };
 
     const specReviewOutput = normalize(promptSpecReview(state));
     assert.match(specReviewOutput, /test-pf-001.*reroute round 1.*`## Amendment`/);
@@ -377,7 +379,7 @@ for (const priorVerdict of ['changes_requested', 'needs_re_review'] as const) {
         fs.mkdirSync(exemptDir, { recursive: true });
         fs.writeFileSync(path.join(exemptDir, 'status.json'), JSON.stringify(exemptTask.status, null, 2));
         fs.writeFileSync(path.join(exemptDir, 'review-prior-1.md'), reviewTemplate);
-        const state: PipelineState = { tasks: [gapTask, exemptTask], tier: 'full', isBundle: true };
+        const state: PipelineState = { tasks: [gapTask, exemptTask], provider: 'mixed', tier: 'full', isBundle: true };
 
         const specReviewLine = outputLineFor(normalize(promptSpecReview(state)), exemptId);
         assert.match(specReviewLine, new RegExp(priorVerdict));
@@ -610,7 +612,7 @@ void test('promptImplementReroute mixed-bundle banner is neutral and per-task li
     fs.writeFileSync(path.join(taskBDir, 'status.json'), JSON.stringify(taskBStatus, null, 2));
     fs.writeFileSync(path.join(taskBDir, 'spec.md'), goldenTemplate);
 
-    const bundleState: PipelineState = { tasks: [taskA, taskB], tier: 'full', isBundle: true };
+    const bundleState: PipelineState = { tasks: [taskA, taskB], provider: 'mixed', tier: 'full', isBundle: true };
     const output = normalize(promptImplementReroute(bundleState, false, [], 'main'));
 
     // Banner is neutral and explicitly disclaims a single bundle-wide round.
@@ -630,7 +632,7 @@ void test('promptImplementReroute mixed-bundle banner is neutral and per-task li
 // sent back N times" banner — that anchoring is unambiguous for a single task.
 void test('promptImplementReroute single-task at reroute #2 retains strong-anchor banner', () => {
     const task = makeTask({ rerouteCount: 2, specReviewVerdict: 'approved' });
-    const state: PipelineState = { tasks: [task], tier: 'full', isBundle: false };
+    const state: PipelineState = { tasks: [task], provider: 'mixed', tier: 'full', isBundle: false };
     const output = normalize(promptImplementReroute(state, false, [], 'main'));
 
     assert.match(output, /THIS IS REROUTE ROUND 2 FOR THIS TASK/);
@@ -675,7 +677,7 @@ void test('missing lens stop renders a blocked command for every bundle member',
     const dir = path.join(tmpRoot, peer.taskId);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'status.json'), JSON.stringify(peer.status));
-    const output = promptCodeReview({ tasks: [baseState.tasks[0], peer], tier: 'full', isBundle: true });
+    const output = promptCodeReview({ tasks: [baseState.tasks[0], peer], provider: 'mixed', tier: 'full', isBundle: true });
     for (const id of [TASK_ID, peer.taskId]) {
         assert.match(output, new RegExp(`canon task phase ${id} code_review blocked`));
     }
@@ -775,7 +777,7 @@ void test('plan feasibility reaches ordinary, bundle, reroute, and fast-tier com
         'notes.md', 'Do not change the spec', 'widen scope', 'Approach section',
     ]) assert.ok(ordinary.includes(token), token);
     const peer = makeTask({ taskId: 'test-pf-bundle', title: 'Bundle peer' });
-    const bundle: PipelineState = { tasks: [planState.tasks[0], peer], tier: 'full', isBundle: true };
+    const bundle: PipelineState = { tasks: [planState.tasks[0], peer], provider: 'mixed', tier: 'full', isBundle: true };
     assert.match(promptPlan(bundle), /Feasibility check[\s\S]*Approach section/);
     assert.match(promptPlan(makeState(makeReroutedTask())), /Feasibility check[\s\S]*### Round Scope/);
     for (const state of [
@@ -955,7 +957,7 @@ void test('promptQa', () => {
 
 void test('promptQa renders each task’s own lessons fragment and combined buffer count', () => {
     for (const ids of [['example-task'], ['bundle-a', 'bundle-b']]) {
-        const state: PipelineState = { tasks: ids.map(taskId => makeTask({ taskId })), tier: 'full', isBundle: ids.length > 1 };
+        const state: PipelineState = { tasks: ids.map(taskId => makeTask({ taskId })), provider: 'mixed', tier: 'full', isBundle: ids.length > 1 };
         const prompt = promptQa(state);
         if (ids.length === 1) {
             assert.ok(prompt.includes(`\n  Append the lesson to \`tasks/${ids[0]}/lessons.md\`.\n`));
@@ -979,7 +981,7 @@ void test('promptQa_withTemplate', () => {
 void test('promptQa bundle ignores prTemplate — bundles skip pr-body.md', () => {
     const t1 = makeTask({ taskId: 'bundle-qa-a', title: 'Task A' });
     const t2 = makeTask({ taskId: 'bundle-qa-b', title: 'Task B' });
-    const bundleState: PipelineState = { tasks: [t1, t2], tier: 'full', isBundle: true };
+    const bundleState: PipelineState = { tasks: [t1, t2], provider: 'mixed', tier: 'full', isBundle: true };
     const withTemplate = promptQa(bundleState, '## Summary\n- Fill this section.\n');
     const withoutTemplate = promptQa(bundleState);
     assert.equal(withTemplate, withoutTemplate, 'bundle QA prompt must not change when a PR template is passed');
@@ -1283,3 +1285,40 @@ void test('spec prompts inject maps only when configured', () => {
         recordOrAssert(key, normalize(rendered));
     }
 });
+
+void test('Claude provider prompt builders use role holders and preserve task content verbatim', () => {
+    const asClaude = (state: PipelineState): PipelineState => ({ ...state, provider: 'claude' });
+    const initial = asClaude(baseState);
+    const reroute = asClaude(makeState(makeReroutedTask()));
+    for (const prompt of [
+        promptSpec(initial), promptSpecRevision(asClaude(specRevisionState)), promptSpecReview(initial), promptSpecReview(reroute),
+        promptPlan(asClaude(planState)), promptPlan(reroute), promptImplement(initial), promptImplementResume(initial),
+        promptImplementParkResume(initial), promptImplementRevisions(asClaude(iterState), [], 'main'),
+        promptImplementReroute(reroute), promptImplementReroute(reroute, true), promptCodeReview(initial, 'main'),
+        promptQa(initial), promptArtifactFixup({ phase: 'implement', findings: ['fixture'], artifacts: ['tasks/test-pf-001/handoff.md'], attempt: 1, maxAttempts: 2 }),
+    ]) assert.doesNotMatch(prompt, /\bCodex\b/);
+    for (const prompt of [promptSpecReview(initial), promptImplement(initial), promptImplementRevisions(asClaude(iterState), [], 'main')]) {
+        assert.match(prompt, /orchestrator owns commits/);
+        assert.doesNotMatch(prompt, /sandbox blocks/);
+        assert.match(prompt, /Always end by writing the phase artifact and running the phase command\(s\).*including when you recorded Blockers/);
+        const resumed = toResumePrompt(prompt);
+        assert.doesNotMatch(resumed, /Read docs\/patterns.md|orchestrator owns commits/);
+    }
+    const specPath = path.join(tmpRoot, TASK_ID, 'spec.md');
+    const previous = fs.readFileSync(specPath, 'utf8');
+    try {
+        fs.appendFileSync(specPath, '\n## Known Risks\n\nCodex is a literal task-content sentinel.\n');
+        assert.match(promptImplement(initial), /Codex is a literal task-content sentinel/);
+    } finally { fs.writeFileSync(specPath, previous); }
+});
+
+for (const [key, getState] of [
+    ['claude_code_review_round1', () => baseState], ['claude_code_review_round2', () => codeReviewRoundNState],
+] as const) {
+    void test(`${key} golden`, () => {
+        const prompt = promptCodeReview({ ...getState(), provider: 'claude' }, 'main');
+        assert.doesNotMatch(prompt, /cold-Codex|codex review|\bCodex\b/);
+        assert.match(prompt, /two-lens synthesis/);
+        recordOrAssert(key, normalize(prompt));
+    });
+}

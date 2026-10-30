@@ -1,3 +1,4 @@
+import { parseProvider, resolveProviderSetting, roleAssignmentFor } from '../orchestrator/policy.js';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,7 +13,7 @@ import {
     verifyHandoffAgainstDiffFromData,
 } from '../orchestrator/validation.js';
 import { filterGitIgnoredPaths } from '../orchestrator/git.js';
-import { assertManagedInvocationRoot, clearSessionPair, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, isRerouteAdmitted, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
+import { assertManagedInvocationRoot, clearMismatchedSessions, clearSessionPair, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, isRerouteAdmitted, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
 import { isPlanCombined, SIZE_ORDER, type TaskSize } from '../lib/pipeline-policy.js';
@@ -24,7 +25,7 @@ const VALID_PHASES = new Set<string>(PHASE_ORDER);
 export const VALID_STATUSES = new Set<string>(['pending', 'in_progress', 'done', 'changes_requested', 'blocked']);
 export const VALID_VERDICTS = new Set<string>(['approved', 'approved_with_nits', 'changes_requested', 'needs_re_review', 'spec_gap', 'sanctioned']);
 const REVIEW_PHASES = new Set<string>(['spec_review', 'code_review']);
-export const SETTABLE_FIELDS = ['title', 'task_size', 'delicate', 'worktree', 'base_branch', 'human_spec_gate'] as const;
+export const SETTABLE_FIELDS = ['title', 'task_size', 'delicate', 'worktree', 'base_branch', 'human_spec_gate', 'provider'] as const;
 const SETTABLE_FIELD_SET = new Set<string>(SETTABLE_FIELDS);
 const IMMUTABLE_FIELDS = new Set<string>(['id', 'created', 'updated']);
 const REDIRECT_MESSAGES: Record<string, string> = {
@@ -32,6 +33,7 @@ const REDIRECT_MESSAGES: Record<string, string> = {
     status: 'derived from phase states. Use `canon task phase <id> <phase> <status>`.',
     branch: 'load-bearing git identity; retargeting it desyncs the worktree. Not settable via `canon task set`.',
     phases: 'nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.',
+    session_backends: 'nested orchestrator-owned state. Use `canon task set <id> provider <mixed|claude>` to switch providers and clear incompatible sessions.',
     sessions: 'nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.',
     canon: 'nested orchestrator-owned state. `status.json.canon` is stamped by canon snapshot; use `CANON_UPSTREAM_REPO` to override the upstream slug, not `canon task set`.',
     escalations: 'nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.',
@@ -39,7 +41,7 @@ const REDIRECT_MESSAGES: Record<string, string> = {
 export const ACCEPT_PHASES = ['implement', 'spec_review', 'code_review'] as const;
 const BOOLEAN_VALUES = ['true', 'false'] as const;
 export const TASK_SET_FIELD_VALUES: Readonly<Partial<Record<(typeof SETTABLE_FIELDS)[number], readonly string[]>>> = {
-    task_size: SIZE_ORDER, delicate: BOOLEAN_VALUES, worktree: BOOLEAN_VALUES, human_spec_gate: BOOLEAN_VALUES,
+    provider: ['mixed', 'claude'], task_size: SIZE_ORDER, delicate: BOOLEAN_VALUES, worktree: BOOLEAN_VALUES, human_spec_gate: BOOLEAN_VALUES,
 };
 
 type GitResult = SpawnSyncReturns<string>;
@@ -222,6 +224,7 @@ export function parseTaskNewArgs(args: readonly string[]): { id: string; title: 
 }
 
 export function taskNew(args: string[]): void {
+    const provider = resolveProviderSetting();
     const { id, title, baseBranch: parsedBaseBranch } = parseTaskNewArgs(args);
     let baseBranch = parsedBaseBranch;
     validateTaskId(id);
@@ -265,6 +268,7 @@ export function taskNew(args: string[]): void {
     status.created = today();
     status.updated = today();
     status.base_branch = baseBranch;
+    status.provider = provider;
     writeStatusAtomic(statusPath, status);
 
     try {
@@ -1467,6 +1471,12 @@ function nudgeShippableTasks(): void {
 
 function taskSetValue(taskId: string, field: string, value: string, status: StatusJson): string[] {
     switch (field) {
+        case 'provider': {
+            const provider = parseProvider(value);
+            const cleared = clearMismatchedSessions(status, roleAssignmentFor(provider));
+            status.provider = provider;
+            return cleared.length ? [`Cleared sessions: ${cleared.join(', ')}.`] : [];
+        }
         case 'title':
             if (value.includes('\n') || value.includes('\r')) {
                 throw new Error('Error: title must be single-line (no embedded newlines).');
@@ -1590,7 +1600,7 @@ export function taskSet(args: string[]): void {
     if (field === 'branch') {
         throw new Error(`Error: branch is ${taskSetRedirectMessage(field)}`);
     }
-    if (field === 'phases' || field === 'sessions' || field === 'canon' || field === 'escalations') {
+    if (field === 'phases' || field === 'sessions' || field === 'session_backends' || field === 'canon' || field === 'escalations') {
         throw new Error(`Error: ${field} is ${taskSetRedirectMessage(field)}`);
     }
     if (IMMUTABLE_FIELDS.has(field) || field.startsWith('_')) {

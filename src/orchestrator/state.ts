@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-import { die } from './cli.js';
+import { MIXED_ROLE_ASSIGNMENT, type AgentBackendId, type RoleAssignment } from '../lib/pipeline-policy.js';
+import { die, warn } from './cli.js';
 import { REPO_ROOT, TASKS_DIR, WORKTREES_ROOT } from './env.js';
 import { PHASE_ORDER, type CurrentPhase, type Phase, type PhaseEntry, type SessionSlot, type StatusJson } from './types.js';
 
@@ -479,6 +480,7 @@ const LEGACY_SESSION_SLOTS = {
 
 /** Mutates the supplied status so callers can include the clear in their atomic write. */
 export function clearSessionPair(status: StatusJson, slot: SessionSlot): void {
+    delete status.session_backends?.[slot];
     if (!status.sessions) return;
     delete status.sessions[slot];
     delete status.sessions[LEGACY_SESSION_SLOTS[slot]];
@@ -494,11 +496,13 @@ export function recordPhaseAgent(taskIds: string[], phase: Phase, agent: import(
     }
 }
 
-export function storeSessionId(taskIds: string[], agent: SessionSlot, sessionId: string): void {
+export function storeSessionId(taskIds: string[], agent: SessionSlot, sessionId: string, backend: AgentBackendId): void {
     for (const taskId of taskIds) {
         const s = readStatus(taskId);
         if (!s.sessions) s.sessions = {};
         s.sessions[agent] = sessionId;
+        s.session_backends ??= {};
+        s.session_backends[agent] = backend;
         writeStatus(taskId, s);
     }
 }
@@ -527,4 +531,39 @@ export function autoBlockPhase(
         status.updated = today;
         writeStatus(taskId, status);
     }
+}
+
+export function storedSessionBackend(status: StatusJson, slot: SessionSlot): string {
+    return status.session_backends?.[slot] ?? MIXED_ROLE_ASSIGNMENT[slot];
+}
+export function clearMismatchedSessions(status: StatusJson, assignment: RoleAssignment): SessionSlot[] {
+    const cleared: SessionSlot[] = [];
+    for (const slot of Object.keys(LEGACY_SESSION_SLOTS) as SessionSlot[]) {
+        if ((status.sessions?.[slot] || status.sessions?.[LEGACY_SESSION_SLOTS[slot]]) && storedSessionBackend(status, slot) !== assignment[slot]) {
+            clearSessionPair(status, slot);
+            cleared.push(slot);
+        }
+    }
+    return cleared;
+}
+/** Validate only the slot being consumed; unrelated phase continuity is untouched. */
+export function usableSessionId(taskIds: string[], slot: SessionSlot, assignment: RoleAssignment): string | null {
+    let mismatch = false;
+    for (const taskId of taskIds) {
+        const status = readStatus(taskId);
+        if (!(status.sessions?.[slot] ?? status.sessions?.[LEGACY_SESSION_SLOTS[slot]])) continue;
+        const stored = storedSessionBackend(status, slot);
+        if (stored === assignment[slot]) continue;
+        warn(`[${taskId}] Session ${slot}: stored backend ${stored}, current backend ${assignment[slot]}; clearing slot pair and starting fresh.`);
+        mismatch = true;
+    }
+    if (mismatch) {
+        for (const taskId of taskIds) {
+            const status = readStatus(taskId);
+            clearSessionPair(status, slot);
+            writeStatus(taskId, status);
+        }
+        return null;
+    }
+    return getStoredSessionId(taskIds, slot);
 }

@@ -1,3 +1,4 @@
+import { parseProvider, type Provider } from '../lib/pipeline-policy.js';
 import {
     detectTier as policyDetectTier,
     getPipelinePolicy,
@@ -16,6 +17,8 @@ import type { StatusJson, TaskContext } from './types.js';
 import { parseMaxReviewLoops } from './env.js';
 
 const config = {
+    claudeModelSpecReview: process.env.CLAUDE_MODEL_SPEC_REVIEW ?? null,
+    claudeModelImplement: process.env.CLAUDE_MODEL_IMPLEMENT ?? null,
     claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? null,
     claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? null,
     claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? null,
@@ -32,6 +35,8 @@ const config = {
 
 export function policyConfig(): PolicyConfig {
     return {
+        claudeModelSpecReview: config.claudeModelSpecReview,
+        claudeModelImplement: config.claudeModelImplement,
         claudeModelSpec: config.claudeModelSpec,
         claudeModelPlan: config.claudeModelPlan,
         claudeModelReview: config.claudeModelReview,
@@ -92,3 +97,22 @@ export type {
 
 export { roleBackendId, phasePrimaryRole, phaseSessionSlot, requiredAgentBackends } from '../lib/pipeline-policy.js';
 export type { AgentRole, AgentBackendId, PipelinePhase, SessionSlot } from '../lib/pipeline-policy.js';
+
+export { parseProvider, roleAssignmentFor, MIXED_ROLE_ASSIGNMENT, providerRunsColdLens } from '../lib/pipeline-policy.js';
+export type { Provider, RoleAssignment } from '../lib/pipeline-policy.js';
+export const PROVIDER_SETTING_NAME = 'CANON_PROVIDER';
+export function resolveProviderSetting(): Provider {
+    const value = process.env[PROVIDER_SETTING_NAME];
+    return value === undefined || value === '' ? 'mixed' : parseProvider(value);
+}
+export function resolveTaskProvider(status: StatusJson): Provider {
+    try { return status.provider === undefined ? 'mixed' : parseProvider(status.provider); }
+    catch (error) { throw new Error(`Task '${status.id}' status.json: ${error instanceof Error ? error.message : String(error)}`); }
+}
+export function resolveBundleProvider(statuses: readonly StatusJson[]): Provider {
+    const providers = statuses.map(status => ({ id: status.id, provider: resolveTaskProvider(status) }));
+    if (new Set(providers.map(task => task.provider)).size > 1) {
+        throw new Error(`Cannot run a mixed-provider bundle: ${providers.map(task => `${task.id}: ${task.provider}`).join(', ')}.`);
+    }
+    return providers[0]?.provider ?? 'mixed';
+}

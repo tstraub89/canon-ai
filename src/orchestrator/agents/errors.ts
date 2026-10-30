@@ -6,8 +6,10 @@ export class AgentSessionError extends Error {
     readonly exitCode: number | null;
     readonly signal: NodeJS.Signals | null;
     readonly reason: string;
+    readonly sessionId: string | null;
 
     constructor(options: {
+        sessionId?: string | null;
         agent: AgentSessionError['agent'];
         kind: AgentSessionError['kind'];
         reason: string;
@@ -19,6 +21,7 @@ export class AgentSessionError extends Error {
         this.agent = options.agent;
         this.kind = options.kind;
         this.reason = options.reason;
+        this.sessionId = options.sessionId ?? null;
         this.exitCode = options.exitCode ?? null;
         this.signal = options.signal ?? null;
     }

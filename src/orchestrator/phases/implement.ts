@@ -1,7 +1,8 @@
+import { roleAssignmentFor } from '../policy.js';
 import { info, warn } from '../cli.js';
 import { getMaxReviewLoops } from '../policy.js';
 import { agentBackendFor } from '../agents/backend.js';
-import { promptImplement, promptImplementResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
+import { promptImplement, promptImplementResume, promptImplementParkResume, promptImplementReroute, promptImplementRevisions } from '../prompts/index.js';
 import { commitTaskArtifactsToBase, getAffectedFiles, getBaseBranch, gitSafeAtRaw, hasUnpushedScaffoldCommits, parsePorcelain, ensureBranch } from '../git.js';
 import { getActiveCwd, TASK_ARTIFACT_FILES } from '../worktree.js';
 import { autoBlockPhase, clearSessionPair, readStatus, writeStatus } from '../state.js';
@@ -85,23 +86,26 @@ export async function runImplementPhase(
     const isRerouted = tasks.some(t => t.status.phases.implement?.rerouted === true);
     const wasImplementInProgress = tasks.some(t => t.status.phases.implement?.status === 'in_progress');
     const phaseLabel = isRevision ? ', revision' : isRerouted ? ', reroute (spec amended)' : '';
-    info(`Phase: implement (Codex${state.isBundle ? ' bundle' : ''}${phaseLabel})`);
+    const backend = agentBackendFor('implementer', roleAssignmentFor(state.provider));
+    info(`Phase: implement (${backend.displayName}${state.isBundle ? ' bundle' : ''}${phaseLabel})`);
     for (const t of tasks) taskPhase(t.taskId, 'implement', 'in_progress');
 
-    const backend = agentBackendFor('implementer');
+    const isParkResume = state.provider === 'claude' && resumeId !== null && !isRevision && !isRerouted && tasks.some(t => t.status.phases.implement?.status === 'blocked');
     const isResume = resumeId !== null && !isRevision && !isRerouted && wasImplementInProgress;
     // Only pass a resumeId when we're deliberately continuing an implement session.
     // A stored codex session from spec_review (full-tier tasks) must not bleed into
     // implement: that session's project root is REPO_ROOT, not the worktree, so Codex
     // file ops would land in the wrong tree.
-    const shouldResume = isRevision || isRerouted || isResume;
+    const shouldResume = isRevision || isRerouted || isResume || isParkResume;
     const implementPrompt = isRevision
         ? promptImplementRevisions(state, affectedFiles, baseBranch)
         : isRerouted
             ? promptImplementReroute(state, resumeId !== null, affectedFiles, baseBranch)
-            : isResume
-                ? promptImplementResume(state)
-                : promptImplement(state, 'fresh', affectedFiles, baseBranch);
+            : isParkResume
+                ? promptImplementParkResume(state, affectedFiles, baseBranch)
+                : isResume
+                    ? promptImplementResume(state)
+                    : promptImplement(state, 'fresh', affectedFiles, baseBranch);
     const result = await backend.run({ role: 'implementer', phase: 'implement', tasks, prompt: implementPrompt, interactive: interactive, resumeId: shouldResume ? resumeId : null, metricsContext: {
             taskId: taskIds.join('+'),
             phase: 'implement',
@@ -121,10 +125,10 @@ export async function runImplementPhase(
             : ['<git-status-failed>'];
         if (dirtyResult.ok && meaningfulChanges.length === 0) {
             warn('');
-            warn('⚠️  Codex revision iteration produced no source-file changes.');
-            warn('    This is the resumed-session hallucination signature: Codex believed');
+            warn(`⚠️  ${backend.displayName} revision iteration produced no source-file changes.`);
+            warn(`    This is the resumed-session hallucination signature: ${backend.displayName} believed`);
             warn('    the work was already done from a prior round and skipped re-editing.');
-            warn('    Dropping the stored Codex session so the next run starts fresh.');
+            warn(`    Dropping the stored ${backend.displayName} session so the next run starts fresh.`);
             warn('');
             for (const taskId of taskIds) {
                 const s = readStatus(taskId);
@@ -134,7 +138,7 @@ export async function runImplementPhase(
                 }
             }
             autoBlockPhase(taskIds, 'implement', tasks[0].iterations_current_loop + 1,
-                'Revision iteration produced no source-file diff — Codex resumed-session hallucination signature. Stored session cleared. Re-run pipeline for a fresh attempt, or apply the fix inline.');
+                `Revision iteration produced no source-file diff — ${backend.displayName} resumed-session hallucination signature. Stored session cleared. Re-run pipeline for a fresh attempt, or apply the fix inline.`);
             process.exit(2);
         }
     }

@@ -1,3 +1,4 @@
+import type { Provider } from '../../lib/pipeline-policy.js';
 import { resolveTaskCwd } from '../state.js';
 import type { TaskContext } from '../types.js';
 
@@ -23,6 +24,15 @@ export const CODEX_STARTUP =
     '\n' +
     'Communication: tone is project taste; honest signal is canon discipline — surface real disagreement rather than yielding to politeness.\n' +
     'Branch state: the orchestrator manages it — do not fetch, pull, rebase, or push; read the working tree as-is.';
+
+// Keep the mixed startup byte-identical; Claude has no write sandbox.
+export const CLAUDE_IMPLEMENTER_STARTUP = CODEX_STARTUP.replace(
+    'the sandbox blocks `.git` writes by design, and the orchestrator owns the recovery path.',
+    'the orchestrator owns commits and the recovery path.',
+);
+export function implementationStartup(provider: Provider): string {
+    return provider === 'claude' ? CLAUDE_IMPLEMENTER_STARTUP : CODEX_STARTUP;
+}
 
 export const CODEX_HEADLESS =
     'Headless session: this runs non-interactively — nobody reads your messages or answers questions until the phase ends. Don\'t stop to ask for confirmation or clarification. When something is ambiguous, record the question and the interpretation you chose in this phase\'s artifact (in implement, a handoff Blocker labelled `[ambiguity]`) and proceed on it. Finish all the work this prompt authorizes before ending — acting on your own judgment never widens scope; the Affected Files cap and every other scope rule still bind. Always end by writing the phase artifact and running the phase command(s) listed at the end of this prompt, including when you recorded Blockers — a session that ends without them stalls the pipeline.\n' +
@@ -60,7 +70,7 @@ export function phaseCommands(taskIds: string[], phase: string, status: string, 
 
 export function toResumePrompt(prompt: string): string {
     let trimmed = prompt;
-    for (const block of [CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP]) {
+    for (const block of [CLAUDE_STARTUP, CODEX_STARTUP, CLAUDE_IMPLEMENTER_STARTUP, QA_STARTUP]) {
         trimmed = trimmed.replace(`\n\n${block}\n\n`, '\n\n');
     }
     return `[Resumed session — project context loaded. Skip startup boilerplate re-reads (architecture docs, etc.) — re-read any task-specific files explicitly requested in this prompt, then verify the current working tree or artifact before claiming anything is already done.]\n\n${trimmed.trimStart()}`;

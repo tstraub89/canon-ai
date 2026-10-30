@@ -210,6 +210,18 @@ export function guardConcurrentRun(
 
 // ── Pipeline state builder ─────────────────────────────────────────────────
 
+// Pinned by main before any phase or task mutation; direct helpers resolve their task fixture.
+let runProvider: splitPolicy.Provider | null = null;
+function providerForTasks(taskIds: string[]): splitPolicy.Provider {
+    return runProvider ?? splitPolicy.resolveBundleProvider(taskIds.map(splitState.readStatus));
+}
+function assignmentForTasks(taskIds: string[]): splitPolicy.RoleAssignment {
+    return splitPolicy.roleAssignmentFor(providerForTasks(taskIds));
+}
+function roleName(taskIds: string[], role: splitPolicy.AgentRole): string {
+    return agentBackendFor(role, assignmentForTasks(taskIds)).displayName;
+}
+
 export function buildPipelineState(taskIds: string[]): PipelineState {
     const statuses = taskIds.map(splitState.readStatus);
     const tier = splitPolicy.detectTier(statuses);
@@ -229,7 +241,7 @@ export function buildPipelineState(taskIds: string[]): PipelineState {
             status,
         };
     });
-    return { tasks, tier, isBundle: taskIds.length > 1 };
+    return { tasks, tier, isBundle: taskIds.length > 1, provider: providerForTasks(taskIds) };
 }
 
 // ── Phase assertion ────────────────────────────────────────────────────────
@@ -502,7 +514,7 @@ async function fixUpOwnArtifactRefs(opts: {
     let own = filter(initial);
     if (own.length === 0) return;
     if (!opts.sessionId) {
-        const agent = opts.phase === 'implement' ? 'codex' : 'claude';
+        const agent = splitPolicy.roleBackendId(opts.phase === 'implement' ? 'implementer' : 'qa', assignmentForTasks(opts.taskIds));
         warn(`docs-refs-check found broken references in the ${opts.phase} artifacts, but no ${agent} session is available to fix them:\n` +
             `${own.map(f => f.raw).join('\n')}\n${consequence}`);
         return;
@@ -558,10 +570,10 @@ async function fixUpOwnArtifactRefs(opts: {
 
 async function fixUpImplementArtifactRefs(taskIds: string[], cwd: string): Promise<void> {
     if (operatorAcceptedImplement(taskIds, cwd)) return;
-    const sessionId = splitState.getStoredSessionId(taskIds, 'implementer');
+    const sessionId = splitState.usableSessionId(taskIds, 'implementer', assignmentForTasks(taskIds));
     await fixUpOwnArtifactRefs({ phase: 'implement', taskIds, cwd, sessionId, artifactNames: ['handoff.md'],
         runSession: async prompt => {
-            const result = await agentBackendFor('implementer').run({ role: 'implementer', phase: 'implement',
+            const result = await agentBackendFor('implementer', assignmentForTasks(taskIds)).run({ role: 'implementer', phase: 'implement',
                 tasks: fixupTaskContexts(taskIds), prompt, interactive: false, resumeId: sessionId,
                 metricsContext: { taskId: taskIds[0], phase: 'implement_fixup', activeCwd: cwd }, cwd, wrapForResume: false });
             return result.exitCode === 0;
@@ -1771,7 +1783,7 @@ function printDryRunPlan(state: PipelineState): void {
         if (phase === 'spec_review' && state.tier === 'fast') continue;
         const role = splitPolicy.phasePrimaryRole(phase);
         if (role) {
-            const backend = agentBackendFor(role);
+            const backend = agentBackendFor(role, assignmentForTasks(taskIds));
             const cfg = backend.resolveConfig(phase, tasks);
             console.log(`  - ${phase}: ${backend.displayName} / ${cfg.model} / ${cfg.effort}`);
         }
@@ -2940,7 +2952,7 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
         for (const failure of amendmentFailures) {
             warn(
                 `--force bypass: ${failure.taskId} spec.md missing required ${failure.expectedHeading} heading for round ${failure.requiredRound}; ` +
-                `Codex will re-implement against the existing spec.`
+                `${roleName(taskIds, 'implementer')} will re-implement against the existing spec.`
             );
         }
     }
@@ -3092,7 +3104,7 @@ export function rerouteFromHumanReview(taskIds: string[]): void {
         splitCli.info('Status reset. This run resumes the rerouted pipeline from spec_review → plan → implement.');
     } else {
         splitCli.info('Status reset. This run resumes the rerouted pipeline from the implement phase with amended-spec context.');
-        splitCli.info('Note: Codex will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.');
+        splitCli.info(`Note: ${roleName(taskIds, 'implementer')} will re-read spec.md carefully (looking for new Amendment sections) and update the implementation.`);
     }
     splitCli.info('');
     if (clearedFullSend) {
@@ -3162,30 +3174,24 @@ function routeBackTo(taskIds: string[], targetPhase: Phase): void {
 async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<PhaseRunResult | undefined> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
-    // spec cluster: resumes across spec-revision rounds (always run in REPO_ROOT)
-    const specClaudeSession = splitState.getStoredSessionId(taskIds, 'author');
-    // code_review cluster: round 1 is always fresh; round 2+ resumes (same worktree cwd)
-    const reviewClaudeSession = splitState.getStoredSessionId(taskIds, 'reviewer');
-    // spec_review and implement use separate Codex slots. First-pass spec_review
-    // is REPO_ROOT-bound; reroute spec_review clears this slot and starts fresh
-    // in the active worktree, so it must still never share implement context.
-    const codexSpecReviewSession = splitState.getStoredSessionId(taskIds, 'spec_reviewer');
-    const codexSession = splitState.getStoredSessionId(taskIds, 'implementer');
+    const assignment = splitPolicy.roleAssignmentFor(state.provider);
+    const slot = splitPolicy.phaseSessionSlot(phase as Phase);
+    const session = slot ? splitState.usableSessionId(taskIds, slot, assignment) : null;
 
     if ((phase as Phase) === 'spec') {
-        return runSpecPhase(state, cliArgs.interactive, specClaudeSession);
+        return runSpecPhase(state, cliArgs.interactive, session);
     }
     if ((phase as Phase) === 'spec_review') {
-        return runSpecReviewPhase(state, cliArgs.interactive, codexSpecReviewSession);
+        return runSpecReviewPhase(state, cliArgs.interactive, session);
     }
     if ((phase as Phase) === 'plan') {
         return runPlanPhase(state, cliArgs.interactive);
     }
     if ((phase as Phase) === 'implement') {
-        return runImplementPhase(state, cliArgs.interactive, codexSession, cliArgs.force);
+        return runImplementPhase(state, cliArgs.interactive, session, cliArgs.force);
     }
     if ((phase as Phase) === 'code_review') {
-        return runCodeReviewPhase(state, cliArgs.interactive, reviewClaudeSession);
+        return runCodeReviewPhase(state, cliArgs.interactive, session);
     }
     if ((phase as Phase) === 'qa') {
         const activeCwd = splitWorktree.getActiveCwd(taskIds);
@@ -3498,10 +3504,10 @@ export async function retryAgentForPhase(taskId: string, phase: Phase, evidenceN
     const status = splitState.readStatus(taskId);
     const role = splitPolicy.phasePrimaryRole(phase);
     if (!role) return 'no_session';
-    const backend = agentBackendFor(role);
+    const backend = agentBackendFor(role, assignmentForTasks([taskId]));
     const agent = backend.id;
     const slot = splitPolicy.phaseSessionSlot(phase);
-    const sessionId = slot ? splitState.getStoredSessionId([taskId], slot) : null;
+    const sessionId = slot ? splitState.usableSessionId([taskId], slot, assignmentForTasks([taskId])) : null;
     if (!sessionId) {
         warn(`Cannot retry ${phase} for ${taskId}: no ${agent} session ID stored.`);
         return 'no_session';
@@ -3512,7 +3518,9 @@ export async function retryAgentForPhase(taskId: string, phase: Phase, evidenceN
         `PIPELINE GUARDRAIL: phases.${phase}.status for task ${taskId} is still '${getPhaseStatus(status, phase)}'.`,
         `Evidence check: ${evidenceNote}.`,
         '',
-        'Your previous turn ended without completing the phase. Finish the work now (write the artifact if missing, commit if needed), then run:',
+        providerForTasks([taskId]) === 'claude'
+            ? 'Your previous turn ended without completing the phase. Finish the work now (write the artifact if missing; the orchestrator owns commits), then run:'
+            : 'Your previous turn ended without completing the phase. Finish the work now (write the artifact if missing, commit if needed), then run:',
         `  canon task phase ${taskId} ${phase} done${verdictHint}`,
         '',
         'Reply with tool calls only. No summary, no explanation.',
@@ -3586,6 +3594,11 @@ function parkAgentSessionFailure(phase: Phase, taskIds: string[], error: AgentSe
     const rerun = `canon run ${taskIds.join(' ')}`;
     const budget = error.agent === 'claude' ? 'budget — raise `CLAUDE_BUDGET`' : 'credits/quota';
     const recovery = `Fix the cause (auth, ${budget}, network), then re-run \`${rerun}\`.`;
+    if (providerForTasks(taskIds) === 'claude' && (phase === 'implement' || phase === 'spec_review') && error.agent === 'claude' && error.sessionId) {
+        const slot = splitPolicy.phaseSessionSlot(phase);
+        if (slot) splitState.storeSessionId(taskIds, slot, error.sessionId, 'claude');
+        splitState.recordPhaseAgent(taskIds, phase, error.agent);
+    }
     // Reopen even completed members so the whole bundle re-enters this phase.
     // This is safe only while no agent session runs after routing writes.
     splitState.autoBlockPhase(taskIds, phase, phaseIterationCount(taskIds, phase), `${error.reason}. ${recovery}`);
@@ -3663,7 +3676,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
         if (phase === 'implement' && phaseStatus === 'done') {
             const evidence = checkImplementEvidence(taskIds[i]);
             if (!evidence.advanced) {
-                warn(`Codex marked implement done but handoff.md evidence is missing/invalid: ${evidence.note}. Re-run \`canon run ${taskIds[i]}\` to resume the session.`);
+                warn(`${roleName(taskIds, 'implementer')} marked implement done but handoff.md evidence is missing/invalid: ${evidence.note}. Re-run \`canon run ${taskIds[i]}\` to resume the session.`);
                 taskPhase(taskIds[i], 'implement', 'in_progress');
                 statuses[i] = splitState.readStatus(taskIds[i]);
                 const recovered = await recoverPhaseForTask(taskIds[i], phase, phaseStatus);
@@ -3811,7 +3824,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 console.log('');
                 console.log('  Specs:');
                 console.log(specList);
-                console.log('  Codex reviews:');
+                console.log(`  ${roleName(taskIds, 'spec_reviewer')} reviews:`);
                 console.log(reviewList);
                 console.log('');
                 console.log(`  When ready: canon run ${taskIds.join(' ')}`);
@@ -3909,7 +3922,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
             const sessionId = lastSessionId;
             await fixUpOwnArtifactRefs({ phase: 'qa', taskIds, cwd, sessionId, artifactNames: ['done.md', 'pr-body.md'],
                 runSession: async prompt => {
-                    await agentBackendFor('qa').run({ role: 'qa', phase: 'qa', tasks: fixupTaskContexts(taskIds),
+                    await agentBackendFor('qa', assignmentForTasks(taskIds)).run({ role: 'qa', phase: 'qa', tasks: fixupTaskContexts(taskIds),
                         prompt, interactive: false, resumeId: sessionId,
                         metricsContext: { taskId: taskIds[0], phase: 'qa_fixup', activeCwd: cwd }, cwd });
                     return true;
@@ -3928,7 +3941,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
 
 function checkDeps(taskIds: string[], skipAgentDeps = false): void {
     if (!skipAgentDeps) {
-        for (const dep of splitPolicy.requiredAgentBackends()) {
+        for (const dep of splitPolicy.requiredAgentBackends(assignmentForTasks(taskIds))) {
             const result = spawnSync('which', [dep], { stdio: 'ignore' });
             if (result.error || result.status !== 0) {
                 const label = dep === 'claude' ? 'Claude Code CLI' : dep === 'codex' ? 'Codex CLI' : dep;
@@ -4023,6 +4036,15 @@ export async function main(): Promise<void> {
             splitState.assertTaskWorktreeWithinRoot(taskId);
         }
     }
+    try {
+        runProvider = splitPolicy.resolveBundleProvider(cliArgs.taskIds.map(id => {
+            splitCli.validateTaskId(id);
+            const mainFile = path.join(REPO_ROOT, 'tasks', id, 'status.json');
+            const statusFile = cliArgs.ship && fs.existsSync(mainFile) ? mainFile : splitState.statusFileFor(id);
+            if (!fs.existsSync(statusFile)) die(`No status.json at tasks/${id}/status.json — run canon task new ${id} first`);
+            return splitState.readStatusFromPath(statusFile, id);
+        }));
+    } catch (error) { die(error instanceof Error ? error.message : String(error)); }
     const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;
     checkDeps(cliArgs.taskIds, skipAgentDeps);
     const configRoot = cliArgs.ship || cliArgs.taskIds.length === 0 || splitState.isOrphanedWorktreeState(cliArgs.taskIds[0])
@@ -4212,9 +4234,9 @@ export async function main(): Promise<void> {
                     splitState.recordPhaseAgent(taskIds, currentPhase, phaseResult.agent);
                     const slot = splitPolicy.phaseSessionSlot(currentPhase);
                     if (slot && lastSessionId) {
-                        splitState.storeSessionId(taskIds, slot, lastSessionId);
+                        splitState.storeSessionId(taskIds, slot, lastSessionId, phaseResult.agent);
                         const role = splitPolicy.phasePrimaryRole(currentPhase);
-                        const label = role ? agentBackendFor(role).displayName : phaseResult.agent;
+                        const label = role ? agentBackendFor(role, assignmentForTasks(taskIds)).displayName : phaseResult.agent;
                         splitCli.info(`${label} session stored (${slot}): ${lastSessionId.slice(0, 8)}...`);
                     }
                 }

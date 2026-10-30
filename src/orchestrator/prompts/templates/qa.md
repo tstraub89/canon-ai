@@ -40,7 +40,7 @@ For each task:
    ## Notes for Reviewer
    Any context, caveats, or follow-up items.
    {{/prTemplate}}
-   ⚠️ Write as the human engineer who did the work — not as the AI or tool that produced it (Claude, Codex, canon, an LLM). ✅ e.g. "Fix the pagination off-by-one that dropped the last row." ❌ e.g. "🤖 Generated with Claude Code."
+   ⚠️ Write as the human engineer who did the work — not as the AI or tool that produced it ({{toolExamples}}). ✅ e.g. "Fix the pagination off-by-one that dropped the last row." ❌ e.g. "🤖 Generated with Claude Code."
    Skip this step entirely for bundle tasks — per-task bodies are not combined for bundle PRs.
 
 **Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix — never a path relative to a package or to the current directory. For a file that does not exist — one this task deleted, or one only planned — use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.
@@ -81,7 +81,7 @@ After writing all done.md files:
 **Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently — reference the symbol or path; do not restate the value.
 
 **Commit Ownership** — three change categories:
-- Code changes → task branch, committed by the orchestrator after Codex static validation.
+- Code changes → task branch, committed by the orchestrator after {{implementer}} static validation.
 - Pre-implement scaffold → base branch, committed by the orchestrator before first implement.
 - Changelog + version bump (if versioned) → separate commit, human + Claude, after human_review.
 

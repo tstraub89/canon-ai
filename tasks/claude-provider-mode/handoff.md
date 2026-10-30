@@ -1,25 +1,62 @@
 # Implementation Handoff: claude-provider-mode
 
 > Author: Codex | Spec: `tasks/claude-provider-mode/spec.md` | Plan: `tasks/claude-provider-mode/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/lib/pipeline-policy.ts` | Provider presets and strict parser; explicit role assignments; Claude spec-review/implement cells, pins and budgets. |
+| `src/orchestrator/policy.ts` | Call-time provider setting and task/bundle pin validation; model pins and provider source label. |
+| `src/orchestrator/agents/backend.ts` | Require an explicit role assignment for backend lookup. |
+| `src/orchestrator/agents/claude.ts` | Resolve both new Claude phases and attach yielded stream session IDs to failures. |
+| `src/orchestrator/agents/errors.ts` | Carry optional failed-session continuity in AgentSessionError. |
+| `src/orchestrator/types.ts` | Optional provider/backend-tag schema and required run-state provider. |
+| `src/orchestrator/state.ts` | Tagged writes, paired clears, use-time compatibility checks, and provider-switch clearing. |
+| `src/orchestrator/main.ts` | Pin provider once, reject incompatible bundles, route dependencies/recovery/fix-ups, persist eligible parked sessions, and render role-holder messages. |
+| `src/orchestrator/phases/spec.ts` | Route author calls with the run assignment. |
+| `src/orchestrator/phases/spec-review.ts` | Route reviewer, render role-holder messages, and distinguish parked first reviews from revised-spec reviews. |
+| `src/orchestrator/phases/plan.ts` | Route author calls with the run assignment. |
+| `src/orchestrator/phases/implement.ts` | Route implementer, select partial-work park resume, and render role-aware no-diff warnings/escalations. |
+| `src/orchestrator/phases/code-review.ts` | Skip the orchestrator cold lens in Claude mode, remove stale findings, and always write its numbered round record. |
+| `src/orchestrator/phases/qa.ts` | Route QA calls with the run assignment. |
+| `src/orchestrator/prompts/index.ts` | Render role holders, provider-aware startup, partial-work park resume, and two-lens foreman views. |
+| `src/orchestrator/prompts/helpers.ts` | Claude startup without the sandbox claim; reusable artifact/phase-command instruction and resume stripping. |
+| `src/orchestrator/prompts/templates/spec-review.md` | Role variables and separate-session cross-review wording in Claude mode. |
+| `src/orchestrator/prompts/templates/spec-review-reroute.md` | Provider-specific cross-review wording. |
+| `src/orchestrator/prompts/templates/plan.md` | Render the implementer role holder. |
+| `src/orchestrator/prompts/templates/plan-reroute.md` | Render spec-reviewer and prior implementer role holders. |
+| `src/orchestrator/prompts/templates/qa.md` | Role-aware commit ownership and tool examples. |
+| `src/orchestrator/prompts/templates/code-review-foreman.md` | Conditional three-input mixed synthesis versus two-Claude-lens synthesis, preserving adjudication rules. |
+| `src/task/index.ts` | Stamp and set provider pins; clear incompatible sessions; expose completion metadata; refuse direct backend-tag edits. |
+| `src/cli/deps.ts` | Compute required binaries at dependency-check time from the selected provider. |
+| `src/cli/commands/doctor.ts` | Report the provider setting, require only its binaries, and skip Codex trust in Claude mode. |
+| `dist/cli/index.js` | Rebuilt CLI bundle. |
+| `dist/orchestrator/run-task.js` | Rebuilt orchestrator bundle. |
+| `tests/pipeline-policy.test.ts` | Provider validation/purity, lazy setting resolution, new phase matrix/precedence coverage and environment scrubs. |
+| `tests/agent-backend.test.ts` | Preserved 15-site argv parity; backend-tag compatibility matrix, paired clears and provider-aware init checks. |
+| `tests/task-cli.test.ts` | Provider creation/set/refusal and canonical worktree write coverage. |
+| `tests/completion.golden.json` | Regenerated shell completions for provider and its values. |
+| `tests/completion.test.ts` | Pin provider metadata and exercise every advertised setter value. |
+| `tests/run-task-safety.test.ts` | Pinned routing, bundle refusal, park/resume, recovery/fix-up, prompt/message, precedence, dependency and environment tests. |
+| `tests/run-task-validation.test.ts` | Pass the mixed assignment when pinning status-template agent defaults. |
+| `tests/run-task-code-review.test.ts` | Explicit assignment call sites and Claude-mode stale-file/round-record/delta-scope coverage. |
+| `tests/recovery-hints.test.ts` | Supply mixed provider in the phase-state fixture. |
+| `tests/run-task-prompts.test.ts` | Role-holder/startup/content-preservation assertions and new Claude foreman goldens. |
+| `tests/run-task-prompts.golden.json` | Added only Claude round-1 and round-2 entries; all 23 existing values unchanged. |
+| `tests/cli.test.ts` | Doctor/init dependency behavior, trust skipping and clean invalid-provider errors. |
+| `docs/decisions.md` | Three What/Why/Rule provider decisions, legacy decision pointers and session-tag note. |
+| `docs/pipeline-orchestrator.md` | Provider selection/switching, new model/budget rows, two-lens review, tags and park/resume documentation. |
+| `templates/docs/pipeline-orchestrator.md` | Generated mirror of the authoritative managed document. |
+| `docs/codebase-map.md` | Map provider resolution, explicit routing, session tags and dynamic dependency checks. |
+| `docs/architecture.md` | Document optional provider/backend-tag fields and absent-value semantics. |
+| `tasks/claude-provider-mode/notes.md` | Append implementation observations and validation discoveries. |
+| `tasks/claude-provider-mode/handoff.md` | Record implementation scope, AC evidence, interpretations and validation. |
+| `tasks/claude-provider-mode/status.json` | Pipeline phase bookkeeping through the required canon task command; no manual status edits. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
+The provenance source remains this task's status.json canon stamp.
 
 | Field | Source |
 |---|---|
@@ -31,107 +68,84 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Provider selection is explicit and durable: new tasks pin the environment setting, old tasks remain mixed, and each run holds one validated assignment. Backend tags prevent cross-provider session reuse. Only Claude-provider implement and spec_review retain a yielded session on failure; their subsequent prompts distinguish unfinished work from a completed implementation or revised spec.
+
+Claude code review keeps the anchored and spec-blind Claude lenses and the numbered scope record, while mixed review retains its cold-Codex gate. Prompt variables change authored role-holder text without rewriting injected task content. The existing mixed argv parity test and all 23 existing prompt golden values remain unchanged.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Kept the existing buildPipelineState(taskIds) signature rather than adding an optional provider argument. | A shared resolver uses the run's pinned provider, falling back to fixture/task pins for direct helper calls. No alternate assignment override is needed. | AC-3 preserved; the mid-run disk-pin change test passes. |
+| Reused the existing headless artifact/phase-command text in Claude implementer/spec-reviewer startup rather than modifying the shared Claude headless block. | This gives those new Claude-held phases the required Blockers rule while preserving existing mixed-mode runner prompts and argv. | AC-12 and AC-14 preserved. |
+
+No source edits exceed the Affected Files cap. The existing completion renderer and numbered archive writer needed no edits: `src/cli/commands/completion.ts` already consumes field metadata, and `src/orchestrator/review-archive.ts` already accepts an arbitrary record body.
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Exact provider parsing, lazy setting resolution, invalid-import test, pure policy and sole setting-name ownership checks. |
+| AC-2 | Met | Creation pinning/refusal, atomic setter refusal, backend-tag redirect, completion values and worktree-only mutation tests. |
+| AC-3 | Met | Required assignment parameters type-check. Full-tier fake-agent runs reach spec_review and implement with the expected backend/model; changing the disk pin mid-run leaves routing unchanged. |
+| AC-4 | Met | Mixed-provider bundle refuses before agent execution and leaves both status files byte-identical. |
+| AC-5 | Met | Four-slot table covers role/legacy/both forms, compatible/incompatible/untagged tags and clears. Phase-use, retry, fix-up, provider-switch and no-diff tests cover the wiring. |
+| AC-6 | Met | Failed Claude implement retains/tag-resumes an emitted ID with partial-work/park-reason wording; no-ID rerun starts fresh; revision and reroute keep precedence. |
+| AC-7 | Met | Failed first Claude spec review resumes without the revised-spec preamble; prior changes-requested review retains it. Mixed and Claude spec/code-review parks do not store failed sessions. |
+| AC-8 | Met | Both new phases cover all five sizes, delicate promotion, phase pins at every size, tier/legacy precedence and flat budget override. Existing matrix expectations pass. |
+| AC-9 | Met | Claude dry-run covers every phase; both retry phases use Claude matrix config; artifact fix-up resumes the compatible Claude implementer. |
+| AC-10 | Met | Injected dependency test forbids any cold-backend request, removes stale unnumbered findings, checks record headers, and resolves delta from the next round's record. Existing mixed hard-fail tests pass. |
+| AC-11 | Met | New round-1/round-2 Claude goldens contain the two-lens protocol without Codex passages. Existing mixed goldens remain byte-identical. |
+| AC-12 | Met | Every prompt builder, retry/fix-up prompts, startup stripping, Blockers rule, injected-content sentinel, implement log, reroute note and no-diff escalation are covered. |
+| AC-13 | Met | Doctor/init pass their Claude dependency checks without Codex; doctor skips its trust check and labels the setting source. Mixed run still requires Codex. Invalid provider errors contain no stack trace. |
+| AC-14 | Met | Original 15-site parity expectations unchanged. Full suite passed with all three new environment variables exported; existing mixed prompt values unchanged. |
+| AC-15 | Met | Decision entries, matrices, selection/switch/session docs and schema/module notes updated. Managed mirror and docs references pass. |
 
 ## Edge Cases Considered
 
-- ...
+- Unset/empty environment setting versus absent, invalid, null or case-mismatched stored pins.
+- Untagged role/legacy sessions inherit mixed backends; a mismatch clears the whole pair and its tag only at use.
+- Provider changes during a run affect the next run; incompatible sessions cannot cross backend boundaries.
+- A parked implement may have partial edits. Revision and reroute context takes precedence over park-resume context.
+- A failed Claude session without an emitted ID cannot create a resumable slot.
+- Numbered review records remain usable for delta scope even when no orchestrator cold lens ran.
+- Task IDs and missing status files keep their actionable validation errors before provider resolution.
+- Real subscription/budget exhaustion was not exercised; tests use fake executables and real subprocess/state paths. The spec's live Human Test Plan remains for review. Claude commit ownership remains prompt-only, and the implementation budget curve remains provisional.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+No implementation work or required automated validation is blocked.
+
+- [ambiguity] Provider switching describes old-versus-new assignments, but invalid old pins have no valid assignment. Interpreted clearing as comparing each session's recorded backend (or mixed attribution) against the new assignment. This matches states canon writes and permits repairing an invalid pin; documented in the existing plan notes and tested.
+- [ambiguity] The revised-spec preamble rule and mixed-mode preservation can differ after a mixed Codex park. Applied the new prior-changes-requested predicate to Claude-provider tasks only; mixed retains its existing resume-ID predicate, consistent with AC-14 and the plan's interpretation.
+
+The existing scope-policy reasons can still mention the legacy cold-Codex archive when a numbered record is missing or malformed. These are record diagnostics rather than a current role holder; left unchanged as planned to preserve mixed text. Normal Claude rounds write the record. No out-of-scope context-module edit was made; park resume replaces only the known fresh-mode header line after rendering.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| None | Feature; spec explicitly requires no red-first mechanism. | | | |
+
+Two post-implementation mutation checks validated test discrimination: removing park-session storage failed on the absent session ID, and bypassing the Claude cold-lens skip failed on the forbidden cold_reviewer dependency request. Both mutations were restored before the final passing full suite. These are not claimed as pre-fix evidence.
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Final source/test state. |
+| `npm run type-check` | Pass | Required assignment parameters and provider state compile. |
+| `npm test` | Pass | Final full run: 1,831 tests; 1,830 passed, 1 skipped, 0 failed. Ran with CANON_PROVIDER=claude, CLAUDE_MODEL_SPEC_REVIEW=unused-review-pin and CLAUDE_MODEL_IMPLEMENT=unused-implement-pin exported. The earlier invalid-ID ordering failure was corrected; its targeted regression and this full rerun pass. |
+| `npm run build` | Pass | Rebuilt both declared dist artifacts after the final runtime changes. |
+| `npm run docs-refs-check` | Pass | All references valid; rerun after handoff writing as well. |
+| `npm run sync-templates:check` | Pass | Authoritative managed doc and generated mirror agree. |
+| Scoped component tests | Pass | 354 tests across policy/backend/completion/prompts/review/task CLI. Additional scoped subprocess tests cover new recovery and message paths. |
+| Mutation discrimination | Pass | Both deliberately removed wiring lines caused their expected test failures; restored source passes. |
+| Prompt compatibility and structural scope checks | Pass | All 23 old golden values unchanged; sole provider-setting owner is the policy wrapper; pure policy has no environment reads; no source edits outside the cap. |
+| E2E | deferred_by_spec | Spec Validation Required explicitly marks E2E N/A because there is no UI surface. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met under the recorded interpretations.
+- [x] All applicable automated validation checks pass.
+- [x] Deviations, limitations and interpretations documented.

@@ -677,6 +677,7 @@ void test('task set routes writes to the task worktree status.json', () => {
         withEnv({ CANON_WORKTREES_ROOT: worktreesRoot }, () => {
             withCwd(worktree, () => {
                 captureStdout(() => taskSet(['worktree-set', 'task_size', 'XL']));
+                captureStdout(() => taskSet(['worktree-set', 'provider', 'claude']));
                 captureStdout(() => taskSet(['worktree-set', 'human_spec_gate', 'true']));
             });
         });
@@ -685,6 +686,8 @@ void test('task set routes writes to the task worktree status.json', () => {
         const worktreeStatus = readStatusFile(worktreeTaskDir);
         assert.equal(mainStatus.task_size, 'S');
         assert.equal(worktreeStatus.task_size, 'XL');
+        assert.equal(worktreeStatus.provider, 'claude');
+        assert.equal(mainStatus.provider, undefined);
         assert.equal(worktreeStatus.status, 'spec');
         assert.equal(mainStatus.human_spec_gate, false);
         assert.equal(worktreeStatus.human_spec_gate, true);
@@ -3187,5 +3190,43 @@ void test('task subcommands outside git refuse before creating tasks', () => {
             assert.match(result.stderr, /canon task requires a git repository/);
             assert.equal(fs.existsSync(path.join(root, 'tasks')), false);
         }
+    });
+});
+
+void test('task provider creation pins the environment and invalid input creates nothing', () => {
+    withTempDir('task-provider-new-', root => withCwd(root, () => {
+        fs.mkdirSync(path.join(root, '.canon'), { recursive: true });
+        fs.cpSync(path.join(WORKSPACE_ROOT, '.canon/templates'), path.join(root, '.canon/templates'), { recursive: true });
+        for (const [setting, expected] of [[undefined, 'mixed'], ['claude', 'claude']] as const) {
+            withEnv({ CANON_PROVIDER: setting, CANON_TASKS_DIR_OVERRIDE: path.join(root, 'tasks') }, () => {
+                captureStdout(() => taskNew([expected, 'Provider fixture']));
+                assert.equal(readStatusFile(path.join(root, 'tasks', expected)).provider, expected);
+            });
+        }
+        withEnv({ CANON_PROVIDER: 'bogus', CANON_TASKS_DIR_OVERRIDE: path.join(root, 'tasks') }, () => {
+            assert.throws(() => taskNew(['invalid', 'Invalid provider']), /Accepted values: mixed, claude/);
+            assert.equal(fs.existsSync(path.join(root, 'tasks', 'invalid')), false);
+        });
+    }));
+});
+
+void test('task provider setter clears only incompatible sessions and invalid values are atomic', () => {
+    withTasksRoot(root => {
+        const dir = writeTask(root, 'switch', makeStatus('switch', {
+            sessions: { author: 'author', implementer: 'impl', codex: 'legacy', spec_reviewer: 'spec', codex_spec_review: 'legacy-spec' },
+            session_backends: { author: 'claude', implementer: 'codex', spec_reviewer: 'codex' },
+        }));
+        const output = captureStdout(() => taskSet(['switch', 'provider', 'claude']));
+        assert.match(output, /Cleared sessions: spec_reviewer, implementer/);
+        assert.deepEqual(readStatusFile(dir).sessions, { author: 'author' });
+        assert.deepEqual(readStatusFile(dir).session_backends, { author: 'claude' });
+        assert.doesNotMatch(captureStdout(() => taskSet(['switch', 'provider', 'mixed'])), /Cleared/);
+        const before = fs.readFileSync(path.join(dir, 'status.json'), 'utf8');
+        for (const value of ['codex', 'bogus', '', 'Claude']) {
+            assert.throws(() => taskSet(['switch', 'provider', value]), /Accepted values: mixed, claude/);
+            assert.equal(fs.readFileSync(path.join(dir, 'status.json'), 'utf8'), before);
+        }
+        assert.throws(() => taskSet(['switch', 'session_backends', '{}']), /orchestrator-owned/);
+        assert.equal(fs.readFileSync(path.join(dir, 'status.json'), 'utf8'), before);
     });
 });

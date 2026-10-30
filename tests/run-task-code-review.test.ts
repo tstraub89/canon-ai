@@ -1,3 +1,4 @@
+import { MIXED_ROLE_ASSIGNMENT } from '../src/lib/pipeline-policy.js';
 import type { AgentBackend } from '../src/orchestrator/agents/backend.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -131,7 +132,7 @@ function taskContext(taskId: string): TaskContext {
 function makeState(taskIds: readonly string[]): PipelineState {
     return {
         tasks: taskIds.map(taskContext),
-        tier: 'full',
+        provider: 'mixed', tier: 'full',
         isBundle: taskIds.length > 1,
     };
 }
@@ -1479,9 +1480,9 @@ void test('rename-aware delta path set forces full when an untouched source move
         writeColdCodexArchive(dir, { round: 1, reviewedSha: prior, scope: 'full', base: 'main', reason: 'Round 1' }, 'prior');
         const bases: string[] = [];
         const deps = realGitDeps(activeCwd, []);
-        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const coldBackend = deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT);
         const cold = coldBackend.coldReview.bind(coldBackend);
-        deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
+        deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT).coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
         await runCodeReviewPhase(makeState(['rename']), false, null, deps);
         assert.deepEqual(bases, ['main']);
         assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-2.md'), 'utf8'), /X is outside the previous round's change set/);
@@ -1514,9 +1515,9 @@ void test('review scope follows prompt round, archives each invocation, and choo
             prompts.push(prompt);
             fs.writeFileSync(path.join(tasksRoot, taskId, 'review.md'), '# Review\n\n## Stage 1\n\nfilled\n');
         });
-        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const coldBackend = deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT);
         const cold = coldBackend.coldReview.bind(coldBackend);
-        deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
+        deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT).coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
 
         // A stale counter with no real Stage 1 still renders and archives Round 1.
         const statusPath = path.join(tasksRoot, taskId, 'status.json');
@@ -1567,9 +1568,9 @@ void test('review retry uses round N-1 archive; equal HEAD and non-ancestor forc
         writeColdCodexArchive(dir, { ...header, round: 2, reviewedSha: gitAt(activeCwd, 'rev-parse', 'HEAD') }, 'aborted attempt');
         const bases: string[] = [];
         const deps = realGitDeps(activeCwd, []);
-        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const coldBackend = deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT);
         const cold = coldBackend.coldReview.bind(coldBackend);
-        deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
+        deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT).coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
         await runCodeReviewPhase(makeState([id]), false, null, deps);
         assert.equal(bases.at(-1), prior);
         assert.equal(findColdCodexArchiveForRound(dir, 2)?.base, prior);
@@ -1604,9 +1605,9 @@ void test('missing, malformed, and unresolved previous records force full review
         writeStatusToFile(path.join(dir, 'status.json'), status);
         const deps = realGitDeps(activeCwd, []);
         const bases: string[] = [];
-        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const coldBackend = deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT);
         const cold = coldBackend.coldReview.bind(coldBackend);
-        deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
+        deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT).coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
         await runCodeReviewPhase(makeState([id]), false, null, deps);
         assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-1.md'), 'utf8'), /no cold-Codex archive record/);
         fs.writeFileSync(path.join(dir, 'review-cold-codex-run-2.md'), 'malformed header\n');
@@ -1640,9 +1641,9 @@ void test('failed delta facts force full scope before cold-Codex runs', { concur
             };
             deps.getDeltaLineStats = () => failedProbe === 'lines'
                 ? null : [{ path: 'src/foo.ts', added: 1, deleted: 0 }];
-            const coldBackend = deps.agentBackendFor('cold_reviewer');
+            const coldBackend = deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT);
             const cold = coldBackend.coldReview.bind(coldBackend);
-            deps.agentBackendFor('cold_reviewer').coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
+            deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT).coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
             await runCodeReviewPhase(makeState([name]), false, null, deps);
             assert.deepEqual(bases, ['main']);
             assert.match(fs.readFileSync(path.join(tasksRoot, name, 'review-cold-codex-run-1.md'), 'utf8'), expectedReason);
@@ -1707,9 +1708,9 @@ void test('archive records the SHA captured before cold-Codex if HEAD moves duri
         writeTask(tasksRoot, 'moving-head');
         const pinnedSha = initReviewRepo(activeCwd);
         const deps = realGitDeps(activeCwd, []);
-        const coldBackend = deps.agentBackendFor('cold_reviewer');
+        const coldBackend = deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT);
         const cold = coldBackend.coldReview.bind(coldBackend);
-        deps.agentBackendFor('cold_reviewer').coldReview = (...args) => {
+        deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT).coldReview = (...args) => {
             fs.appendFileSync(path.join(activeCwd, 'src/a.ts'), 'arrived during review\n');
             gitAt(activeCwd, 'add', '.');
             gitAt(activeCwd, 'commit', '-m', 'concurrent');
@@ -1776,3 +1777,44 @@ console.log(JSON.stringify({type:'turn.completed'}));
         });
     });
 }
+
+void test('Claude provider skips orchestrator cold lens, removes stale findings and preserves delta round records', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        const id = 'claude-review';
+        writeTask(tasksRoot, id);
+        const dir = path.join(tasksRoot, id);
+        fs.writeFileSync(path.join(dir, 'review-cold-codex.md'), 'stale Codex finding');
+        const events: string[] = [];
+        const deps = makeDeps({ activeCwd, events, onClaude: prompt => {
+            assert.match(prompt, /two-lens synthesis/);
+            assert.doesNotMatch(prompt, /cold-Codex|codex review|\bCodex\b/);
+        } });
+        const lookup = deps.agentBackendFor;
+        deps.agentBackendFor = (role, assignment) => {
+            assert.notEqual(role, 'cold_reviewer');
+            assert.equal(assignment[role], 'claude');
+            return lookup(role, assignment);
+        };
+        deps.findColdCodexArchiveForRound = findColdCodexArchiveForRound;
+        const state = makeState([id]); state.provider = 'claude';
+        await runCodeReviewPhase(state, false, null, deps);
+        assert.deepEqual(events, ['verifyBranch', 'foreman']);
+        assert.equal(fs.existsSync(path.join(dir, 'review-cold-codex.md')), false);
+        const first = findColdCodexArchiveForRound(dir, 1);
+        assert.deepEqual(first, { round: 1, reviewedSha: 'a'.repeat(40), scope: 'full', base: 'main', reason: 'Round 1 (initial review)' });
+        assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-1.md'), 'utf8'), /No orchestrator cold lens runs in Claude mode/);
+        fs.writeFileSync(path.join(dir, 'review.md'), '# Review\n\n## Stage 1\n');
+        const status = readStatus(id);
+        status.phases.code_review!.iterations_current_loop = 1;
+        status.phases.code_review!.iterations = 1;
+        writeStatusToFile(path.join(dir, 'status.json'), status);
+        deps.resolveCommit = ref => ref === 'HEAD' ? 'b'.repeat(40) : ref;
+        const secondState = makeState([id]); secondState.provider = 'claude';
+        await runCodeReviewPhase(secondState, false, 'foreman-session', deps);
+        const second = findColdCodexArchiveForRound(dir, 2);
+        assert.equal(second?.scope, 'delta');
+        assert.equal(second?.base, first?.reviewedSha);
+        assert.equal(second?.reviewedSha, 'b'.repeat(40));
+        assert.equal(fs.existsSync(path.join(dir, 'review-cold-codex.md')), false);
+    });
+});

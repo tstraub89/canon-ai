@@ -1,4 +1,4 @@
-import { requiredAgentBackends } from '../lib/pipeline-policy.js';
+import { requiredAgentBackends, roleAssignmentFor, resolveProviderSetting, type Provider } from '../orchestrator/policy.js';
 import { spawnSync } from 'node:child_process';
 
 interface Dep {
@@ -6,11 +6,11 @@ interface Dep {
     installHint: string;
 }
 
-const HARD_DEPS: Dep[] = [
+function hardDeps(provider: Provider): Dep[] { return [
     { cmd: 'git', installHint: 'https://git-scm.com/downloads' },
-    ...requiredAgentBackends().map(cmd => ({ cmd, installHint: cmd === 'claude'
+    ...requiredAgentBackends(roleAssignmentFor(provider)).map(cmd => ({ cmd, installHint: cmd === 'claude'
         ? 'npm install -g @anthropic-ai/claude-code' : 'npm install -g @openai/codex' })),
-];
+]; }
 
 const SOFT_DEPS: Dep[] = [
     { cmd: 'gh', installHint: 'brew install gh && gh auth login  (required for --pr / --push)' },
@@ -21,8 +21,11 @@ export function isAvailable(cmd: string): boolean {
     return result.status === 0;
 }
 
-export function checkDeps(available: (cmd: string) => boolean = isAvailable): void {
-    const missing = HARD_DEPS.filter(d => !available(d.cmd));
+export function checkDeps(available: (cmd: string) => boolean = isAvailable, provider?: Provider): void {
+    let resolved: Provider;
+    try { resolved = provider ?? resolveProviderSetting(); }
+    catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
+    const missing = hardDeps(resolved).filter(d => !available(d.cmd));
     if (missing.length > 0) {
         console.error('canon init requires the following tools to be installed:\n');
         for (const dep of missing) {

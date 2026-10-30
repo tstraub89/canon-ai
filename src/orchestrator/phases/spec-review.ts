@@ -1,3 +1,4 @@
+import { roleAssignmentFor } from '../policy.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -22,7 +23,7 @@ export function autoBlockSpecReview(taskIds: string[], iterationCount: number, r
 // artifact before advancing, rather than bypassing the gate. No-op when the
 // operator already recorded a verdict; a missing artifact is left for the
 // gate to report.
-function recordFastTierSpecApproval(taskId: string): void {
+function recordFastTierSpecApproval(taskId: string, reviewer: string): void {
     const artifactPath = path.join(taskDirFor(taskId), 'spec-review.md');
     let content: string;
     try {
@@ -32,7 +33,7 @@ function recordFastTierSpecApproval(taskId: string): void {
     }
     if (extractCheckedVerdict(content)) return;
     const checked = content.replace(/^- \[ \] (\*\*Approved\*\*)/m, '- [x] $1');
-    const note = '\n> Fast tier: Codex spec review skipped — human conversational spec approval recorded by the orchestrator.\n';
+    const note = `\n> Fast tier: ${reviewer} spec review skipped — human conversational spec approval recorded by the orchestrator.\n`;
     fs.writeFileSync(
         artifactPath,
         (checked !== content
@@ -47,6 +48,8 @@ export async function runSpecReviewPhase(
     resumeId: string | null,
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
+    const backend = agentBackendFor('spec_reviewer', roleAssignmentFor(state.provider));
+    const implementer = agentBackendFor('implementer', roleAssignmentFor(state.provider)).displayName;
     const taskIds = tasks.map(t => t.taskId);
 
     if (state.tier === 'fast') {
@@ -65,7 +68,7 @@ export async function runSpecReviewPhase(
             const planList = taskIds.map(id => `  tasks/${id}/plan.md`).join('\n');
             console.log('');
             console.log('════════════════════════════════════════════════════════');
-            console.log(`  ✋  SPEC GATE — Review before Codex implements.`);
+            console.log(`  ✋  SPEC GATE — Review before ${implementer} implements.`);
             console.log('');
             console.log('  Specs:');
             console.log(specList);
@@ -79,7 +82,7 @@ export async function runSpecReviewPhase(
         }
         info('Fast tier: auto-advancing spec_review and plan (written during spec phase).');
         for (const t of tasks) {
-            recordFastTierSpecApproval(t.taskId);
+            recordFastTierSpecApproval(t.taskId, backend.displayName);
             taskPhase(t.taskId, 'spec_review', 'done', 'approved');
             if (isPlanCombined(t.status)) {
                 taskPhase(t.taskId, 'plan', 'done');
@@ -95,13 +98,12 @@ export async function runSpecReviewPhase(
         process.exit(2);
     }
 
-    info(`Phase: spec_review (Codex reviews spec${state.isBundle ? 's' : ''})`);
+    info(`Phase: spec_review (${backend.displayName} reviews spec${state.isBundle ? 's' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'spec_review', 'in_progress');
-    const isReReview = resumeId !== null;
+    const isReReview = resumeId !== null && (state.provider !== 'claude' || specReviewCheck.count > 0);
     const specReviewPrompt = isReReview
         ? `The spec${state.isBundle ? 's have' : ' has'} been revised since your last review. Re-read the current spec.md ${state.isBundle ? 'files' : 'file'} from disk and produce a completely fresh review — do not replay or summarise your previous output.\n\n${promptSpecReview(state)}`
         : promptSpecReview(state);
-    const backend = agentBackendFor('spec_reviewer');
     const activeCwd = getActiveCwd(taskIds);
     const result = await backend.run({ role: 'spec_reviewer', phase: 'spec_review', tasks, prompt: specReviewPrompt, interactive: interactive, resumeId: resumeId, metricsContext: {
         taskId: taskIds.join('+'),

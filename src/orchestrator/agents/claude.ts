@@ -168,6 +168,7 @@ export async function runClaude(
             const onLine = (line: string): void => {
                 let event: Record<string, unknown>;
                 try { event = JSON.parse(line) as typeof event; } catch { return; }
+                if (typeof event.session_id === 'string' && event.session_id) sessionId = event.session_id;
                 const tick = formatLiveTick(event);
                 if (tick) console.log(tick);
                 if (event.type === 'assistant') {
@@ -243,20 +244,20 @@ export async function runClaude(
             if (result.spawnError) {
                 console.error(result.spawnError.message);
                 status = 'failed';
-                throw new AgentSessionError({ agent: 'claude', kind: 'spawn_error', reason: `claude session spawn error: ${result.spawnError.message}` });
+                throw new AgentSessionError({ sessionId, agent: 'claude', kind: 'spawn_error', reason: `claude session spawn error: ${result.spawnError.message}` });
             }
             if (result.stalled) {
                 status = 'failed';
-                throw new AgentSessionError({ agent: 'claude', kind: 'stalled', reason: 'claude session stalled' });
+                throw new AgentSessionError({ sessionId, agent: 'claude', kind: 'stalled', reason: 'claude session stalled' });
             }
             if (typeof result.exitCode === 'number' && result.exitCode !== 0) {
                 printClaudeTooOldHint(result.capturedStderr);
                 status = 'failed';
-                throw new AgentSessionError({ agent: 'claude', kind: 'exit_code', reason: `claude session exited ${result.exitCode} (possible budget exhaustion — see CLAUDE_BUDGET)`, exitCode: result.exitCode });
+                throw new AgentSessionError({ sessionId, agent: 'claude', kind: 'exit_code', reason: `claude session exited ${result.exitCode} (possible budget exhaustion — see CLAUDE_BUDGET)`, exitCode: result.exitCode });
             }
             if (result.signal) {
                 status = 'failed';
-                throw new AgentSessionError({ agent: 'claude', kind: 'signal', reason: `claude session received signal ${result.signal}`, signal: result.signal });
+                throw new AgentSessionError({ sessionId, agent: 'claude', kind: 'signal', reason: `claude session received signal ${result.signal}`, signal: result.signal });
             }
 
             return {
@@ -311,7 +312,7 @@ export const claudeBackend: AgentBackend = {
     id: 'claude',
     displayName: 'Claude',
     resolveConfig(phase, tasks) {
-        if (phase !== 'spec' && phase !== 'plan' && phase !== 'code_review' && phase !== 'qa') {
+        if (phase !== 'spec' && phase !== 'spec_review' && phase !== 'implement' && phase !== 'plan' && phase !== 'code_review' && phase !== 'qa') {
             throw new Error(`Claude has no config for phase ${phase}`);
         }
         return getClaudeConfig(phase, tasks);

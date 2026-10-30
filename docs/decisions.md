@@ -42,6 +42,8 @@ Installed-package mode identifies canon by `canon_version` rather than a borrowe
 
 ## Two distinct agents (Claude + Codex), never reviewing own output
 
+This rule applies to mixed mode; see "Claude-provider review independence (2026-10)" below for the opt-in exception.
+
 **Decision**: Claude is the architect/reviewer/QA. Codex is the implementer/spec-reviewer. Each agent reviews the *other*'s output, never its own.
 
 **Why**: A single agent doing everything is simpler — fewer prompts, fewer model integrations, no inter-agent contracts. But every agent has a blind spot for its own work: the same priors that produced output X tend to validate output X. Cross-review is what catches dropped ACs, scope drift, and subtle correctness bugs that a self-review would rationalize. The two-model split also lets each model do what it's best at — Claude leans architectural and tone-aware, Codex leans implementation-focused — with the spec/review boundary forcing structured handoffs that reduce silent disagreements.
@@ -557,8 +559,35 @@ Writing a route-back marker on an approved sibling was declined because it would
 
 ## Phases route by role through agent backends (2026-10)
 
+Provider selection and session safety are extended by "Per-task provider pins and backend-tagged sessions (2026-10)" below.
+
 **Decision**: Pipeline phases invoke roles through the backend interface. The only assignment remains author/reviewer/qa → Claude and spec_reviewer/implementer/cold_reviewer → Codex. Spec and plan share author but retain separate model pins. Cross-model review and each runner's argv, budgets and failure semantics are unchanged.
 
-**Sessions**: spec, spec_review, implement and code_review persist author, spec_reviewer, implementer and reviewer respectively. Plan and QA remain one-offs. Role keys take precedence over legacy read fallbacks; writes use only role keys, and clears remove both keys. Phase agent fields record the backend that ran rather than driving routing. In-flight task files need no bulk migration.
+**Sessions**: spec, spec_review, implement and code_review persist author, spec_reviewer, implementer and reviewer respectively. Plan and QA remain one-offs. Role keys take precedence over legacy read fallbacks; writes use only role keys with a parallel `session_backends` backend tag, and clears remove both keys and the tag. Phase agent fields record the backend that ran rather than driving routing. In-flight task files need no bulk migration.
 
 **Constraint**: A session id is valid only for the backend that created it. A follow-up provider-mode task must pin the provider per task at creation before changing role assignments, so a task never resumes a session with another backend. This foundation adds no provider selection surface.
+
+
+## Claude-provider review independence (2026-10)
+
+**What**: The opt-in `claude` provider uses separate Claude sessions for spec authorship, spec review, implementation, and code review. Its foreman synthesizes anchored and spec-blind cold-Claude lenses. The two-distinct-agents rule remains the default in `mixed` mode.
+
+**Why**: Operators with only Claude Code, or exhausted Codex quota, need an explicit way to finish a task. Separate sessions and spec-blind lenses offer independence of context, but do not provide a second model family's perspective. This is weaker review independence than mixed mode.
+
+**Rule**: Select `mixed` for cross-family review. Claude mode never claims cross-family independence; it preserves separate sessions and the cold lens's spec-blind framing. No automatic quota fallback changes the provider.
+
+## Provider-scoped orchestrator cold lens (2026-10)
+
+**What**: The orchestrator's cold-Codex lens and hard-fail rule apply only to `mixed`. In `claude`, the foreman runs its two Claude lenses without an orchestrator cold lens. Every completed review invocation still writes the numbered round record with reviewed SHA, round, scope, base, and reason.
+
+**Why**: Adding an orchestrator cold-Claude lens would duplicate the foreman's existing cold-Claude lens. Retaining the numbered record supports delta scope on the next round without inventing a second archive format.
+
+**Rule**: Mixed mode retains its mandatory cold lens and three-input synthesis. Claude mode writes a numbered `review-cold-codex-run-N.md` record stating the lens is skipped, removes stale unnumbered `review-cold-codex.md` findings, and synthesizes both Claude lenses under the same adjudication rules. The numbered filename remains for compatibility. This narrows the earlier cold-independent-review and cold-Codex decisions to mixed mode.
+
+## Per-task provider pins and backend-tagged sessions (2026-10)
+
+**What**: `CANON_PROVIDER` selects `mixed` (default) or `claude` when creating tasks and checking environment dependencies. Task creation stamps `status.json.provider`; absent pins mean mixed. A run resolves its bundle's pin once before phases start and refuses different providers in one bundle. `canon task set <id> provider <mixed|claude>` changes the next run's assignment and reports cleared incompatible sessions.
+
+**Why**: A session id belongs to the backend that created it. A provider switch must not resume a Codex id through Claude, and an environment change must not silently reroute an existing task. This supersedes the foundation's constraint to pin a provider before changing role assignments.
+
+**Rule**: Every stored role session has a backend tag in `session_backends`; clears remove the role key, legacy key and tag. Untagged role and legacy sessions are attributed to the mixed assignment. Validate compatibility at slot use, warning and clearing mismatches before starting fresh. Only Claude-provider implement and spec_review failures retain a yielded Claude session id when parked; the next run resumes unfinished work, while revision and reroute prompts keep precedence. Other phases and mixed-provider failures keep their prior park semantics. Codex-only mode is unsupported. Claude implementation budgets are provisional ($10/$15/$25/$40/$60); `CLAUDE_BUDGET` overrides all Claude phases, including spec_review and implement. Calibrate the curve against subsequent invocation metrics.

@@ -1,3 +1,4 @@
+import { roleAssignmentFor, type AgentRole } from '../policy.js';
 import { DEFAULT_PROTECTED_DOCS } from '../docs-freshness.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
 import { taskDirFor } from '../state.js';
 import { findNewestReviewArchive } from '../review-archive.js';
-import { CLAUDE_STARTUP, CODEX_STARTUP, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
+import { CLAUDE_STARTUP, implementationStartup, CODEX_HEADLESS, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
 import type { PipelineState, TaskContext } from '../types.js';
 import codeReviewForemanTemplate from './templates/code-review-foreman.md';
@@ -124,11 +125,26 @@ function buildDocsMapBlock(paths?: Readonly<Record<string, readonly string[]>>):
     ].join('\n');
 }
 
+function roleHolder(state: PipelineState, role: AgentRole): string {
+    return roleAssignmentFor(state.provider)[role] === 'claude' ? 'Claude' : 'Codex';
+}
+function roleView(state: PipelineState): object {
+    return {
+        implementer: roleHolder(state, 'implementer'), specReviewer: roleHolder(state, 'spec_reviewer'),
+        mixedProvider: state.provider !== 'claude',
+        toolExamples: state.provider === 'claude' ? 'Claude, canon, an LLM' : 'Claude, Codex, canon, an LLM',
+    };
+}
+function implementerStartup(state: PipelineState): string {
+    return implementationStartup(state.provider) + (state.provider === 'claude' ? `\n\n${CODEX_HEADLESS}` : '');
+}
+
 export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<string, readonly string[]>>): string {
     const { tasks, tier, isBundle } = state;
     const combined = tier === 'fast';
     const task = tasks[0];
     return render('spec.md', {
+        ...roleView(state),
         docsMapBlock: buildDocsMapBlock(docsPaths),
         header: isBundle
             ? `You are writing specs for a bundle of ${tasks.length} related tasks for ${config.projectName}.\n\nBundle tasks:\n${taskList(tasks)}`
@@ -139,7 +155,7 @@ export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<str
                 `**Task \`${t.taskId}\`**: Write tasks/${t.taskId}/spec.md using the template.` +
                 (combined ? ` Also write tasks/${t.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns.` : '')
             ).join('\n\n') + (combined ? `\n\n${planFeasibilityCheck("in each plan.md's Approach section")}` : '')
-            : `Write tasks/${task.taskId}/spec.md using the template in .canon/templates/spec.md. Be concrete — Codex implements directly from this.` +
+            : `Write tasks/${task.taskId}/spec.md using the template in .canon/templates/spec.md. Be concrete — ${roleHolder(state, 'implementer')} implements directly from this.` +
               (combined ? `\n\nAlso write tasks/${task.taskId}/plan.md with ordered implementation steps, specific file references, and existing patterns to use.\n\n${planFeasibilityCheck("in plan.md's Approach section")}` : ''),
         bundleNote: isBundle ? '\nThese tasks are related — consider cross-task interactions while speccing.' : '',
         doneNote: combined
@@ -170,6 +186,7 @@ export function promptSpecRevision(state: PipelineState, docsPaths?: Readonly<Re
         .join('\n');
 
     return render('spec-revision.md', {
+        ...roleView(state),
         docsMapBlock: buildDocsMapBlock(docsPaths),
         projectName: config.projectName,
         startup: CLAUDE_STARTUP,
@@ -234,8 +251,9 @@ export function promptSpecReview(state: PipelineState): string {
         }).join('\n');
 
         return render('spec-review-reroute.md', {
+            ...roleView(state),
             projectName: config.projectName,
-            startup: CODEX_STARTUP,
+            startup: implementerStartup(state),
             taskScope: tasks.length > 1 ? 'a bundle of amended specs' : 'an amended spec',
             roundBanner,
             taskLines,
@@ -250,8 +268,9 @@ export function promptSpecReview(state: PipelineState): string {
     ).join('\n');
 
     return render('spec-review.md', {
+        ...roleView(state),
         projectName: config.projectName,
-        startup: CODEX_STARTUP,
+        startup: implementerStartup(state),
         taskScope: tasks.length > 1 ? 'a bundle of specs' : 'a spec',
         taskLines,
         combined,
@@ -289,6 +308,7 @@ export function promptPlan(state: PipelineState): string {
         }).join('\n');
 
         return render('plan-reroute.md', {
+            ...roleView(state),
             projectName: config.projectName,
             startup: CLAUDE_STARTUP,
             taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
@@ -304,6 +324,7 @@ export function promptPlan(state: PipelineState): string {
     ).join('\n');
 
     return render('plan.md', {
+        ...roleView(state),
         projectName: config.projectName,
         startup: CLAUDE_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
@@ -326,10 +347,11 @@ export function promptImplement(
     ).join('\n');
 
     return render('implement.md', {
+        ...roleView(state),
         projectName: config.projectName,
         taskScope: tasks.length > 1 ? 'a bundle of related tasks' : `task "${tasks[0].taskId}"`,
         stateHeader: buildImplementStateHeader(state, mode),
-        startup: CODEX_STARTUP,
+        startup: implementerStartup(state),
         risksBlock: buildKnownRisks(taskIds),
         pitfallsBlock: buildKnownPitfalls(taskIds),
         contextBlock: buildContextBlock(taskIds),
@@ -338,6 +360,19 @@ export function promptImplement(
         isBundle: tasks.length > 1,
         phaseCommands: phaseCommands(taskIds, 'implement', 'done'),
     });
+}
+
+export function promptImplementParkResume(state: PipelineState, affectedFiles?: readonly string[] | null, baseBranch?: string): string {
+    const reason = state.tasks.flatMap(task => task.status.escalations ?? []).filter(entry => entry.phase === 'implement').at(-1)?.reason ?? 'agent session failure';
+    return [
+        `The previous session stopped before finishing: ${reason}`,
+        'Work may be partial. Re-read the spec and plan and inspect the current working tree. Continue the implementation against the spec and plan, then validate, write handoff.md, and run the phase command for every task.',
+        '',
+        promptImplement(state, 'fresh', affectedFiles, baseBranch).replace(
+            '- Mode: **fresh** — first implementation pass — no prior work on this phase',
+            '- Mode: **park resume** — previous session stopped before finishing; work may be partial',
+        ),
+    ].join('\n');
 }
 
 export function promptImplementResume(state: PipelineState): string {
@@ -403,10 +438,11 @@ export function promptImplementRevisions(
             : '';
 
     return render('implement-revisions.md', {
+        ...roleView(state),
         projectName: config.projectName,
         taskScope: tasks.length > 1 ? 'a bundle of related tasks' : `task "${tasks[0].taskId}"`,
         stateHeader,
-        startup: CODEX_STARTUP,
+        startup: implementerStartup(state),
         affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         iterBanner,
         handoffAppend,
@@ -470,12 +506,13 @@ export function promptImplementReroute(
     const preamble = isResumedSession
         ? 'Your session is being continued with spec amendments. The spec has been updated since your last turn — new ACs, new sections, or revised requirements have been added. The prior implementation round may be complete or partial, so confirm the current state from the worktree rather than from memory: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.'
         : 'A human decided this task needed a spec amendment after implementation began, wrote the amendment into spec.md, and rerouted the task. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is a fresh agent session, **not** a resume of a prior session — that refers to the session, not to whether the prior implementation round finished. The prior implementation round may be complete or partial: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.';
-    const startup = isResumedSession ? '' : CODEX_STARTUP;
+    const startup = isResumedSession ? (state.provider === 'claude' ? CODEX_HEADLESS : '') : implementerStartup(state);
     const groundingRule = isResumedSession
         ? 'Grounding rule: re-read the amended spec.md, and handoff.md if it has been filled in, before changing anything. The spec has new requirements — do not assume your prior memory of the spec is complete.'
         : 'Grounding rule: re-open the amended spec, and the current handoff if it has been filled in, before changing anything. Session memory is stale by design on reroute rounds.';
 
     return render('implement-reroute.md', {
+        ...roleView(state),
         projectName: config.projectName,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
         stateHeader,
@@ -608,6 +645,7 @@ export function promptCodeReview(
         : '';
 
     return render('code-review-foreman.md', {
+        ...roleView(state),
         projectName: config.projectName,
         startup: CLAUDE_STARTUP,
         taskScope: tasks.length > 1 ? 'a bundle of tasks' : `task "${tasks[0].taskId}"`,
@@ -648,6 +686,7 @@ export function promptQa(state: PipelineState, prTemplate?: string | null,
     ).join('\n');
 
     return render('qa.md', {
+        ...roleView(state),
         lessonsFragments: tasks.length === 1
             ? `  Append the lesson to \`tasks/${tasks[0].taskId}/lessons.md\`.`
             : [
