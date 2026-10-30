@@ -1,0 +1,18 @@
+# Notes
+
+Raw observations from any phase. Prefix with phase name. Distilled into the task’s `lessons.md` fragment during QA; `--ship` folds it into `docs/lessons-learned.md`.
+
+<!-- Append below this line -->
+
+[spec_review] The mandatory assignment parameter reaches the status-template assertion in tests/run-task-validation.test.ts:4357. Completion metadata is also pinned outside the golden, in tests/completion.test.ts:35 and :402–407. Both test files need explicit Affected Files entries; recorded together as F1.
+
+[spec] Round 2: resolved spec_review F1 by adding tests/completion.test.ts and tests/run-task-validation.test.ts to Affected Files. Swept tests/ for every other caller of agentBackendFor/roleBackendId/requiredAgentBackends/HARD_DEPS and every SETTABLE_FIELDS/TASK_SET_FIELD_VALUES pin; all remaining sites are in files already listed.
+
+[spec_review] Fresh round: parseAffectedFilesFromSpec recognizes 46 paths with no malformed entries or missing files. Rechecked routing, session recovery, dependency and prompt contracts against current code; no findings.
+
+[plan] 1. Spec gap (scope): `src/orchestrator/context.ts` is not in Affected Files, but its `buildImplementStateHeader` renders the implement Mode line. The 'resume' mode says "Code changes are already in place", and 'fresh' says "first implementation pass — no prior work". Both are false for a park resume. Rather than widen scope, the plan has `promptImplementParkResume` render with 'fresh' and string-replace that one Mode line with a park-resume line, pinned by a prompt test. A follow-up could add a `park_resume` ImplementMode in context.ts.
+[plan] 2. Interpretation: `canon task set <id> provider` clears each slot whose *recorded* backend (tag, or mixed attribution when untagged) differs from the new assignment's backend for that role. The spec words it as "old vs new assignment". The two give the same result for every state canon writes, and the recorded-backend rule is still defined when the stored provider is invalid (e.g. "Claude") and has no old assignment.
+[plan] 3. Interpretation: the spec_review "has been revised since your last review" preamble keeps today's rule (`resumeId !== null`) on mixed tasks. On claude tasks it requires a prior changes_requested round in the current loop (`spec_review.iterations_current_loop > 0`). Applying the new rule to mixed would change mixed prompts after a crashed-Codex park, and AC-14 / Non-Goals forbid that.
+[plan] 4. Residual: `resolveCodeReviewScope` reason strings ("no/unparseable cold-Codex archive record…") are rendered into the foreman's Scope line. On a claude task they can still appear when a round record is missing or malformed. They are left unchanged because rewording them would change mixed prompts. Normal Claude-mode rounds always write a record, so AC-11's fixtures don't hit them.
+[plan] 5. Ordering: `main.ts` `checkDeps` now checks that each task's status.json exists and resolves the provider *before* the agent-binary check, because which binaries are required depends on the pinned provider. If both faults are present (missing binary and missing status.json), the status.json error is reported first instead of the binary error.
+[plan] 6. Side effect: `src/cli/deps.ts` and `doctor.ts` now import `src/orchestrator/policy.ts`, whose module-level config runs `parseMaxReviewLoops`. As a result, `canon init` and `canon doctor` print the existing "Invalid MAX_REVIEW_LOOPS" warning when that env var is malformed. This is harmless and noted for review.
