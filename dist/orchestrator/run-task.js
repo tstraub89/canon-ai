@@ -7428,8 +7428,7 @@ async function runSpecReviewPhase(state, interactive, resumeId) {
   }
   info(`Phase: spec_review (${backend.displayName} reviews spec${state.isBundle ? "s" : ""})`);
   for (const t of tasks) taskPhase(t.taskId, "spec_review", "in_progress");
-  const hadChangesRequested = specReviewCheck.count > 0 || tasks.some((t) => (t.status.phases.spec_review?.changes_requested_total ?? 0) > 0);
-  const isReReview = resumeId !== null && (state.provider !== "claude" || hadChangesRequested);
+  const isReReview = resumeId !== null && (state.provider !== "claude" || specReviewCheck.count > 0);
   const specReviewPrompt = isReReview ? `The spec${state.isBundle ? "s have" : " has"} been revised since your last review. Re-read the current spec.md ${state.isBundle ? "files" : "file"} from disk and produce a completely fresh review \u2014 do not replay or summarise your previous output.
 
 ${promptSpecReview(state)}` : promptSpecReview(state);

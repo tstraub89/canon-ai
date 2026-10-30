@@ -1,1 +1,1 @@
-No actionable regressions were found in the changed code paths. The tests, type-check, lint, build, and template synchronization check completed successfully.
+No actionable regressions were identified in the diff. Type-checking, tests, and lint completed successfully.

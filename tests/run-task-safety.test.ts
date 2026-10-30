@@ -11434,8 +11434,8 @@ void test('Claude spec re-review keeps the revised-spec preamble after changes r
     });
 });
 
-for (const provider of ['claude', 'mixed'] as const) {
-    void test(`${provider} spec re-review keeps the revised-spec preamble after reset-spec-review`, () => {
+for (const provider of ['claude', 'mixed'] as const) for (const resetFrom of ['loop cap', 'gate halt'] as const) {
+    void test(`${provider} spec review reset after ${resetFrom} uses the correct session`, () => {
         withTempDir('provider-reset-rereview-', dir => {
             const taskId = 'reset-rereview';
             const fixture = prepareReviewEntryMainFixture(dir, taskId, true, false);
@@ -11443,8 +11443,12 @@ for (const provider of ['claude', 'mixed'] as const) {
             const backend = provider === 'claude' ? 'claude' : 'codex';
             status.provider = provider;
             Object.assign(status.phases.spec_review!, {
-                status: 'blocked', verdict: 'changes_requested', iterations: 3,
-                iterations_current_loop: 3, iterations_total: 3, changes_requested_total: 3,
+                status: resetFrom === 'loop cap' ? 'blocked' : 'done',
+                verdict: resetFrom === 'loop cap' ? 'changes_requested' : 'approved',
+                iterations: resetFrom === 'loop cap' ? 3 : 1,
+                iterations_current_loop: resetFrom === 'loop cap' ? 3 : 1,
+                iterations_total: resetFrom === 'loop cap' ? 3 : 1,
+                changes_requested_total: resetFrom === 'loop cap' ? 3 : 0,
             });
             status.sessions = { spec_reviewer: 'review-session' };
             status.session_backends = { spec_reviewer: backend };
@@ -11461,9 +11465,9 @@ assert.equal(deriveTopLevelStatus(readStatus('${taskId}')), 'spec_review');
             const afterReset = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
             assert.equal(afterReset.phases.spec_review?.iterations, 0);
             assert.equal(afterReset.phases.spec_review?.iterations_current_loop, 0);
-            assert.equal(afterReset.phases.spec_review?.changes_requested_total, 3);
-            assert.equal(afterReset.sessions?.spec_reviewer, 'review-session');
-            assert.equal(afterReset.session_backends?.spec_reviewer, backend);
+            assert.equal(afterReset.phases.spec_review?.changes_requested_total, resetFrom === 'loop cap' ? 3 : 0);
+            assert.equal(afterReset.sessions?.spec_reviewer, provider === 'claude' ? undefined : 'review-session');
+            assert.equal(afterReset.session_backends?.spec_reviewer, provider === 'claude' ? undefined : backend);
             const log = path.join(dir, 'argv');
             const result = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, taskId, 3, [], {
                 FAKE_AGENT_ARGV_LOG: log, FAKE_AGENT_COMPLETE_PHASE: 'spec_review',
@@ -11472,14 +11476,59 @@ assert.equal(deriveTopLevelStatus(readStatus('${taskId}')), 'spec_review');
             const entry = JSON.parse(fs.readFileSync(log, 'utf8').trim()) as { agent: string; argv: string[] };
             assert.equal(entry.agent, backend);
             if (provider === 'claude') {
-                assert.equal(entry.argv[entry.argv.indexOf('--resume') + 1], 'review-session');
+                assert.equal(entry.argv.includes('--resume'), false);
+                assert.doesNotMatch(entry.argv[1], /has been revised since your last review/);
             } else {
                 assert.deepEqual(entry.argv.slice(0, 3), ['exec', 'resume', 'review-session']);
+                assert.match(entry.argv.join('\n'), /has been revised since your last review/);
             }
-            assert.match(entry.argv.join('\n'), /has been revised since your last review/);
         });
     });
 }
+
+void test('Claude spec review park after reroute ignores earlier-loop changes-requested history', () => {
+    withTempDir('provider-reroute-park-', dir => {
+        const taskId = 'reroute-park';
+        const fixture = prepareReviewEntryMainFixture(dir, taskId, true, false);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        status.provider = 'claude';
+        Object.assign(status.phases.spec_review!, {
+            iterations: 2, iterations_current_loop: 2, changes_requested_total: 2,
+        });
+        status.sessions = { spec_reviewer: 'prior-loop-session' };
+        status.session_backends = { spec_reviewer: 'claude' };
+        writeTaskStatus(fixture.tasksRoot, taskId, status);
+        fs.appendFileSync(path.join(fixture.tasksRoot, taskId, 'spec.md'), '\n## Amendment\n\nReview the amendment.\n');
+        const reroute = runNodeInline(`
+import assert from 'node:assert/strict';
+import { rerouteFromHumanReview } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+import { deriveTopLevelStatus, readStatus } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/state.ts')).href}';
+rerouteFromHumanReview(['${taskId}']);
+const status = readStatus('${taskId}');
+assert.equal(deriveTopLevelStatus(status), 'spec_review');
+assert.equal(status.phases.spec_review.iterations_current_loop, 0);
+assert.equal(status.phases.spec_review.changes_requested_total, 2);
+assert.equal(status.sessions.spec_reviewer, undefined);
+`, { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot }, fixture.localDir);
+        assert.equal(reroute.status, 0, combinedOutput(reroute));
+        const log = path.join(dir, 'argv');
+        writeExecutable(fixture.fakeBins, 'claude', [
+            'if [ "${1:-}" = "--version" ]; then echo "fake-agent 1.0"; exit 0; fi',
+            'node -e \'require("fs").appendFileSync(process.env.FAKE_AGENT_ARGV_LOG,JSON.stringify(process.argv.slice(1))+"\\n")\' -- "$@"',
+            'printf \'{"type":"result","session_id":"amendment-session","result":"partial"}\\n\'',
+            'exit 1',
+        ]);
+        for (const resumed of [false, true]) {
+            const run = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, taskId, 3, [], { FAKE_AGENT_ARGV_LOG: log });
+            assert.equal(run.status, 2, combinedOutput(run));
+            const entries = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]);
+            const argv = entries.at(-1)!;
+            assert.equal(argv.includes('--resume'), resumed);
+            if (resumed) assert.equal(argv[argv.indexOf('--resume') + 1], 'amendment-session');
+            assert.doesNotMatch(argv[1], /has been revised since your last review/);
+        }
+    });
+});
 
 void test('Claude fast-tier reroute note names the pinned implementer and clears reviewer tags', () => {
     withTempDir('provider-reroute-', dir => {

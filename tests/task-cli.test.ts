@@ -1139,6 +1139,25 @@ void test('task reset-spec-review archives prior review and resets loop-local fi
     });
 });
 
+for (const provider of ['mixed', 'claude'] as const) for (const backend of ['claude', 'codex', undefined] as const) {
+    void test(`task reset-spec-review clears only a Claude-held reviewer pair (${provider}, ${backend ?? 'untagged'})`, () => {
+        withTasksRoot(tasksRoot => {
+            const taskDir = writeTask(tasksRoot, 'reset-backend', makeStatus('reset-backend', {
+                provider,
+                sessions: { spec_reviewer: 'role-id', codex_spec_review: 'legacy-id', implementer: 'keep-id' },
+                session_backends: { ...(backend ? { spec_reviewer: backend } : {}), implementer: 'claude' },
+            }));
+            captureStdout(() => taskResetSpecReview('reset-backend'));
+            const updated = readStatusFile(taskDir);
+            assert.equal(updated.sessions?.spec_reviewer, backend === 'claude' ? undefined : 'role-id');
+            assert.equal(updated.sessions?.codex_spec_review, backend === 'claude' ? undefined : 'legacy-id');
+            assert.equal(updated.session_backends?.spec_reviewer, backend === 'claude' ? undefined : backend);
+            assert.equal(updated.sessions?.implementer, 'keep-id');
+            assert.equal(updated.session_backends?.implementer, 'claude');
+        });
+    });
+}
+
 void test('task reset-spec-review re-arms a spec gate that already halted, except under full-send', () => {
     withTasksRoot(tasksRoot => {
         const approvedSpecReview = {

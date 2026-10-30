@@ -265,3 +265,73 @@ node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pat
 ### Blockers
 
 None. No new ambiguity or plan deviation. E2E remains deferred by the spec's Validation Required section (no UI surface); earlier evidence and interpretations above are retained.
+
+
+## Iteration 3 — addressing review round 2
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `src/task/index.ts` | Reset clears a reviewer role/legacy pair and backend tag when storedSessionBackend identifies Claude. Codex and untagged reviewer sessions retain the existing behavior. |
+| `src/orchestrator/phases/spec-review.ts` | Restore the loop-local re-review predicate; remove cumulative-history inference and its explanatory comment. |
+| `dist/cli/index.js` | Rebuilt CLI bundle with the reset session clear. |
+| `dist/orchestrator/run-task.js` | Rebuilt orchestrator bundle with the restored preamble predicate. |
+| `tests/run-task-safety.test.ts` | Replace the prior reset assertions with fresh-Claude/resumed-Codex cases for both loop-cap and gate-halt resets; exercise a real full-tier reroute followed by first-review park/resume. |
+| `tests/task-cli.test.ts` | Pin paired role/legacy/tag clearing for Claude-held reviewers across both provider pins, including Codex/untagged preservation and unrelated-slot preservation. |
+| `tests/recovery-hints.test.ts` | Remove the registry entry for the removed source comment. |
+| `docs/pipeline-orchestrator.md` | Document Claude-held reviewer clearing on reset and retained Codex reviewer sessions. |
+| `templates/docs/pipeline-orchestrator.md` | Generated mirror of the authoritative reset guidance. |
+| `tasks/claude-provider-mode/handoff.md` | Append this round's correction, regression evidence and validation. |
+| `tasks/claude-provider-mode/notes.md` | Explain why lifetime rejection history cannot distinguish current-loop park continuity. |
+| `tasks/claude-provider-mode/metrics.md` | Preserve pipeline-owned invocation telemetry present at revision entry. |
+| `tasks/claude-provider-mode/review.md` | Preserve the pipeline-owned round-2 findings addressed here. |
+| `tasks/claude-provider-mode/review-cold-codex.md` | Preserve the latest pipeline-owned mixed cold findings. |
+| `tasks/claude-provider-mode/review-cold-codex-run-4.md` | Preserve the latest pipeline-owned numbered mixed archive. |
+| `tasks/claude-provider-mode/status.json` | Preserve pipeline-owned state and complete implement through the required command. |
+
+### Findings addressed
+
+- Correctness bug F1(a): reset after either a loop-cap block or a first-round spec-gate approval now drops a Claude-held reviewer session pair and backend tag in `src/task/index.ts:1120`. The next Claude review starts fresh. Stored Codex sessions remain available for mixed resume with the revised-spec preamble.
+- Correctness bug F1(b): `src/orchestrator/phases/spec-review.ts:103` again checks only current-loop review history for Claude. The new integration test invokes the real full-tier reroute, verifies that it cleared the old reviewer and zeroed the loop count while retaining lifetime history, then parks and resumes the first amendment review. The resumed prompt contains no false revised-spec preamble.
+- This supersedes Iteration 2's cumulative-counter fix and its reset-session expectations. The earlier record is preserved as history. Existing ordinary re-review and first-pass park controls remain green. Optional nits are deferred as requested.
+
+### AC deltas
+
+- AC-5: Met; reset clearing now uses the existing stored-backend and paired-clear helpers, and a six-case table verifies role/legacy/tag behavior and unrelated-slot preservation.
+- AC-7 / Decision 7: Met; both reset shapes start a fresh Claude review, while a first review parked after reroute resumes without inferring completion from earlier-loop history. Ordinary changes-requested re-reviews still get the preamble.
+- AC-14: Met; both mixed reset controls retain their Codex session and preamble, and the full suite passes with provider/model environment overrides exported.
+- AC-15: Met; the reset command row and its synced mirror describe the new Claude behavior.
+- AC-16 through AC-19: unchanged, covered by the passing full suite; no record-family behavior or mixed golden values changed.
+
+### Red-First Evidence
+
+These voluntary regressions ran against the committed production code before this round's non-test edits. Production files were clean at entry; dirty paths were pipeline task artifacts. No new mandatory red-first AC was added.
+
+| AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
+| F1(a) / AC-5, AC-7 | Reset/reroute regression command below | b38025c210a39544ca3a17d10e3e385ef9c1a843 | Both Claude reset cases retained review-session instead of clearing it; both mixed controls passed. | All four reset cases pass, including fresh Claude argv and retained mixed resume/preamble. |
+| F1(b) / AC-7 | Reset/reroute regression command below | b38025c210a39544ca3a17d10e3e385ef9c1a843 | After a real reroute and park, resumed amendment-session incorrectly received “has been revised since your last review”. | Parked amendment-session resumes without that preamble. |
+| F1(a) / AC-5 | Backend-tag regression command below | b38025c210a39544ca3a17d10e3e385ef9c1a843 | The two Claude-tagged cases retained the reviewer pair; the four Codex/untagged controls passed. | All six cases pass; role key, legacy key and tag clear together only for a Claude-held reviewer. |
+
+```bash
+node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='spec review reset after|Claude spec review park after reroute' tests/run-task-safety.test.ts
+node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='clears only a Claude-held reviewer pair' tests/task-cli.test.ts
+```
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run build` | Pass | Both declared bundles rebuilt, each with the corresponding revision change. |
+| `npm run type-check` | Pass | Shared helper imports and test fixtures compile. |
+| `npm run lint` | Pass | Final source and tests pass. |
+| `npm test` | Pass | Full suite: 1,860 tests, 1,859 passed, 1 skipped, 0 failed. Ran with CANON_PROVIDER=claude, CLAUDE_MODEL_SPEC_REVIEW=unused-review-pin and CLAUDE_MODEL_IMPLEMENT=unused-implement-pin. |
+| `npm run sync-templates:check` | Pass | Managed reset guidance and generated mirror agree. |
+| `npm run docs-refs-check` | Pass | All refs valid, including a rerun after this appended handoff. |
+| Focused recovery tests | Pass | 16 tests: both first-pass park controls, ordinary re-review, four reset cases, actual reroute park/resume, six backend-tag cases and two hint-registry cases. |
+| Golden / scope / cumulative coverage checks | Pass | Prompt/completion goldens unchanged; source edits are within Affected Files; Changes tables cover all committed and current paths. Whitespace check passes. |
+
+### Blockers
+
+None. The review's requested session-clear approach replaces the earlier counter-based approach; no new ambiguity or scope deviation. E2E remains deferred by the spec's Validation Required section (no UI surface).

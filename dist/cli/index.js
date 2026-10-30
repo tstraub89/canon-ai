@@ -4969,6 +4969,7 @@ function taskResetSpecReview(id) {
   specReview.iterations_current_loop = 0;
   specReview.verdict = "";
   clearSessionPair(status, "author");
+  if (storedSessionBackend(status, "spec_reviewer") === "claude") clearSessionPair(status, "spec_reviewer");
   const rearmGate = status.full_send !== true && status.human_spec_gate !== true;
   if (rearmGate) status.human_spec_gate = true;
   status.updated = today();

@@ -13,7 +13,7 @@ import {
     verifyHandoffAgainstDiffFromData,
 } from '../orchestrator/validation.js';
 import { filterGitIgnoredPaths } from '../orchestrator/git.js';
-import { assertManagedInvocationRoot, clearMismatchedSessions, clearSessionPair, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, isRerouteAdmitted, resolveTaskCwd, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
+import { assertManagedInvocationRoot, clearMismatchedSessions, clearSessionPair, deriveTopLevelStatus, effectiveWorktreesRoot, isOrphanedWorktreeState, isRerouteAdmitted, resolveTaskCwd, storedSessionBackend, taskDirForRepoRoot, validateBranchField } from '../orchestrator/state.js';
 import { PIPELINE_TELEMETRY_FILES } from '../orchestrator/worktree.js';
 import { PHASE_ORDER, type Phase, type PhaseEntry, type PhaseStatus, type StatusJson, type Verdict } from '../orchestrator/types.js';
 import { isPlanCombined, SIZE_ORDER, type TaskSize } from '../lib/pipeline-policy.js';
@@ -1117,6 +1117,7 @@ export function taskResetSpecReview(id: string): void {
     specReview.iterations_current_loop = 0;
     specReview.verdict = '';
     clearSessionPair(status, 'author');
+    if (storedSessionBackend(status, 'spec_reviewer') === 'claude') clearSessionPair(status, 'spec_reviewer');
     // The spec gate disarms itself when it halts, so a reset after that halt
     // would otherwise let the next run continue straight past spec_review.
     const rearmGate = status.full_send !== true && status.human_spec_gate !== true;
