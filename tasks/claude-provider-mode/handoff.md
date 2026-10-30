@@ -149,3 +149,76 @@ Two post-implementation mutation checks validated test discrimination: removing 
 - [x] All spec ACs met under the recorded interpretations.
 - [x] All applicable automated validation checks pass.
 - [x] Deviations, limitations and interpretations documented.
+
+## Iteration 2 — addressing review round 1
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `src/orchestrator/agents/claude.ts` | Forward and honor wrapForResume in both delivery modes; add the missing completion sentence only to unattended implementer/spec-reviewer calls; isolate and narrow session-ID capture per subprocess attempt. |
+| `src/orchestrator/prompts/helpers.ts` | Define the standalone artifact/phase-command completion sentence without adding another headless block. |
+| `src/orchestrator/prompts/index.ts` | Remove unconditional Codex headless guidance from Claude prompt construction and retain Claude implementer startup on resumed reroutes. |
+| `tests/agent-backend.test.ts` | Cover unwrapped interactive/unattended resume delivery and recognized session events versus foreign events and resume-not-found fallback attempts. |
+| `tests/run-task-prompts.test.ts` | Check the final prompt sent in both interactive modes; move the Blockers-rule assertion to backend delivery while keeping raw prompt startup/stripping checks. |
+| `tests/run-task-safety.test.ts` | Strengthen actual reroute/fix-up assertions, pin park/fresh headers, and cover a failed implement recovery retry followed by a successful park resume. |
+| `dist/orchestrator/run-task.js` | Rebuild the changed orchestrator runtime. The rebuilt CLI bundle has no new delta this iteration. |
+| `tasks/claude-provider-mode/notes.md` | Append backend delivery, attempt-local capture and recovery-path observations. |
+| `tasks/claude-provider-mode/handoff.md` | Append this review response and validation evidence; preserve earlier sections. |
+
+### Findings addressed
+
+- **Correctness bug F1 — ignored wrapForResume:** fixed in `src/orchestrator/agents/claude.ts` (lines 96, 120, 142 and 328). The backend forwards the existing request flag, and both interactive and stream calls honor it. The actual Claude implement-reroute test now proves that the commit-ownership/startup instructions survive and no generic resumed-session banner is added. The actual artifact-fix-up test proves that its native no-commit instruction survives without that banner.
+- **Correctness bug F2 — unconditional/duplicate headless guidance:** removed the full Codex headless block from raw Claude prompts in `src/orchestrator/prompts/index.ts`. `src/orchestrator/agents/claude.ts` (lines 325–328) adds only the missing completion sentence when the call is unattended and the role is implementer or spec_reviewer. Interactive calls receive neither that sentence nor unattended guidance; unattended calls contain exactly one headless block. This supersedes iteration 1's startup-delivery approach without changing mixed-mode headless text.
+- **Risk/guardrail F3 — session-ID drift across events/attempts:** session capture now lives inside each attempt in `src/orchestrator/agents/claude.ts` (lines 139–142). Only top-level system/init and result events supply IDs; result IDs take precedence. Removed the arbitrary stdout regex fallback. Tests reject a foreign event ID, retain a recognized result ID, and prove that a failed fresh fallback gets its own ID or null instead of the rejected resume attempt's ID.
+- **Risk/guardrail F4 — completed implement recovery can park:** verified the existing behavior rather than changing the specified park predicate. A new integration test drives a failed recovery retry through checkAndRoute and the shared park boundary, verifies its new Claude-tagged session, then resumes it with the partial-work prompt and completes successfully. Artifact-reference fix-ups catch AgentSessionError locally; they retain their existing local-failure behavior.
+- **Optional test-strengthening nits:** park prompts now explicitly require the park-resume mode header and reject the misleading fresh-mode description; no-ID reruns explicitly require the normal fresh prompt. Other optional wording/ergonomics suggestions were left unchanged.
+
+### AC deltas
+
+| AC | Status | Evidence |
+|---|---|---|
+| AC-6 | Met, strengthened | Explicit park/fresh mode assertions and recovery-retry park/resume regression. |
+| AC-9 | Met, strengthened | Actual Claude artifact fix-up preserves its purpose-built prompt and commit restriction. |
+| AC-12 | Restored to Met from review's Partial | The Blockers completion rule is checked on final unattended delivery; interactive implementer/spec-reviewer prompts contain no false unattended instructions. Reroute startup and fix-up commit restrictions are preserved. |
+| AC-14 | Met, unchanged | Original argv parity passes; all 25 current prompt golden values, including the 23 original mixed entries, are unchanged. |
+
+### Blockers / interpretations
+
+No implementation or required automated validation is blocked.
+
+- [ambiguity] F1's proposed test says the artifact fix-up should keep the implementer startup, but the existing purpose-built fix-up prompt never contains that startup. Interpreted the request as preserving its supplied prompt and commit restriction without generic resume rewriting. Reroutes retain full Claude implementer startup; fix-ups retain their native instruction that the orchestrator commits after the turn. Actual call-site tests cover both, and backend tests separately prove any supplied startup survives wrapForResume=false.
+
+### Red-First Evidence
+
+The spec remains a feature with no mandatory red-first AC. These additional regressions were nevertheless written and run before changing non-test code this round, against the task branch's pre-revision HEAD.
+
+| Finding / AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
+| F1 / AC-9, AC-12 | Regression batch R2 below | cc870352310cf8d7b9cb5531d99137b254a8f870 | Both backend modes and actual reroute/fix-up call sites received the unwanted resumed-session banner; reroute lacked its retained startup. | Pass: both backend modes and both call sites. |
+| F2 / AC-12(d) | Regression batch R2 below | cc870352310cf8d7b9cb5531d99137b254a8f870 | Final unattended prompt had two headless blocks; interactive prompt had one instead of zero. | Pass: one unattended block, zero interactive blocks; completion sentence still delivered when unattended. |
+| F3 / AC-6, AC-7 | Regression batch R2 below | cc870352310cf8d7b9cb5531d99137b254a8f870 | Foreign-event ID replaced active-session; failed fallback reused old-attempt instead of null. | Pass: recognized per-attempt IDs only; positive new-ID/result-ID cases also pass. |
+
+Regression batch R2 (8 expected failures and 3 passing control cases before the fixes):
+
+```bash
+node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='Claude backend honors purpose-built|Claude failure session capture|Claude role prompts gate|Claude provider artifact fix-up resumes only|Claude parked implement preserves reroute' tests/agent-backend.test.ts tests/run-task-prompts.test.ts tests/run-task-safety.test.ts
+```
+
+The F4 recovery regression passed against the same pre-revision HEAD and after the fixes; it protects specified behavior rather than claiming a pre-fix defect.
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | Current source and regression tests. |
+| `npm run type-check` | Pass | Optional runner flag and all backend call sites compile. |
+| `npm test` | Pass | Full suite: 1,840 tests, 1,839 passed, 1 skipped, 0 failed. Ran with CANON_PROVIDER=claude, CLAUDE_MODEL_SPEC_REVIEW=unused-review-pin and CLAUDE_MODEL_IMPLEMENT=unused-implement-pin exported. |
+| `npm run build` | Pass | Both declared artifacts rebuilt; only the orchestrator bundle has a revision delta. |
+| `npm run docs-refs-check` | Pass | References checked, including a rerun after this artifact append. |
+| `npm run sync-templates:check` | Pass | No managed root/mirror drift. |
+| Scoped backend/prompt tests | Pass | 81 tests; includes original argv parity and unchanged prompt goldens. |
+| Scoped recovery/reroute/fix-up tests | Pass | 9 tests, including final delivered prompts and the recovery-session park. |
+| Current-diff/scope/golden checks | Pass | Changed files reopened; source changes stay within the cap; all 25 golden values unchanged; cumulative Changes coverage checked before phase close. |
+
+E2E remains deferred by the spec's explicit no-UI exception. Live Claude subscription/budget testing remains in the Human Test Plan; no new live-service claim is made.

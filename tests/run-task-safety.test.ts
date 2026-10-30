@@ -11237,6 +11237,12 @@ for (const phase of ['spec_review', 'implement'] as const) for (const hasSession
                 assert.match(prompt, /previous session stopped before finishing.*claude session exited 1/);
                 assert.match(prompt, /[Ww]ork may be partial/);
                 assert.doesNotMatch(prompt, /already complete/);
+                assert.match(prompt, /Mode: \*\*park resume\*\*/);
+                assert.doesNotMatch(prompt, /first implementation pass — no prior work/);
+            }
+            if (!hasSession && phase === 'implement') {
+                assert.match(prompt, /Mode: \*\*fresh\*\* — first implementation pass/);
+                assert.doesNotMatch(prompt, /previous session stopped before finishing/);
             }
             if (phase === 'spec_review') assert.doesNotMatch(prompt, /has been revised since your last review/);
             const done = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
@@ -11389,6 +11395,8 @@ await retryImplementAutoCommitAtReviewEntry(['${id}'], ${JSON.stringify(fixture.
             } else {
                 const entries = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { agent: string; argv: string[] });
                 assert.equal(entries[0].agent, 'claude'); assert.equal(entries[0].argv.at(-1), 'fixup-session');
+                assert.doesNotMatch(entries[0].argv[1], /\[Resumed session|Skip startup boilerplate/);
+                assert.match(entries[0].argv[1], /Do not run git add or git commit; the orchestrator commits after this turn/);
                 assert.doesNotMatch(entries[0].argv[1], /\bCodex\b/);
                 assert.doesNotMatch(fs.readFileSync(handoff, 'utf8'), /See `src\/removed/);
             }
@@ -11486,6 +11494,11 @@ for (const entry of ['revision', 'reroute'] as const) {
             const argv = (JSON.parse(fs.readFileSync(log, 'utf8').trim()) as { argv: string[] }).argv;
             assert.match(argv[1], new RegExp(`Mode: \\*\\*${entry}\\*\\*`));
             assert.doesNotMatch(argv[1], /previous session stopped before finishing/);
+            if (entry === 'reroute') {
+                assert.doesNotMatch(argv[1], /\[Resumed session|Skip startup boilerplate/);
+                assert.match(argv[1], /orchestrator owns commits/);
+                assert.match(argv[1], /Read docs\/patterns.md and docs\/codebase-map.md before starting/);
+            }
             assert.equal(argv.at(-1), 'park-session');
         });
     });
@@ -11501,5 +11514,45 @@ void test('mixed run requires Codex even when the environment selects Claude', (
         const result = runReviewLoopMain(localDir, tasksRoot, bins, 'mixed-deps', 3, [], { PATH: `${bins}:/usr/bin:/bin`, CANON_PROVIDER: 'claude' });
         assert.equal(result.status, 1, combinedOutput(result));
         assert.match(result.stderr, /Codex CLI is required/);
+    });
+});
+
+void test('Claude implement recovery failure parks its new session and resumes unfinished validation', () => {
+    withTempDir('provider-recovery-park-', dir => {
+        const id = 'recovery-park';
+        const fixture = prepareReviewEntryMainFixture(dir, id, true, false);
+        const handoff = path.join(fixture.tasksRoot, id, 'handoff.md');
+        const validHandoff = fs.readFileSync(handoff, 'utf8');
+        fs.writeFileSync(handoff, '# Implementation Handoff\n');
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        status.provider = 'claude'; status.phases.implement!.status = 'done';
+        status.sessions = { implementer: 'previous-session' }; status.session_backends = { implementer: 'claude' };
+        writeTaskStatus(fixture.tasksRoot, id, status);
+        writeExecutable(fixture.fakeBins, 'claude', [
+            'printf \'{"type":"result","session_id":"recovery-session","result":"partial recovery"}\\n\'',
+            'exit 1',
+        ]);
+        const first = runNodeInline(`
+import {withAgentSessionPark,checkAndRoute} from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+await withAgentSessionPark('implement',['${id}'],()=>checkAndRoute('implement',['${id}']));
+`, { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot,
+            CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'), PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+        }, fixture.localDir);
+        assert.equal(first.status, 2, combinedOutput(first));
+        assert.match(combinedOutput(first), /Retrying claude session/);
+        const parked = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        assert.equal(parked.phases.implement?.status, 'blocked');
+        assert.equal(parked.sessions?.implementer, 'recovery-session');
+        assert.equal(parked.session_backends?.implementer, 'claude');
+        fs.writeFileSync(handoff, validHandoff);
+        setupInvocationLoggingCliTools(fixture.fakeBins);
+        const log = path.join(dir, 'argv.jsonl');
+        const second = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, id, 3, [], { FAKE_AGENT_ARGV_LOG: log, FAKE_AGENT_COMPLETE_PHASE: 'implement' });
+        assert.equal(second.status, 0, combinedOutput(second));
+        const args = (JSON.parse(fs.readFileSync(log, 'utf8').trim()) as { argv: string[] }).argv;
+        assert.equal(args.at(-1), 'recovery-session');
+        assert.match(args[1], /Mode: \*\*park resume\*\*/);
+        assert.match(args[1], /Work may be partial/);
+        assert.doesNotMatch(args[1], /already complete/);
     });
 });

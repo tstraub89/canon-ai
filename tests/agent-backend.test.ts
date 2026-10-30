@@ -202,3 +202,68 @@ void test('init checks the provider setting lazily and Claude needs no Codex', a
         assert.deepEqual(probes, ['git', 'claude', 'gh']);
     } finally { if (previous === undefined) delete process.env.CANON_PROVIDER; else process.env.CANON_PROVIDER = previous; }
 });
+
+for (const interactive of [false, true]) {
+    void test(`Claude backend honors purpose-built resume prompts (interactive=${interactive})`, () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-resume-policy-'));
+        try {
+            const log = path.join(dir, 'argv.jsonl');
+            fs.writeFileSync(path.join(dir, 'claude'), `#!${process.execPath}
+require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2))+'\\n');
+console.log(JSON.stringify({type:'result',session_id:'resumed-session',result:'done'}));
+`, { mode: 0o755 });
+            const result = spawnSync(process.execPath, ['--import', './tests/md-loader-register.mjs', '--import', 'tsx', '--input-type=module', '-e', `
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { agentBackendFor } from './src/orchestrator/agents/backend.ts';
+import { roleAssignmentFor } from './src/lib/pipeline-policy.ts';
+import { CLAUDE_IMPLEMENTER_STARTUP } from './src/orchestrator/prompts/helpers.ts';
+const prompt = 'Purpose-built resume\\n\\n'+CLAUDE_IMPLEMENTER_STARTUP+'\\n\\nDo the requested fix.';
+await agentBackendFor('implementer',roleAssignmentFor('claude')).run({role:'implementer',phase:'implement',tasks:[{status:{provider:'claude',task_size:'S'}}],prompt,interactive:${interactive},resumeId:'stored-session',cwd:${JSON.stringify(dir)},wrapForResume:false});
+const args = JSON.parse(fs.readFileSync(${JSON.stringify(log)},'utf8').trim());
+const sent = args.includes('-p') ? args[args.indexOf('-p')+1] : args.at(-1);
+assert.doesNotMatch(sent,/\\[Resumed session|Skip startup boilerplate/);
+assert.ok(sent.includes(CLAUDE_IMPLEMENTER_STARTUP));
+assert.equal(args[args.indexOf('--resume')+1],'stored-session');
+`], { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}` } });
+            assert.equal(result.status, 0, result.stdout + result.stderr);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+}
+
+for (const scenario of ['foreign-event', 'fallback-no-id', 'fallback-new-id', 'result-id'] as const) {
+    void test(`Claude failure session capture is attempt-local (${scenario})`, () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-session-capture-'));
+        try {
+            const counter = path.join(dir, 'attempts');
+            fs.writeFileSync(path.join(dir, 'claude'), `#!${process.execPath}
+const fs=require('fs');const file=${JSON.stringify(counter)};const n=fs.existsSync(file)?Number(fs.readFileSync(file,'utf8'))+1:1;fs.writeFileSync(file,String(n));
+const scenario=${JSON.stringify(scenario)};
+if(scenario.startsWith('fallback-')&&n===1){
+ console.log(JSON.stringify({type:'system',subtype:'init',session_id:'old-attempt'}));
+ console.error('No conversation found with session ID');process.exit(1);
+}
+if(scenario==='foreign-event'){
+ console.log(JSON.stringify({type:'system',subtype:'init',session_id:'active-session'}));
+ console.log(JSON.stringify({type:'assistant',session_id:'foreign-session',message:{content:[]}}));
+}
+if(scenario==='fallback-new-id')console.log(JSON.stringify({type:'system',subtype:'init',session_id:'fresh-session'}));
+if(scenario==='result-id'){
+ console.log(JSON.stringify({type:'result',session_id:'result-session',result:'partial'}));
+ console.log(JSON.stringify({type:'system',subtype:'task_notification',session_id:'foreign-session'}));
+}
+process.exit(1);
+`, { mode: 0o755 });
+            const expected = scenario === 'foreign-event' ? 'active-session' : scenario === 'fallback-new-id' ? 'fresh-session' : scenario === 'result-id' ? 'result-session' : null;
+            const result = spawnSync(process.execPath, ['--import', './tests/md-loader-register.mjs', '--import', 'tsx', '--input-type=module', '-e', `
+import assert from 'node:assert/strict';
+import {runClaude} from './src/orchestrator/agents/claude.ts';
+import {AgentSessionError} from './src/orchestrator/agents/errors.ts';
+await assert.rejects(()=>runClaude('Complete the phase',false,${scenario.startsWith('fallback-') ? "'missing-session'" : 'null'},'sonnet','medium','5.00',undefined,${JSON.stringify(dir)}),error=>{
+ assert.ok(error instanceof AgentSessionError);assert.equal(error.sessionId,${JSON.stringify(expected)});return true;
+});
+`], { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}` } });
+            assert.equal(result.status, 0, result.stdout + result.stderr);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    });
+}

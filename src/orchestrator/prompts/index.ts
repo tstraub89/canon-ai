@@ -8,7 +8,7 @@ import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
 import { taskDirFor } from '../state.js';
 import { findNewestReviewArchive } from '../review-archive.js';
-import { CLAUDE_STARTUP, implementationStartup, CODEX_HEADLESS, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
+import { CLAUDE_STARTUP, implementationStartup, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
 import { renderTemplate } from './render.js';
 import type { PipelineState, TaskContext } from '../types.js';
 import codeReviewForemanTemplate from './templates/code-review-foreman.md';
@@ -135,9 +135,6 @@ function roleView(state: PipelineState): object {
         toolExamples: state.provider === 'claude' ? 'Claude, canon, an LLM' : 'Claude, Codex, canon, an LLM',
     };
 }
-function implementerStartup(state: PipelineState): string {
-    return implementationStartup(state.provider) + (state.provider === 'claude' ? `\n\n${CODEX_HEADLESS}` : '');
-}
 
 export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<string, readonly string[]>>): string {
     const { tasks, tier, isBundle } = state;
@@ -253,7 +250,7 @@ export function promptSpecReview(state: PipelineState): string {
         return render('spec-review-reroute.md', {
             ...roleView(state),
             projectName: config.projectName,
-            startup: implementerStartup(state),
+            startup: implementationStartup(state.provider),
             taskScope: tasks.length > 1 ? 'a bundle of amended specs' : 'an amended spec',
             roundBanner,
             taskLines,
@@ -270,7 +267,7 @@ export function promptSpecReview(state: PipelineState): string {
     return render('spec-review.md', {
         ...roleView(state),
         projectName: config.projectName,
-        startup: implementerStartup(state),
+        startup: implementationStartup(state.provider),
         taskScope: tasks.length > 1 ? 'a bundle of specs' : 'a spec',
         taskLines,
         combined,
@@ -351,7 +348,7 @@ export function promptImplement(
         projectName: config.projectName,
         taskScope: tasks.length > 1 ? 'a bundle of related tasks' : `task "${tasks[0].taskId}"`,
         stateHeader: buildImplementStateHeader(state, mode),
-        startup: implementerStartup(state),
+        startup: implementationStartup(state.provider),
         risksBlock: buildKnownRisks(taskIds),
         pitfallsBlock: buildKnownPitfalls(taskIds),
         contextBlock: buildContextBlock(taskIds),
@@ -442,7 +439,7 @@ export function promptImplementRevisions(
         projectName: config.projectName,
         taskScope: tasks.length > 1 ? 'a bundle of related tasks' : `task "${tasks[0].taskId}"`,
         stateHeader,
-        startup: implementerStartup(state),
+        startup: implementationStartup(state.provider),
         affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         iterBanner,
         handoffAppend,
@@ -506,7 +503,7 @@ export function promptImplementReroute(
     const preamble = isResumedSession
         ? 'Your session is being continued with spec amendments. The spec has been updated since your last turn — new ACs, new sections, or revised requirements have been added. The prior implementation round may be complete or partial, so confirm the current state from the worktree rather than from memory: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.'
         : 'A human decided this task needed a spec amendment after implementation began, wrote the amendment into spec.md, and rerouted the task. The spec has been updated in place — new ACs, new sections, or revised requirements have been added since you last read it. This is a fresh agent session, **not** a resume of a prior session — that refers to the session, not to whether the prior implementation round finished. The prior implementation round may be complete or partial: this round’s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.';
-    const startup = isResumedSession ? (state.provider === 'claude' ? CODEX_HEADLESS : '') : implementerStartup(state);
+    const startup = isResumedSession && state.provider !== 'claude' ? '' : implementationStartup(state.provider);
     const groundingRule = isResumedSession
         ? 'Grounding rule: re-read the amended spec.md, and handoff.md if it has been filled in, before changing anything. The spec has new requirements — do not assume your prior memory of the spec is complete.'
         : 'Grounding rule: re-open the amended spec, and the current handoff if it has been filled in, before changing anything. Session memory is stale by design on reroute rounds.';

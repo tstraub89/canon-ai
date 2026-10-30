@@ -1300,7 +1300,7 @@ void test('Claude provider prompt builders use role holders and preserve task co
     for (const prompt of [promptSpecReview(initial), promptImplement(initial), promptImplementRevisions(asClaude(iterState), [], 'main')]) {
         assert.match(prompt, /orchestrator owns commits/);
         assert.doesNotMatch(prompt, /sandbox blocks/);
-        assert.match(prompt, /Always end by writing the phase artifact and running the phase command\(s\).*including when you recorded Blockers/);
+        assert.doesNotMatch(prompt, /nobody reads your messages|Headless session:/);
         const resumed = toResumePrompt(prompt);
         assert.doesNotMatch(resumed, /Read docs\/patterns.md|orchestrator owns commits/);
     }
@@ -1320,5 +1320,36 @@ for (const [key, getState] of [
         assert.doesNotMatch(prompt, /cold-Codex|codex review|\bCodex\b/);
         assert.match(prompt, /two-lens synthesis/);
         recordOrAssert(key, normalize(prompt));
+    });
+}
+
+for (const interactive of [false, true]) {
+    void test(`Claude role prompts gate unattended instructions (interactive=${interactive})`, { concurrency: false }, async () => {
+        const { agentBackendFor } = await import('../src/orchestrator/agents/backend.js');
+        const { roleAssignmentFor } = await import('../src/lib/pipeline-policy.js');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-role-headless-'));
+        const argvFile = path.join(dir, 'argv.json');
+        const oldPath = process.env.PATH;
+        fs.writeFileSync(path.join(dir, 'claude'), `#!${process.execPath}
+require('fs').writeFileSync(${JSON.stringify(argvFile)},JSON.stringify(process.argv.slice(2)));
+console.log(JSON.stringify({type:'result',session_id:'phase-session',result:'done'}));
+`, { mode: 0o755 });
+        try {
+            process.env.PATH = `${dir}${path.delimiter}${oldPath ?? ''}`;
+            const state: PipelineState = { ...baseState, provider: 'claude' };
+            for (const role of ['implementer', 'spec_reviewer'] as const) {
+                const prompt = role === 'implementer' ? promptImplement(state) : promptSpecReview(state);
+                await agentBackendFor(role, roleAssignmentFor('claude')).run({ role, phase: role === 'implementer' ? 'implement' : 'spec_review', tasks: state.tasks, prompt, interactive, resumeId: null, cwd: dir });
+                const args = JSON.parse(fs.readFileSync(argvFile, 'utf8')) as string[];
+                const sent = interactive ? args.at(-1)! : args[args.indexOf('-p') + 1];
+                assert.equal((sent.match(/this runs non-interactively/g) ?? []).length, interactive ? 0 : 1);
+                assert.doesNotMatch(sent, /Headless session:/);
+                if (interactive) assert.doesNotMatch(sent, /nobody reads your messages|Always end by writing the phase artifact/);
+                else assert.match(sent, /Always end by writing the phase artifact and running the phase command\(s\).*including when you recorded Blockers/);
+            }
+        } finally {
+            if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 }

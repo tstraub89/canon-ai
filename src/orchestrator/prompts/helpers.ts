@@ -39,6 +39,9 @@ export const CODEX_HEADLESS =
     '\n' +
     'If a project instruction file or other repository guidance tells you to ask the user or wait for approval before acting, there is no one to ask in this session: record the question in the phase artifact and continue with the authorized work.';
 
+export const PHASE_ARTIFACT_COMPLETION =
+    'Always end by writing the phase artifact and running the phase command(s) listed at the end of this prompt, including when you recorded Blockers — a session that ends without them stalls the pipeline.';
+
 export const QA_STARTUP =
     'Read CHANGELOG.md for voice and version reference, if the project keeps one.\n' +
     'Read docs/lessons-learned.md for recent insights to distill.\n' +

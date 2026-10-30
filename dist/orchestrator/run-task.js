@@ -2548,6 +2548,7 @@ function implementationStartup(provider) {
   return provider === "claude" ? CLAUDE_IMPLEMENTER_STARTUP : CODEX_STARTUP;
 }
 var CODEX_HEADLESS = "Headless session: this runs non-interactively \u2014 nobody reads your messages or answers questions until the phase ends. Don't stop to ask for confirmation or clarification. When something is ambiguous, record the question and the interpretation you chose in this phase's artifact (in implement, a handoff Blocker labelled `[ambiguity]`) and proceed on it. Finish all the work this prompt authorizes before ending \u2014 acting on your own judgment never widens scope; the Affected Files cap and every other scope rule still bind. Always end by writing the phase artifact and running the phase command(s) listed at the end of this prompt, including when you recorded Blockers \u2014 a session that ends without them stalls the pipeline.\n\nIf a project instruction file or other repository guidance tells you to ask the user or wait for approval before acting, there is no one to ask in this session: record the question in the phase artifact and continue with the authorized work.";
+var PHASE_ARTIFACT_COMPLETION = "Always end by writing the phase artifact and running the phase command(s) listed at the end of this prompt, including when you recorded Blockers \u2014 a session that ends without them stalls the pipeline.";
 var QA_STARTUP = "Read CHANGELOG.md for voice and version reference, if the project keeps one.\nRead docs/lessons-learned.md for recent insights to distill.\nNo full codebase context needed for QA \u2014 read each task's spec.md, handoff.md, and notes.md directly.";
 var CLAUDE_HEADLESS = "Unattended session: this runs non-interactively \u2014 nobody reads your messages or answers questions until the phase ends. Don't stop to ask for confirmation or clarification. When something is ambiguous, record the question and the interpretation you chose in this phase's artifact or in `tasks/<id>/notes.md`, and proceed on it.\n\nThe phase is complete only when its artifact is written and its phase command (the `canon task phase` command(s) this prompt lists) has run. A progress summary, a description of next steps, or an offer to continue is not completion \u2014 keep working until both are done.\n\nDo only this phase: don't run `canon run`, advance any other phase, or start review passes, review skills, or reviewer sub-agents this prompt didn't ask for.\n\nReport a check that couldn't run, or that failed, as exactly that \u2014 never as passed.\n\nIf a project instruction file or other repository guidance says to ask or wait for approval before an action, there is no one to ask in this session. Skip that action unless this prompt explicitly authorizes it, record the question in the phase artifact, and continue with the rest of the authorized work.";
 function taskList(tasks) {
@@ -2764,14 +2765,13 @@ function runInteractiveClaude(args, cwd) {
     });
   });
 }
-async function runClaude(prompt, interactive, resumeId, model, effort, budget, metricsContext, cwd = REPO_ROOT) {
+async function runClaude(prompt, interactive, resumeId, model, effort, budget, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
   info(resumeId ? `Calling Claude Code (resuming ${resumeId.slice(0, 8)}...)...` : "Calling Claude Code...");
   info(interactive ? `Model: ${model} | Effort: ${effort} | Budget: uncapped (interactive)` : `Model: ${model} | Effort: ${effort} | Budget: ${budget}`);
   const startMs = Date.now();
   let status = "ok";
   let tokens;
   let processedText = "";
-  let sessionId = null;
   const subagentResults = [];
   const notificationFiles = /* @__PURE__ */ new Map();
   try {
@@ -2784,7 +2784,7 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
       const args = ["--model", model, "--effort", effort, "--add-dir", REPO_ROOT];
       if (cwd !== REPO_ROOT) args.push("--add-dir", cwd);
       if (resumeId) args.push("--resume", resumeId);
-      args.push(resumeId ? toResumePrompt(prompt) : prompt);
+      args.push(resumeId && wrapForResume ? toResumePrompt(prompt) : prompt);
       const exitCode = await runInteractiveClaude(args, cwd);
       if (exitCode !== 0) {
         status = "failed";
@@ -2803,7 +2803,8 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
       };
     }
     const attempt = async (useResumeId) => {
-      const renderedPrompt = useResumeId ? toResumePrompt(prompt) : prompt;
+      let sessionId = null;
+      const renderedPrompt = useResumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
       const effectivePrompt = `${CLAUDE_HEADLESS}
 
 ${renderedPrompt}`;
@@ -2838,7 +2839,9 @@ ${renderedPrompt}`;
         } catch {
           return;
         }
-        if (typeof event.session_id === "string" && event.session_id) sessionId = event.session_id;
+        if (event.type === "system" && event.subtype === "init" && event.parent_tool_use_id == null && typeof event.session_id === "string" && event.session_id && sessionId === null) {
+          sessionId = event.session_id;
+        }
         const tick = formatLiveTick(event);
         if (tick) console.log(tick);
         if (event.type === "assistant") {
@@ -2849,7 +2852,7 @@ ${renderedPrompt}`;
         }
         if (event.type === "result") {
           captured.text = event.result ?? null;
-          captured.sessionId = event.session_id ?? null;
+          captured.sessionId = event.parent_tool_use_id == null && typeof event.session_id === "string" && event.session_id ? event.session_id : null;
           captured.usage = event.usage ?? null;
         }
         if (event.type === "system" && event.subtype === "task_notification" && typeof event.tool_use_id === "string" && typeof event.output_file === "string") {
@@ -2893,12 +2896,7 @@ ${renderedPrompt}`;
       } else {
         processedText = result.capturedStdout;
       }
-      if (captured.sessionId) {
-        sessionId = captured.sessionId;
-      } else {
-        const sidMatch = result.capturedStdout.match(/"session_id"\s*:\s*"([0-9a-f-]{36})"/i);
-        if (sidMatch) sessionId = sidMatch[1];
-      }
+      if (captured.sessionId) sessionId = captured.sessionId;
       if (processedText) process.stdout.write(processedText);
       if (result.spawnError) {
         console.error(result.spawnError.message);
@@ -2941,7 +2939,7 @@ ${renderedPrompt}`;
       stalled: false,
       capturedStdout: processedText,
       capturedStderr: "",
-      sessionId,
+      sessionId: null,
       processedText
     };
   } catch (err) {
@@ -2980,15 +2978,20 @@ var claudeBackend = {
   async run(request) {
     const cfg = claudeBackend.resolveConfig(request.phase, request.tasks);
     if (cfg.budget === void 0) throw new Error("Claude policy budget missing");
+    const needsCompletionRule = !request.interactive && (request.role === "implementer" || request.role === "spec_reviewer");
+    const prompt = needsCompletionRule ? `${PHASE_ARTIFACT_COMPLETION}
+
+${request.prompt}` : request.prompt;
     const result = await runClaude(
-      request.prompt,
+      prompt,
       request.interactive,
       request.resumeId,
       cfg.model,
       cfg.effort,
       cfg.budget,
       request.metricsContext,
-      request.cwd
+      request.cwd,
+      request.wrapForResume
     );
     return {
       backend: claudeBackend.id,
@@ -5697,11 +5700,6 @@ function roleView(state) {
     toolExamples: state.provider === "claude" ? "Claude, canon, an LLM" : "Claude, Codex, canon, an LLM"
   };
 }
-function implementerStartup(state) {
-  return implementationStartup(state.provider) + (state.provider === "claude" ? `
-
-${CODEX_HEADLESS}` : "");
-}
 function promptSpec(state, docsPaths) {
   const { tasks, tier, isBundle } = state;
   const combined = tier === "fast";
@@ -5791,7 +5789,7 @@ function promptSpecReview(state) {
     return render3("spec-review-reroute.md", {
       ...roleView(state),
       projectName: config.projectName,
-      startup: implementerStartup(state),
+      startup: implementationStartup(state.provider),
       taskScope: tasks.length > 1 ? "a bundle of amended specs" : "an amended spec",
       roundBanner,
       taskLines: taskLines2,
@@ -5806,7 +5804,7 @@ function promptSpecReview(state) {
   return render3("spec-review.md", {
     ...roleView(state),
     projectName: config.projectName,
-    startup: implementerStartup(state),
+    startup: implementationStartup(state.provider),
     taskScope: tasks.length > 1 ? "a bundle of specs" : "a spec",
     taskLines,
     combined,
@@ -5871,7 +5869,7 @@ function promptImplement(state, mode = "fresh", affectedFiles, baseBranch) {
     projectName: config.projectName,
     taskScope: tasks.length > 1 ? "a bundle of related tasks" : `task "${tasks[0].taskId}"`,
     stateHeader: buildImplementStateHeader(state, mode),
-    startup: implementerStartup(state),
+    startup: implementationStartup(state.provider),
     risksBlock: buildKnownRisks(taskIds),
     pitfallsBlock: buildKnownPitfalls(taskIds),
     contextBlock: buildContextBlock(taskIds),
@@ -5930,7 +5928,7 @@ function promptImplementRevisions(state, affectedFiles, baseBranch) {
     projectName: config.projectName,
     taskScope: tasks.length > 1 ? "a bundle of related tasks" : `task "${tasks[0].taskId}"`,
     stateHeader,
-    startup: implementerStartup(state),
+    startup: implementationStartup(state.provider),
     affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
     iterBanner,
     handoffAppend,
@@ -5970,7 +5968,7 @@ function promptImplementReroute(state, isResumedSession = false, affectedFiles, 
     return `- \`${t.taskId}\`: "${t.title}" (entering reroute round ${t.rerouteCount}) \u2014 a human amended the spec and rerouted this task after implementation began. Locate ${expectedHeading} in tasks/${t.taskId}/spec.md: it holds the newest requirements and wins where it conflicts with an earlier section; earlier sections (the original ACs and prior amendment rounds) stay binding wherever their work is not yet implemented. Your previous handoff is at tasks/${t.taskId}/handoff.md (use it only if it has been filled in).${archivedReviewGuidance(t.taskId)}`;
   }).join("\n");
   const preamble = isResumedSession ? "Your session is being continued with spec amendments. The spec has been updated since your last turn \u2014 new ACs, new sections, or revised requirements have been added. The prior implementation round may be complete or partial, so confirm the current state from the worktree rather than from memory: this round\u2019s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds." : "A human decided this task needed a spec amendment after implementation began, wrote the amendment into spec.md, and rerouted the task. The spec has been updated in place \u2014 new ACs, new sections, or revised requirements have been added since you last read it. This is a fresh agent session, **not** a resume of a prior session \u2014 that refers to the session, not to whether the prior implementation round finished. The prior implementation round may be complete or partial: this round\u2019s scope is the amendment plus any unfinished work from the original ACs and earlier amendment rounds.";
-  const startup = isResumedSession ? state.provider === "claude" ? CODEX_HEADLESS : "" : implementerStartup(state);
+  const startup = isResumedSession && state.provider !== "claude" ? "" : implementationStartup(state.provider);
   const groundingRule = isResumedSession ? "Grounding rule: re-read the amended spec.md, and handoff.md if it has been filled in, before changing anything. The spec has new requirements \u2014 do not assume your prior memory of the spec is complete." : "Grounding rule: re-open the amended spec, and the current handoff if it has been filled in, before changing anything. Session memory is stale by design on reroute rounds.";
   return render3("implement-reroute.md", {
     ...roleView(state),

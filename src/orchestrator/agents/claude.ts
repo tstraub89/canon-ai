@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { REPO_ROOT } from '../env.js';
 import { info, setExitReason, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
-import { CLAUDE_HEADLESS, toResumePrompt } from '../prompts/helpers.js';
+import { CLAUDE_HEADLESS, PHASE_ARTIFACT_COMPLETION, toResumePrompt } from '../prompts/helpers.js';
 import { formatLiveTick, streamProcess } from './stream.js';
 import type { ClaudeRunResult } from '../types.js';
 
@@ -93,6 +93,7 @@ export async function runClaude(
     budget: string,
     metricsContext?: { taskId: string; phase: string; iteration?: number; activeCwd?: string },
     cwd = REPO_ROOT,
+    wrapForResume = true,
 ): Promise<ClaudeRunResult> {
     info(resumeId ? `Calling Claude Code (resuming ${resumeId.slice(0, 8)}...)...` : 'Calling Claude Code...');
     info(interactive
@@ -103,7 +104,6 @@ export async function runClaude(
     let status: 'ok' | 'failed' = 'ok';
     let tokens: number | undefined;
     let processedText = '';
-    let sessionId: string | null = null;
     const subagentResults: Array<{ toolUseId: string | null; agentType: string; resolvedModel: string | null; durationMs: number; ok: boolean }> = [];
     const notificationFiles = new Map<string, string>();
 
@@ -117,7 +117,7 @@ export async function runClaude(
             const args = ['--model', model, '--effort', effort, '--add-dir', REPO_ROOT];
             if (cwd !== REPO_ROOT) args.push('--add-dir', cwd);
             if (resumeId) args.push('--resume', resumeId);
-            args.push(resumeId ? toResumePrompt(prompt) : prompt);
+            args.push(resumeId && wrapForResume ? toResumePrompt(prompt) : prompt);
             const exitCode = await runInteractiveClaude(args, cwd);
             if (exitCode !== 0) {
                 status = 'failed';
@@ -137,7 +137,9 @@ export async function runClaude(
         }
 
         const attempt = async (useResumeId: string | null): Promise<{ resumeNotFound: boolean; result: ClaudeRunResult | null }> => {
-            const renderedPrompt = useResumeId ? toResumePrompt(prompt) : prompt;
+            // A fresh fallback must never inherit the failed resume attempt's ID.
+            let sessionId: string | null = null;
+            const renderedPrompt = useResumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
             const effectivePrompt = `${CLAUDE_HEADLESS}\n\n${renderedPrompt}`;
             const args = [
                 '-p', effectivePrompt,
@@ -168,7 +170,10 @@ export async function runClaude(
             const onLine = (line: string): void => {
                 let event: Record<string, unknown>;
                 try { event = JSON.parse(line) as typeof event; } catch { return; }
-                if (typeof event.session_id === 'string' && event.session_id) sessionId = event.session_id;
+                if (event.type === 'system' && event.subtype === 'init' && event.parent_tool_use_id == null
+                    && typeof event.session_id === 'string' && event.session_id && sessionId === null) {
+                    sessionId = event.session_id;
+                }
                 const tick = formatLiveTick(event);
                 if (tick) console.log(tick);
                 if (event.type === 'assistant') {
@@ -179,7 +184,8 @@ export async function runClaude(
                 }
                 if (event.type === 'result') {
                     captured.text = (event.result as string | undefined) ?? null;
-                    captured.sessionId = (event.session_id as string | undefined) ?? null;
+                    captured.sessionId = event.parent_tool_use_id == null && typeof event.session_id === 'string' && event.session_id
+                        ? event.session_id : null;
                     captured.usage = (event.usage as ClaudeUsage | undefined) ?? null;
                 }
                 if (event.type === 'system' && event.subtype === 'task_notification'
@@ -232,12 +238,7 @@ export async function runClaude(
             } else {
                 processedText = result.capturedStdout;
             }
-            if (captured.sessionId) {
-                sessionId = captured.sessionId;
-            } else {
-                const sidMatch = result.capturedStdout.match(/"session_id"\s*:\s*"([0-9a-f-]{36})"/i);
-                if (sidMatch) sessionId = sidMatch[1];
-            }
+            if (captured.sessionId) sessionId = captured.sessionId;
 
             if (processedText) process.stdout.write(processedText);
 
@@ -285,7 +286,7 @@ export async function runClaude(
             stalled: false,
             capturedStdout: processedText,
             capturedStderr: '',
-            sessionId,
+            sessionId: null,
             processedText,
         };
     } catch (err) {
@@ -321,8 +322,10 @@ export const claudeBackend: AgentBackend = {
         const cfg = claudeBackend.resolveConfig(request.phase, request.tasks);
         // resolveConfig always returns the Claude policy's budget.
         if (cfg.budget === undefined) throw new Error('Claude policy budget missing');
-        const result = await runClaude(request.prompt, request.interactive, request.resumeId,
-            cfg.model, cfg.effort, cfg.budget, request.metricsContext, request.cwd);
+        const needsCompletionRule = !request.interactive && (request.role === 'implementer' || request.role === 'spec_reviewer');
+        const prompt = needsCompletionRule ? `${PHASE_ARTIFACT_COMPLETION}\n\n${request.prompt}` : request.prompt;
+        const result = await runClaude(prompt, request.interactive, request.resumeId,
+            cfg.model, cfg.effort, cfg.budget, request.metricsContext, request.cwd, request.wrapForResume);
         return { backend: claudeBackend.id, sessionId: result.sessionId, exitCode: result.exitCode,
             capturedStdout: result.capturedStdout, text: result.processedText };
     },
