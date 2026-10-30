@@ -1,7 +1,7 @@
 {
   "id": "claude-provider-mode",
   "title": "Claude-only provider mode",
-  "status": "code_review",
+  "status": "human_review",
   "created": "2026-10-30",
   "updated": "2026-10-30",
   "branch": "task/claude-provider-mode",
@@ -45,18 +45,18 @@
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
-      "iterations": 1,
-      "iterations_current_loop": 1,
-      "iterations_total": 1,
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
       "changes_requested_total": 1,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
