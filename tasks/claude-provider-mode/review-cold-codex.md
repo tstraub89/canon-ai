@@ -1,1 +1,1 @@
-No actionable regressions were identified in the diff. Type-checking, tests, and lint completed successfully.
+No actionable bugs were found in the changes. The test suite, type-check, lint, and template-sync check pass; untested risk is limited to live Claude/Codex CLI behavior.

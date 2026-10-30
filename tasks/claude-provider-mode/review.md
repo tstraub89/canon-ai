@@ -272,3 +272,82 @@ This round synthesizes three lenses: the anchored Claude lens, the cold-Claude l
 - [ ] Spec gap
 
 Address Finding 1 with the session-clear fix and the four tests. The nits are optional.
+
+## Round 3 — verifying iteration 2's response to round 2
+
+**Scope:** Full — base `main` — reason: delicate
+
+This round synthesizes three lenses: the anchored Claude lens, the cold-Claude lens (diff and base ref only), and cold-Codex. Cold-Codex found no actionable bugs. Following round-3 discipline, only `code-bug` and `spec-gap` findings drive the verdict. Nits and wording points are left out of the verdict.
+
+### Stage 1 — Acceptance Criteria Re-Check
+
+**Validation gate: pass.**
+
+- The baseline, Iteration 2 and Iteration 3 Validation Outcomes tables in `handoff.md` have no `Fail` rows. E2E is N/A per the spec.
+- The anchored lens re-ran every check itself:
+  - `npm run build` exited 0 and left `dist/` clean.
+  - type-check, lint, `sync-templates:check` and `docs-refs-check` pass.
+  - `npm test`: 1860 pass, 0 fail.
+- Red-first evidence was read across the whole handoff. No AC is a mandatory red-first regression. Iteration 3 records voluntary pre-fix failures against `b38025c` for F1(a) (both Claude reset cases kept the reviewer session) and F1(b) (the post-reroute park got the false preamble).
+- The `b38025c..HEAD` source delta matches the Iteration 3 Changes table: `src/task/index.ts`, `src/orchestrator/phases/spec-review.ts`, both `dist` bundles, `docs/pipeline-orchestrator.md` and its mirror, and three test files.
+
+| AC | Status | Notes |
+|---|---|---|
+| AC-1 | Met (unchanged from round 2) | Policy untouched. |
+| AC-2 | Met | The task CLI change is limited to the reset clear; provider set, refusal and completion are untouched. |
+| AC-3 | Met (unchanged from round 2) | Routing untouched. |
+| AC-4 | Met (unchanged from round 2) | Bundle refusal untouched. |
+| AC-5 | Met | The reset clear goes through `clearSessionPair` (`src/task/index.ts:1120`), so the role key, legacy key and tag are removed together. `tests/task-cli.test.ts:1142` covers provider × tag (claude / codex / untagged) and checks that the unrelated slot survives. |
+| AC-6 | Met (unchanged from round 2) | Implement park/resume untouched. |
+| AC-7 | Met | The predicate is back to loop count only (`spec-review.ts:103`). The first-pass park after a real reroute resumes with no preamble (`tests/run-task-safety.test.ts:11489`). A normal re-review keeps the preamble. A Claude reset after a loop cap or a gate halt starts fresh, with no `--resume`. |
+| AC-8 to AC-13 | Met (unchanged from round 2) | Untouched by iteration 2. |
+| AC-14 | Met | A mixed reset keeps a Codex or untagged reviewer session and still sends the preamble; both mixed reset controls pass. |
+| AC-15 | Met | The `reset-spec-review` row (`docs/pipeline-orchestrator.md:125`) and its mirror describe the Claude-only clear. |
+| AC-16 to AC-19 | Met (unchanged from round 2) | Record-family code untouched; no mixed expected values edited. |
+
+### Verifying Round 2 findings
+
+- _correctness bug F1(a):_ "gate-halt reset resumes the approving Claude reviewer" → addressed ✓.
+  - `taskResetSpecReview` clears the `spec_reviewer` pair only when `storedSessionBackend(...) === 'claude'` (`src/task/index.ts:1120`).
+  - Tests cover the Claude gate-halt and loop-cap resets (no `--resume`) and the mixed controls (resume plus preamble).
+- _correctness bug F1(b):_ "false preamble on a first-pass park after a reroute" → addressed ✓.
+  - The cumulative-counter term is removed.
+  - A real full-tier reroute followed by a park and resume sends no preamble.
+- The recovery-hints registration is removed, and the docs row and its mirror are updated.
+- The anchored lens traced the sibling recovery paths:
+  - Reroute already clears `spec_reviewer` (`main.ts:3095`).
+  - `reset-code-review` clears the `reviewer` pair.
+  - `accept` does not touch sessions.
+  - Reset reads the tag, not the pin, so an invalid or absent pin does not affect it.
+
+### Stage 2 — New findings
+
+No `code-bug` or `spec-gap` findings survive.
+
+The following non-blocking observations are recorded for a possible follow-up, not for this loop:
+- The cross-family round-record conflict after a reroute plus a provider switch falls back to full scope. It is spec-driven and was raised in rounds 1, 2 and 3.
+- The scope reasons still say "cold-Codex archive record" in Claude mode.
+- The `reset-spec-review` confirmation message does not mention the dropped reviewer session.
+
+### Dismissed Cold Findings
+
+- Dismissed (cold-Claude): the Claude implementer and spec_reviewer run unsandboxed (`--dangerously-skip-permissions`, `--add-dir REPO_ROOT`), and agent commits would bypass hooks via `RUN_TASK_ORCHESTRATOR=1`. This is the spec Non-Goal "Claude sandboxing or agent-commit detection", accepted under Known Risks "No write sandbox for a Claude implementer". Dismissed in every prior round.
+- Dismissed (cold-Claude): after a Claude park, an operator who hand-sets implement to `in_progress` gets the "finish validation and handoff" resume prompt instead of the park-resume prompt. The advertised recovery after a park is a plain re-run (`main.ts:3596`), which takes the park-resume path, and hand-editing phase status is outside the recovery the spec defines. The spec accepts the park entry predicate under Known Risks "Park-resume entry condition".
+- Dismissed (cold-Claude): `isParkResume` fires for any blocked implement with a stored Claude session, and the quoted escalation may be unrelated. The spec accepts this under Known Risks "Park-resume entry condition"; it was dismissed in all prior rounds.
+- Dismissed (cold-Claude): the CLI bundle now prints the existing `MAX_REVIEW_LOOPS` warning on every `canon` command when the variable is malformed. This is known and accepted at plan time (`notes.md` plan note 6). The warning is accurate and only appears for a malformed value. Cleanup only.
+- Dismissed (cold-Claude): `CANON_PROVIDER` does not affect `canon run`, and nothing warns when it differs from the task pin. This is spec-intended: Decision §11 has runs read the task pin and doctor check the setting.
+- Dismissed (cold-Claude): `--ship` and `--dry-run` refuse a mixed-provider bundle. AC-4 and spec §2/§5 have the orchestrator refuse such bundles. Exempting `--ship` is the optional nit carried since round 1, not a bug.
+- Dismissed (cold-Claude): a Claude spec_review parked in round 2 or later resumes with the "revised since your last review" preamble. Decision §7 (`spec.md:32`) shows the preamble when a previous round requested changes, which is true here: the spec was revised after that round. Dismissed in `review-prior-1.md` round 1.
+- Dismissed (cold-Claude): the unattended completion sentence reaches the artifact fix-up turn. The fix-up prompt explicitly overrides the earlier instructions. Verified and dismissed in prior rounds.
+- Dismissed (cold-Claude): the Claude implementer lacks `CODEX_HEADLESS`'s scope sentence. Round 1 of `review-prior-1.md` (F2) directed adding only the completion rule. The implement templates carry their own Affected Files and scope rules. Dismissed in round 2.
+- Dismissed (cold-Claude): the cross-family round-record conflict after round numbers restart. The implementation follows the Amendment's conflict rule, and the fallback is full scope (safe). It is recorded above as a follow-up observation.
+- Dismissed (cold-Claude): the "cold-Codex" wording in scope reasons, the `phases.*.agent` template defaults, and the `canon run` help text and lens-charter wording. These are wording and display only. The help and charter text fall under the Non-Goals' deferred vendor-wording sweep; the scope-reason wording is preserved deliberately (plan note 4).
+- Dismissed (cold-Claude): `??` versus `||` presence checks for an empty-string session id in `usableSessionId` and `clearMismatchedSessions`. canon never writes an empty session id. Low/low; no reachable path was shown.
+- Cold-Codex reported no actionable bugs, so there is nothing to dismiss.
+
+### Verdict for this round
+
+- [x] Approved
+- [ ] Approved with nits
+- [ ] Changes requested
+- [ ] Spec gap

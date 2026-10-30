@@ -19,3 +19,11 @@ A resume predicate keyed on `blocked` plus a stored session admits every path th
 *(2026-10-30, source: claude-provider-mode)*
 
 When a spec keeps the owning module out of scope, a prompt builder that rewrites one sentence of that module's output with `.replace('…')` works until the source wording changes. Then the replacement does nothing and no test fails. Here the Claude implementer startup is built by replacing a sentence inside `CODEX_STARTUP`, and code review flagged it as fragile. Prevention: when a derived prompt replaces text it does not own, assert that the new text is present and the old text is absent. A wording change then fails the test instead of silently changing the prompt. Canonical example: `CLAUDE_IMPLEMENTER_STARTUP` in `src/orchestrator/prompts/helpers.ts`.
+
+---
+
+### Derive loop-local state from fields a reset actually clears, not from a lifetime counter
+
+*(2026-10-30, source: claude-provider-mode)*
+
+A reroute keeps a lifetime counter (`changes_requested_total`) and clears the reviewer session and loop counters. A re-review predicate that used the lifetime counter to decide whether a resumed reviewer had already reviewed in this loop was wrong. It kept the old history after the reset had cleared the session, so the revised-spec preamble went to a reviewer that had no prior review in the current loop. The first fix, which switched to the lifetime counter, was caught on review round 2. Prevention: before using a cumulative counter as a proxy for a loop-local fact, list every reset path that zeroes one field but not the other, and key the predicate on the field that the reset clears together with the session. Canonical example: the re-review predicate in `src/orchestrator/phases/spec-review.ts` and the reviewer clear in `src/task/index.ts`.

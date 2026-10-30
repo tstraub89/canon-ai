@@ -3,7 +3,7 @@
 - Adds `CANON_PROVIDER=claude`, which routes every pipeline role to the Claude CLI. With it set, Codex is not required; `canon doctor` and `canon init` check only for `git` and `claude`.
 - Pins the provider per task in `status.json` at `canon task new`. Tasks without a pin keep the existing mixed routing. `canon task set <id> provider claude|mixed` switches a task and clears any stored session that belongs to the other backend. Mixed-provider bundles are refused before any agent starts. `codex` is refused as a provider for now.
 - Stores a session tagged with its backend, so a session from one backend is never resumed by the other.
-- On Claude-provider tasks, a failed implement or spec-review run keeps its session, and the next `canon run` resumes the unfinished work. Spec review's "revised since your last review" note now appears only after a changes-requested round.
+- On Claude-provider tasks, a failed implement or spec-review run keeps its session, and the next `canon run` resumes the unfinished work. Spec review's "revised since your last review" note now appears only after a changes-requested round in the current loop. A reset drops a Claude-held reviewer session, so the next review starts fresh.
 - Claude-provider code review runs the anchored and spec-blind Claude reviewers and skips the Codex cold review. The numbered round record is still written, so delta scope works from round 2.
 - Gives Claude-held spec-review and implement their own model, effort and budget defaults. `CLAUDE_BUDGET` still overrides them.
 - Mixed-mode argv, prompts, goldens and defaults are unchanged.
