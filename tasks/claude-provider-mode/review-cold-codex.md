@@ -1,1 +1,1 @@
-No actionable regressions were identified in the diff. The test suite, type-check, lint, and template-sync check passed; untested runtime behavior remains a general risk.
+No actionable regressions were found in the changed code paths. The tests, type-check, lint, build, and template synchronization check completed successfully.

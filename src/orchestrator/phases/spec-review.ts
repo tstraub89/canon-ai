@@ -100,7 +100,12 @@ export async function runSpecReviewPhase(
 
     info(`Phase: spec_review (${backend.displayName} reviews spec${state.isBundle ? 's' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'spec_review', 'in_progress');
-    const isReReview = resumeId !== null && (state.provider !== 'claude' || specReviewCheck.count > 0);
+    // reset-spec-review clears loop-local counts but keeps the reviewer session
+    // and cumulative changes-requested history. A resumed reviewer must still
+    // re-read revised specs after that reset.
+    const hadChangesRequested = specReviewCheck.count > 0
+        || tasks.some(t => (t.status.phases.spec_review?.changes_requested_total ?? 0) > 0);
+    const isReReview = resumeId !== null && (state.provider !== 'claude' || hadChangesRequested);
     const specReviewPrompt = isReReview
         ? `The spec${state.isBundle ? 's have' : ' has'} been revised since your last review. Re-read the current spec.md ${state.isBundle ? 'files' : 'file'} from disk and produce a completely fresh review — do not replay or summarise your previous output.\n\n${promptSpecReview(state)}`
         : promptSpecReview(state);

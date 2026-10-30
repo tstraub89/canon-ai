@@ -205,3 +205,63 @@ The prior recovery-session regression passed before and after the review fixes. 
 - [x] Original requirements and Amendment AC-16 through AC-19 met under the recorded interpretations.
 - [x] All applicable automated validation checks pass.
 - [x] Earlier regression evidence carried forward and the current cumulative scope documented.
+
+
+## Iteration 2 — addressing review round 1
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `src/orchestrator/phases/spec-review.ts` | Recognize preserved cumulative changes-requested history when deciding whether a resumed Claude reviewer needs the revised-spec preamble after reset. |
+| `dist/orchestrator/run-task.js` | Rebuilt bundle with the corrected preamble predicate. |
+| `tests/run-task-safety.test.ts` | Add reset-then-run regressions for Claude and mixed providers; verify zeroed loop counters, retained cumulative history/session/tag, derived entry phase, resumed ID and revised-spec preamble. |
+| `tests/recovery-hints.test.ts` | Register the new explanatory source comment as a non-runtime recovery-command reference. |
+| `tasks/claude-provider-mode/handoff.md` | Append this revision's changes, evidence and validation results; preserve the earlier implementation record. |
+| `tasks/claude-provider-mode/notes.md` | Record reset-counter continuity and recovery-hint registry behavior. |
+| `tasks/claude-provider-mode/metrics.md` | Preserve pipeline-owned telemetry present at revision entry. |
+| `tasks/claude-provider-mode/review.md` | Preserve the pipeline-owned post-amendment round-1 findings addressed here. |
+| `tasks/claude-provider-mode/review-cold-codex.md` | Preserve the latest pipeline-owned mixed cold-lens findings. |
+| `tasks/claude-provider-mode/review-cold-codex-run-3.md` | Preserve the pipeline-owned numbered archive from the latest mixed review invocation. |
+| `tasks/claude-provider-mode/status.json` | Preserve pipeline state; complete implement using the required phase command. |
+
+### Findings addressed
+
+- Correctness bug F1: after reset-spec-review, Claude resumed its reviewer without the revised-spec preamble. Fixed in `src/orchestrator/phases/spec-review.ts:106` by retaining the existing loop-count check and also reading spec_review.changes_requested_total, which the reset preserves. The stored session is still required; mixed retains its original resume-ID predicate.
+- The regression invokes the actual task command dispatcher for reset-spec-review, confirms the derived entry phase before running main, and checks the final prompt delivered to the fake backend. The existing first-pass park controls still receive no revised-spec preamble, and the existing ordinary re-review control still receives it.
+- Optional nits remain deferred. In particular, cross-family conflict handling follows the amendment unchanged. No risk/guardrail or spec-gap findings were raised in this round.
+
+### AC deltas
+
+- AC-7 / Decision 7: Met, now also verified through reset-spec-review recovery with a retained Claude session and cleared loop-local counters.
+- AC-14: Met; the mixed reset recovery control passes without changing its predicate, prompt wording, or golden values.
+- AC-16 through AC-19: unchanged; the complete suite includes the amendment's record-family regressions.
+
+### Red-First Evidence
+
+The spec has no mandatory red-first AC; this regression was nevertheless run against the committed production code before this round's non-test edits. Source files were clean at entry; pre-existing dirty paths were pipeline task artifacts.
+
+| AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
+| F1 / AC-7 | Reset regression command below | af30163ed76b7248df7ff7e2f9e4d43d717e51fb | Claude case resumed review-session after reset with changes_requested_total=3 and both loop counts zero, but its prompt lacked “has been revised since your last review”. Mixed control passed. | Both reset cases pass; first-pass park and ordinary re-review controls also pass. |
+
+```bash
+node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='spec re-review keeps the revised-spec preamble after reset-spec-review' tests/run-task-safety.test.ts
+```
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run build` | Pass | Rebuilt both entry points; only the orchestrator bundle has a revision delta. |
+| `npm run type-check` | Pass | Reran after the final test/registry edits. |
+| `npm run lint` | Pass | Reran after the final test/registry edits. |
+| `npm test` | Pass | Final full suite: 1,851 tests, 1,850 passed, 1 skipped, 0 failed. Ran with CANON_PROVIDER=claude, CLAUDE_MODEL_SPEC_REVIEW=unused-review-pin and CLAUDE_MODEL_IMPLEMENT=unused-implement-pin. An earlier full run caught the unregistered source comment; it was registered and the complete suite rerun successfully. |
+| `npm run sync-templates:check` | Pass | No managed documents or mirrors changed in this revision. |
+| `npm run docs-refs-check` | Pass | All refs valid; checked again after appending this handoff. |
+| Focused recovery tests | Pass | Five preamble/park cases and both recovery-hint registry cases pass. |
+| Golden / scope / cumulative coverage checks | Pass | Prompt/completion goldens and CLI bundle unchanged from revision HEAD; code edits remain in the Affected Files cap; cumulative Changes tables cover the complete branch and working-tree path set. |
+
+### Blockers
+
+None. No new ambiguity or plan deviation. E2E remains deferred by the spec's Validation Required section (no UI surface); earlier evidence and interpretations above are retained.

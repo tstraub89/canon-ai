@@ -24,3 +24,8 @@
 | 2026-10-30T19:01:25.467Z | claude-provider-mode | spec_review | codex | gpt-6.1-sol | 0 | 98.3s | 985108 | ok |
 | 2026-10-30T19:05:15.057Z | claude-provider-mode | plan | claude | opus | 0 | 229.6s | 2897762 | ok |
 | 2026-10-30T19:19:09.788Z | claude-provider-mode | implement | codex | gpt-6.1-sol | 0 | 834.6s | 28770702 | ok |
+| 2026-10-30T19:20:31.322Z | claude-provider-mode | code_review | codex | gpt-6-luna | 0 | 79.6s | - | ok |
+| 2026-10-30T19:30:41.466Z | claude-provider-mode | code_review | claude | opus | 0 | 610.1s | 1958632 | ok |
+| 2026-10-30T19:30:41.473Z | claude-provider-mode | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 294.5s | 2774059 | ok |
+| 2026-10-30T19:30:41.480Z | claude-provider-mode | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 434.3s | 9253651 | ok |
+| 2026-10-30T19:44:19.174Z | claude-provider-mode | implement | codex | gpt-6.1-sol | 1 | 817.7s | 34169505 | ok |

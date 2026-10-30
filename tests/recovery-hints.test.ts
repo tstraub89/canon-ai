@@ -12,6 +12,12 @@ type HintSite =
 const HINT_PATTERN = /--reroute|reset-code-review|reset-spec-review|canon task accept/;
 const HINT_SITES: readonly HintSite[] = [
   {
+    file: 'src/orchestrator/phases/spec-review.ts',
+    snippet: '// reset-spec-review clears loop-local counts but keeps the reviewer session',
+    kind: 'exempt',
+    reason: 'Not an actionable recovery hint: source comment stripped from runtime output',
+  },
+  {
     file: 'src/orchestrator/main.ts',
     snippet: "        splitCli.die(`Reroute must name every task of a shared-branch bundle: ${shared}. Nothing was changed. Name every bundle task in one reroute: canon run ${allIds.join(' ')} --reroute`);",
     kind: 'actionable',
