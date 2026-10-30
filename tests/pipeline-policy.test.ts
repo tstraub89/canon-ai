@@ -37,6 +37,7 @@ for (const [name, override, reason] of [
     ['XL', { effectiveSize: 'XL' }, /XL task size/],
     ['delicate', { effectiveSize: 'XL', delicate: true }, /delicate/],
     ['missing archive', { prevRecord: null }, /no cold-Codex archive record/],
+    ['conflicting round records', { prevRecord: null, previousRecordConflict: true }, /round records for the previous round disagree/],
     ['disagreeing records', { prevRecord: null, previousRecordsDisagree: true }, /bundle members disagree/],
     ['unparseable archive', { prevRecord: null, previousArchiveMalformed: true }, /unparseable cold-Codex archive record/],
     ['bad SHA', { prevRecord: { reviewedSha: 'bad', exists: false, isAncestor: false, equalsHead: false } }, /does not resolve/],

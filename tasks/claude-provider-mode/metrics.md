@@ -21,3 +21,6 @@
 | 2026-10-30T18:39:06.035Z | claude-provider-mode | code_review | claude:code-review-cold | claude-opus-5-5 | 1 | 317.3s | 4876441 | ok |
 | 2026-10-30T18:39:06.039Z | claude-provider-mode | code_review | claude:code-review-anchored | claude-opus-5-5 | 1 | 519.8s | 4276267 | ok |
 | 2026-10-30T18:40:50.454Z | claude-provider-mode | qa | claude | claude-haiku-5-5 | 0 | 104.4s | 1195526 | ok |
+| 2026-10-30T19:01:25.467Z | claude-provider-mode | spec_review | codex | gpt-6.1-sol | 0 | 98.3s | 985108 | ok |
+| 2026-10-30T19:05:15.057Z | claude-provider-mode | plan | claude | opus | 0 | 229.6s | 2897762 | ok |
+| 2026-10-30T19:19:09.788Z | claude-provider-mode | implement | codex | gpt-6.1-sol | 0 | 834.6s | 28770702 | ok |

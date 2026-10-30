@@ -668,7 +668,7 @@ function resolveCodeReviewScope(facts) {
   if (facts.isRound1) return full("Round 1 (initial review)");
   if (facts.effectiveSize === "XL" || facts.delicate) return full(facts.delicate ? "delicate" : "XL task size");
   const prev = facts.prevRecord;
-  if (prev === null) return full(facts.previousRecordsDisagree ? "bundle members disagree on the previous reviewed commit" : facts.previousArchiveMalformed ? "unparseable cold-Codex archive record for the previous round" : "no cold-Codex archive record for the previous round");
+  if (prev === null) return full(facts.previousRecordsDisagree ? "bundle members disagree on the previous reviewed commit" : facts.previousRecordConflict ? "round records for the previous round disagree on the reviewed commit" : facts.previousArchiveMalformed ? "unparseable cold-Codex archive record for the previous round" : "no cold-Codex archive record for the previous round");
   if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
   if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
   if (prev.equalsHead) return full("previous reviewed commit equals HEAD");
@@ -4996,22 +4996,36 @@ function isPristineTaskArtifact(content, basename, taskId, title) {
 var REVIEW_ARCHIVE_PREFIX = "review-prior-";
 var COLD_CODEX_ARCHIVE_PREFIX = "review-cold-codex-run-";
 var COLD_CODEX_ARCHIVE_RE = /^review-cold-codex-run-(\d+)\.md$/;
-function writeColdCodexArchive(taskDir, header, findings) {
+var ROUND_RECORD_PREFIX = "review-round-";
+var ROUND_RECORD_RE = /^review-round-(\d+)\.md$/;
+function writeNumberedRecord(taskDir, pattern, prefix, header, body) {
   let newest = 0;
   for (const name2 of fs14.readdirSync(taskDir)) {
-    const match = COLD_CODEX_ARCHIVE_RE.exec(name2);
+    const match = pattern.exec(name2);
     if (match) newest = Math.max(newest, Number(match[1]));
   }
-  const name = `${COLD_CODEX_ARCHIVE_PREFIX}${newest + 1}.md`;
+  const name = `${prefix}${newest + 1}.md`;
   const reason = header.reason.replaceAll('"', "'");
   fs14.writeFileSync(
     path12.join(taskDir, name),
     `<!-- round=${header.round} reviewed_sha=${header.reviewedSha} scope=${header.scope} base=${header.base} reason="${reason}" -->
 
-${findings}`,
+${body}`,
     "utf8"
   );
   return name;
+}
+function writeColdCodexArchive(taskDir, header, findings) {
+  return writeNumberedRecord(taskDir, COLD_CODEX_ARCHIVE_RE, COLD_CODEX_ARCHIVE_PREFIX, header, findings);
+}
+function writeRoundRecord(taskDir, header) {
+  return writeNumberedRecord(
+    taskDir,
+    ROUND_RECORD_RE,
+    ROUND_RECORD_PREFIX,
+    header,
+    "Code-review round record. No lens findings: the header above is the round state that delta scope reads.\n"
+  );
 }
 function parseColdCodexArchiveHeader(content) {
   const match = /^<!-- round=(\d+) reviewed_sha=([a-f\d]{40,64}) scope=(full|delta) base=(\S+) reason="([^"\n]*)" -->\r?\n\r?\n/.exec(content);
@@ -5024,15 +5038,9 @@ function parseColdCodexArchiveHeader(content) {
     reason: match[5]
   };
 }
-function findColdCodexArchiveForRound(taskDir, round) {
-  let names;
-  try {
-    names = fs14.readdirSync(taskDir);
-  } catch {
-    return null;
-  }
+function newestRecordForRound(taskDir, names, pattern, round) {
   const numbered = names.flatMap((name) => {
-    const match = COLD_CODEX_ARCHIVE_RE.exec(name);
+    const match = pattern.exec(name);
     return match ? [{ name, number: Number(match[1]) }] : [];
   }).sort((a, b) => b.number - a.number);
   for (const { name } of numbered) {
@@ -5047,6 +5055,27 @@ function findColdCodexArchiveForRound(taskDir, round) {
   }
   return null;
 }
+function roundRecordsForRound(taskDir, round) {
+  let names;
+  try {
+    names = fs14.readdirSync(taskDir);
+  } catch {
+    return { cold: null, neutral: null };
+  }
+  return {
+    cold: newestRecordForRound(taskDir, names, COLD_CODEX_ARCHIVE_RE, round),
+    neutral: newestRecordForRound(taskDir, names, ROUND_RECORD_RE, round)
+  };
+}
+function findColdCodexArchiveForRound(taskDir, round) {
+  const { cold, neutral } = roundRecordsForRound(taskDir, round);
+  if (cold && neutral && cold.reviewedSha !== neutral.reviewedSha) return null;
+  return neutral ?? cold;
+}
+function hasConflictingRoundRecords(taskDir, round) {
+  const { cold, neutral } = roundRecordsForRound(taskDir, round);
+  return cold !== null && neutral !== null && cold.reviewedSha !== neutral.reviewedSha;
+}
 function hasMalformedColdCodexArchive(taskDir) {
   let names;
   try {
@@ -5055,7 +5084,7 @@ function hasMalformedColdCodexArchive(taskDir) {
     return false;
   }
   return names.some((name) => {
-    if (!COLD_CODEX_ARCHIVE_RE.test(name)) return false;
+    if (!COLD_CODEX_ARCHIVE_RE.test(name) && !ROUND_RECORD_RE.test(name)) return false;
     try {
       return parseColdCodexArchiveHeader(fs14.readFileSync(path12.join(taskDir, name), "utf8")) === null;
     } catch {
@@ -6786,6 +6815,8 @@ var defaultDeps = {
   findColdCodexArchiveForRound,
   hasMalformedColdCodexArchive,
   writeColdCodexArchive,
+  writeRoundRecord,
+  hasConflictingRoundRecords,
   getMaxReviewLoops
 };
 function determinePreflightRoute(failures) {
@@ -7019,6 +7050,7 @@ Add them to the affected task spec's ### Affected Files table in the active chec
   const agreed = records.length === tasks.length && records.every((record) => record !== null && record.reviewedSha === records[0]?.reviewedSha);
   const previousRecordsDisagree = records.length === tasks.length && records.every((record) => record !== null) && !agreed;
   const previousArchiveMalformed = records.some((record, index) => record === null && deps.hasMalformedColdCodexArchive(taskDirFor(tasks[index].taskId)));
+  const previousRecordConflict = records.some((record, index) => record === null && deps.hasConflictingRoundRecords(taskDirFor(tasks[index].taskId), roundN - 1));
   const reviewedSha = agreed ? records[0]?.reviewedSha : void 0;
   const resolved = reviewedSha ? deps.resolveCommit(reviewedSha, activeCwd) : null;
   const prevRecord = reviewedSha ? {
@@ -7036,6 +7068,7 @@ Add them to the affected task spec's ### Affected Files table in the active chec
     prevRecord,
     previousArchiveMalformed,
     previousRecordsDisagree,
+    previousRecordConflict,
     deltaPaths: canProbe ? deps.getPathsInRange(`${reviewedSha}..${headSha}`, activeCwd) : [],
     priorChangeSetPaths: canProbe ? deps.getPathsInRange(`${baseBranch}...${reviewedSha}`, activeCwd) : [],
     deltaFileStats: canProbe && reviewedSha ? deps.getDeltaLineStats(reviewedSha, activeCwd, headSha) : [],
@@ -7082,13 +7115,13 @@ Add them to the affected task spec's ### Affected Files table in the active chec
   } else {
     for (const t of tasks) {
       fs19.rmSync(path17.join(taskDirFor(t.taskId), "review-cold-codex.md"), { force: true });
-      deps.writeColdCodexArchive(taskDirFor(t.taskId), {
+      deps.writeRoundRecord(taskDirFor(t.taskId), {
         round: roundN,
         reviewedSha: headSha,
         scope: scope.scope,
         base: scope.base,
         reason: scope.reason
-      }, "No orchestrator cold lens runs in Claude mode.");
+      });
     }
   }
   const backend = deps.agentBackendFor("reviewer", roleAssignmentFor(state.provider));

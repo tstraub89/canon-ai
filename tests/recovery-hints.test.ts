@@ -997,6 +997,8 @@ void test('code_review pre-flight auto-block: the printed reset-code-review is a
       resolveCommit() { return 'fixture-head'; },
       getEffectiveSize() { return 'M'; },
       writeColdCodexArchive() {},
+      writeRoundRecord() {},
+      hasConflictingRoundRecords() { return false; },
       findColdCodexArchiveForRound() { return null; },
       hasMalformedColdCodexArchive() { return false; },
       getScopedDiff() { return ''; },

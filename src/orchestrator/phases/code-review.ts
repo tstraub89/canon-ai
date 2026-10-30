@@ -14,7 +14,7 @@ import { buildAdmittedAllowlist, classifyPreflightBlockers, isTemplateUnfilled, 
 import type { AffectedFilesAllowlist, ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { promptCodeReview, resolveCodeReviewRound } from '../prompts/index.js';
-import { findColdCodexArchiveForRound, hasMalformedColdCodexArchive, writeColdCodexArchive } from '../review-archive.js';
+import { findColdCodexArchiveForRound, hasMalformedColdCodexArchive, hasConflictingRoundRecords, writeColdCodexArchive, writeRoundRecord } from '../review-archive.js';
 import { resolveCodeReviewScope } from '../../lib/pipeline-policy.js';
 import { taskPhase, taskPhasePreflightRejected } from '../../task/index.js';
 
@@ -83,6 +83,8 @@ export type CodeReviewPhaseDeps = {
     findColdCodexArchiveForRound: typeof findColdCodexArchiveForRound;
     hasMalformedColdCodexArchive: typeof hasMalformedColdCodexArchive;
     writeColdCodexArchive: typeof writeColdCodexArchive;
+    writeRoundRecord: typeof writeRoundRecord;
+    hasConflictingRoundRecords: typeof hasConflictingRoundRecords;
     getMaxReviewLoops: typeof getMaxReviewLoops;
 };
 
@@ -103,6 +105,8 @@ const defaultDeps: CodeReviewPhaseDeps = {
     findColdCodexArchiveForRound,
     hasMalformedColdCodexArchive,
     writeColdCodexArchive,
+    writeRoundRecord,
+    hasConflictingRoundRecords,
     getMaxReviewLoops,
 };
 
@@ -397,6 +401,8 @@ export async function runCodeReviewPhase(
         records.every(record => record !== null) && !agreed;
     const previousArchiveMalformed = records.some((record, index) =>
         record === null && deps.hasMalformedColdCodexArchive(taskDirFor(tasks[index].taskId)));
+    const previousRecordConflict = records.some((record, index) =>
+        record === null && deps.hasConflictingRoundRecords(taskDirFor(tasks[index].taskId), roundN - 1));
     const reviewedSha = agreed ? records[0]?.reviewedSha : undefined;
     const resolved = reviewedSha ? deps.resolveCommit(reviewedSha, activeCwd) : null;
     const prevRecord = reviewedSha ? {
@@ -407,7 +413,7 @@ export async function runCodeReviewPhase(
     } : null;
     const canProbe = prevRecord?.exists === true && prevRecord.isAncestor && !prevRecord.equalsHead;
     const scope = resolveCodeReviewScope({
-        isRound1, effectiveSize, delicate, baseBranch, prevRecord, previousArchiveMalformed, previousRecordsDisagree,
+        isRound1, effectiveSize, delicate, baseBranch, prevRecord, previousArchiveMalformed, previousRecordsDisagree, previousRecordConflict,
         deltaPaths: canProbe ? deps.getPathsInRange(`${reviewedSha}..${headSha}`, activeCwd) : [],
         priorChangeSetPaths: canProbe ? deps.getPathsInRange(`${baseBranch}...${reviewedSha}`, activeCwd) : [],
         deltaFileStats: canProbe && reviewedSha ? deps.getDeltaLineStats(reviewedSha, activeCwd, headSha) : [],
@@ -458,9 +464,9 @@ export async function runCodeReviewPhase(
     } else {
         for (const t of tasks) {
             fs.rmSync(path.join(taskDirFor(t.taskId), 'review-cold-codex.md'), { force: true });
-            deps.writeColdCodexArchive(taskDirFor(t.taskId), {
+            deps.writeRoundRecord(taskDirFor(t.taskId), {
                 round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
-            }, 'No orchestrator cold lens runs in Claude mode.');
+            });
         }
     }
 

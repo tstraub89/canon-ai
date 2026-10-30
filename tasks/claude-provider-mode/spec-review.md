@@ -35,3 +35,15 @@ none
 - [ ] **Changes requested** — spec must be revised before plan phase.
 
 No findings. This was a static spec review, not implementation validation. Live provider switching and budget-park resumption remain to be verified by the specified implementation tests and Human Test Plan.
+
+## Amendment Review
+
+- [x] **Approved**
+
+No findings.
+
+Reviewed `## Amendment` and its integration with the approved spec. AC-16 supersedes the Claude-mode filename in original AC-10 and Decision 9 while retaining the round-header contract. The amendment defines independent numeric allocation, newest matching-round selection within each family, cross-provider lookup, conflicting-SHA fallback, and malformed-record handling. Mixed-mode output and existing delta triggers remain preserved.
+
+Re-opened `src/orchestrator/review-archive.ts`, the code-review phase and its tests, the scope policy, and the foreman prompt builder/template. The existing Claude foreman wording describes a numbered round record without specifying its filename, so the prompt non-goal is compatible with the rename. The declared files cover the writer, lookup, phase integration, tests, and documentation changes.
+
+This is a static amendment review; no implementation checks were run. Two-family lookup, conflicting records, and provider switches remain to be verified by the amendment's implementation tests.

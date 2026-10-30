@@ -580,9 +580,9 @@ Provider selection and session safety are extended by "Per-task provider pins an
 
 **What**: The orchestrator's cold-Codex lens and hard-fail rule apply only to `mixed`. In `claude`, the foreman runs its two Claude lenses without an orchestrator cold lens. Every completed review invocation still writes the numbered round record with reviewed SHA, round, scope, base, and reason.
 
-**Why**: Adding an orchestrator cold-Claude lens would duplicate the foreman's existing cold-Claude lens. Retaining the numbered record supports delta scope on the next round without inventing a second archive format.
+**Why**: Adding an orchestrator cold-Claude lens would duplicate the foreman's existing cold-Claude lens. Retaining the numbered record supports delta scope on the next round; the neutral record reuses the archive's header format under a lens-neutral filename.
 
-**Rule**: Mixed mode retains its mandatory cold lens and three-input synthesis. Claude mode writes a numbered `review-cold-codex-run-N.md` record stating the lens is skipped, removes stale unnumbered `review-cold-codex.md` findings, and synthesizes both Claude lenses under the same adjudication rules. The numbered filename remains for compatibility. This narrows the earlier cold-independent-review and cold-Codex decisions to mixed mode.
+**Rule**: Mixed mode retains its mandatory cold lens and three-input synthesis. Claude mode writes a numbered `review-round-N.md` record with the scope header and no lens findings, removes stale unnumbered `review-cold-codex.md` findings, and synthesizes both Claude lenses under the same adjudication rules. The delta-scope lookup reads both record families so a provider switch between rounds retains delta scope. Each family supplies its newest matching header round; different reviewed SHAs across families force a full review. This narrows the earlier cold-independent-review and cold-Codex decisions to mixed mode.
 
 ## Per-task provider pins and backend-tagged sessions (2026-10)
 

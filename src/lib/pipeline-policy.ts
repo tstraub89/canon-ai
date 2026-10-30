@@ -25,6 +25,7 @@ export type CodeReviewScopeFacts = {
     prevRecord: CodeReviewPrevRecord;
     previousArchiveMalformed?: boolean;
     previousRecordsDisagree?: boolean;
+    previousRecordConflict?: boolean;
     deltaPaths: readonly string[] | null;
     priorChangeSetPaths: readonly string[] | null;
     deltaFileStats: readonly { path: string; added: number; deleted: number }[] | null;
@@ -46,9 +47,11 @@ export function resolveCodeReviewScope(facts: CodeReviewScopeFacts): CodeReviewS
     const prev = facts.prevRecord;
     if (prev === null) return full(facts.previousRecordsDisagree
         ? 'bundle members disagree on the previous reviewed commit'
-        : facts.previousArchiveMalformed
-            ? 'unparseable cold-Codex archive record for the previous round'
-            : 'no cold-Codex archive record for the previous round');
+        : facts.previousRecordConflict
+            ? 'round records for the previous round disagree on the reviewed commit'
+            : facts.previousArchiveMalformed
+                ? 'unparseable cold-Codex archive record for the previous round'
+                : 'no cold-Codex archive record for the previous round');
     if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
     if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
     if (prev.equalsHead) return full('previous reviewed commit equals HEAD');
