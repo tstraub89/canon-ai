@@ -65,7 +65,7 @@ Tasks where any phase has `status = "in_progress"` and no action is needed yet.
 - `auto_block_count > 0`: "Previously auto-blocked [N] times — escalation history in tasks/<id>/status.json."
 - If a task has been `in_progress` for the same phase across multiple `/canon-status` checks (infer from iteration counts and last-updated), note it: "Phase hasn't advanced — may be stalled."
 
-If `code_review.verdict = "changes_requested"` and `implement.status = "in_progress"`, note: "implementer iterating (round N)."
+If `code_review.verdict = "changes_requested"` and `implement.status = "in_progress"`, note: "Implementer iterating (round N)."
 
 ---
 

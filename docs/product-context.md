@@ -18,7 +18,7 @@ Rule of thumb: if a non-engineer needed to understand canon-ai, they should be a
 
 ## Product Overview
 
-**canon-ai is an opinionated, spec-first, multi-agent coding pipeline.** It's a TypeScript orchestrator plus a corpus of workflow rules and templates that two AI agents (an architect and an implementer) operate under, with a human as the final arbiter.
+**canon-ai is an opinionated, spec-first, multi-agent coding pipeline.** It's a TypeScript orchestrator plus a corpus of workflow rules and templates that AI agents in defined pipeline roles (author, spec reviewer, implementer, code reviewer, QA) operate under, with a human as the final arbiter.
 
 The thesis: LLMs are excellent at writing code and bad at four specific things — knowing when to ask vs. assume; holding the full context of a project's conventions; catching their own scope creep, dropped requirements, or silent regressions; and distinguishing settled architectural decisions from open questions. canon-ai treats those failure modes as engineering problems and gives each one a structural answer (cross-review, file-based handoffs, validation gates, two-stage code review, accumulated `lessons-learned.md` that gets promoted into canon).
 
