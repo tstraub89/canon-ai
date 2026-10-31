@@ -1,3 +1,4 @@
+import { roleAssignmentFor } from '../policy.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -19,7 +20,7 @@ export async function runPlanPhase(
 
     info(`Phase: plan (Claude writes plan${state.isBundle ? 's' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'plan', 'in_progress');
-    const backend = agentBackendFor('author');
+    const backend = agentBackendFor('author', roleAssignmentFor(state.provider));
     const activeCwd = getActiveCwd(taskIds);
     const result = await backend.run({ role: 'author', phase: 'plan', tasks, prompt: promptPlan(state), interactive: interactive, resumeId: null, metricsContext: {
         taskId: taskIds.join('+'),

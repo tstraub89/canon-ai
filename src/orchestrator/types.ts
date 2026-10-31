@@ -1,4 +1,7 @@
 import type {
+    Provider,
+    SessionSlot,
+    AgentBackendId,
     ClaudeModelConfig,
     ClaudePhase,
     CodexModelConfig,
@@ -75,6 +78,8 @@ export type Escalation = {
     phase: Phase;
     iteration_count?: number;
     reason: string;
+    /** The failure cause without operator recovery text; set when an agent session is parked. */
+    cause?: string;
 };
 
 export type CanonStamp = {
@@ -87,6 +92,8 @@ export type CanonStamp = {
 };
 
 export type StatusJson = {
+    provider?: Provider;
+    session_backends?: Partial<Record<SessionSlot, AgentBackendId>>;
     id: string;
     title?: string;
     status?: string;
@@ -150,6 +157,7 @@ export type TaskContext = {
 };
 
 export type PipelineState = {
+    provider: Provider;
     tasks: TaskContext[];
     tier: PipelineTier;
     isBundle: boolean;

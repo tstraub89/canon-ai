@@ -1,3 +1,4 @@
+import { roleAssignmentFor } from '../policy.js';
 import { requireDocsFreshnessConfig } from '../docs-freshness.js';
 import { info, warn } from '../cli.js';
 import { getMaxReviewLoops } from '../policy.js';
@@ -36,7 +37,7 @@ export async function runSpecPhase(
     if (hasChangesRequested) {
         info('Phase: spec (Claude revises specs after review feedback)');
         for (const t of tasks) taskPhase(t.taskId, 'spec', 'in_progress');
-        const backend = agentBackendFor('author');
+        const backend = agentBackendFor('author', roleAssignmentFor(state.provider));
         const activeCwd = getActiveCwd(taskIds);
         const result = await backend.run({ role: 'author', phase: 'spec', tasks, prompt: promptSpecRevision(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive: interactive, resumeId: resumeId, metricsContext: {
             taskId: taskIds.join('+'),
@@ -52,7 +53,7 @@ export async function runSpecPhase(
     const label = state.tier === 'fast' ? 'spec+plan' : 'spec';
     info(`Phase: spec (Claude writes ${label}${state.isBundle ? ' for bundle' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'spec', 'in_progress');
-    const backend = agentBackendFor('author');
+    const backend = agentBackendFor('author', roleAssignmentFor(state.provider));
     const activeCwd = getActiveCwd(taskIds);
     const result = await backend.run({ role: 'author', phase: 'spec', tasks, prompt: promptSpec(state, requireDocsFreshnessConfig(activeCwd)?.paths), interactive: interactive, resumeId: null, metricsContext: {
         taskId: taskIds.join('+'),

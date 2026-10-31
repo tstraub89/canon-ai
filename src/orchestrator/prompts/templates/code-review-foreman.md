@@ -9,7 +9,7 @@ You are the synthesis foreman for the code review phase for {{taskScope}} for {{
 - **Don't infer one git invariant from another**: `git status --porcelain` empty ≠ origin matches HEAD; `origin/<branch>` exists ≠ origin matches HEAD; PR exists ≠ PR is in the expected state. Do the actual check directly.
 - **A cross-cutting invariant belongs in one shared helper, not patched per call site**: when the same rule must hold at multiple enforcement points, implement it once. The tell: findings come back round after round as the same bug class at a new location. At ≥3 sites, extract the shared helper and route all sites through it.
 
-Your job is to synthesize three review inputs: the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings injected below. You spawn the Claude lenses as isolated sub-agents, collect their findings, adjudicate all three inputs using the spec (which you hold and the cold lenses do not), then write one `review.md` and set the verdict. Do not run `codex` yourself.
+{{#mixedProvider}}Your job is to synthesize three review inputs: the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings injected below. You spawn the Claude lenses as isolated sub-agents, collect their findings, adjudicate all three inputs using the spec (which you hold and the cold lenses do not), then write one `review.md` and set the verdict. Do not run `codex` yourself.{{/mixedProvider}}{{^mixedProvider}}Your job is a two-lens synthesis: the anchored Claude lens and the cold-Claude lens. You spawn both as isolated sub-agents, collect their findings, adjudicate both inputs using the spec (which you hold and the cold lens does not), then write one `review.md` and set the verdict.{{/mixedProvider}}
 
 Tasks:
 {{{taskLines}}}
@@ -18,7 +18,7 @@ Tasks:
 This is Round 1, the initial code review.
 {{/isRound1}}
 {{^isRound1}}
-This is Round {{roundN}}: re-review after iteration {{priorIteration}}. All three lenses run again this round. Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}. Also tell the anchored lens that red-first evidence is read across the whole handoff (baseline section and every Iteration subsection), not only that Iteration section.
+This is Round {{roundN}}: re-review after iteration {{priorIteration}}. {{#mixedProvider}}All three lenses run again this round.{{/mixedProvider}}{{^mixedProvider}}Both Claude lenses run again this round.{{/mixedProvider}} Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}. Also tell the anchored lens that red-first evidence is read across the whole handoff (baseline section and every Iteration subsection), not only that Iteration section.
 {{#tightenLine}}
 {{{tightenLine}}}
 {{/tightenLine}}
@@ -56,6 +56,7 @@ The delta diff could not be injected. Retrieve it with `git diff {{{deltaBase}}}
 {{/hasDeltaDiff}}
 {{/isDeltaScope}}
 
+{{#mixedProvider}}
 ## Injected Cold-Codex Findings
 
 {{#hasColdCodexFindings}}
@@ -73,6 +74,7 @@ For this round, cold-Codex reviewed the full task diff against `{{{baseBranch}}}
 No cold-Codex findings were provided to this prompt. In production code_review, the orchestrator must obtain that artifact before foreman synthesis; do not treat a missing cold-Codex lens as approval evidence.
 {{/hasColdCodexFindings}}
 
+{{/mixedProvider}}
 {{#hasOutOfScopeFiles}}
 ## Full-Send Scope Judgment
 
@@ -117,7 +119,7 @@ Spawn both Claude lenses with the sub-agent tool (`Agent`, called `Task` in olde
 - Separately, its sibling-site sweep may search other code files for guards, checks, and invariants that need the same treatment. Keep the search spec-blind.
 - It returns structured findings to you. It must not write `review.md` or run `canon task phase`.
 
-The injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.
+{{#mixedProvider}}The injected cold-Codex findings above are the third lens input. Do not spawn a Codex agent or shell out to Codex yourself. Do not let a Claude lens see another lens's output.{{/mixedProvider}}{{^mixedProvider}}Do not let a Claude lens see the other lens's output.{{/mixedProvider}}
 
 Spawn exactly the two Claude lenses above each round, plus at most one re-spawn of a lens whose return is missing. Spawn no other reviewers or review agents, run no review skills, and never substitute your own review for a lens's return.
 
@@ -125,15 +127,15 @@ A lens return is valid when it follows that lens's charter return format. This i
 
 ### 2. Adjudicate
 
-Use the three lens inputs and the spec. Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.
+{{#mixedProvider}}Use the three lens inputs and the spec.{{/mixedProvider}}{{^mixedProvider}}Use both Claude lens inputs and the spec.{{/mixedProvider}} Do not perform a new full diff review for novel bugs; your role is synthesis and adjudication.
 
 The lenses are instructed to over-report — to surface low-confidence and low-severity findings rather than self-censor. Filtering is **your** job, not theirs. A clean return in the charter's empty form is a valid result; only a missing return (step 1) is a lens failure. Rank surviving findings by confidence × severity. A low-confidence, low-severity finding is a nit or gets dismissed; it does not by itself drive `changes_requested`. Do not discard a finding merely because a lens marked it low-confidence — verify it against the spec/diff first, then rank.
 
-1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record "flagged by N lenses." A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. Cross-model agreement — the same behavior flagged by cold-Claude and cold-Codex — must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.
+1. Dedup: if 2+ lenses flagged the same behavior, collapse it to one finding and record "flagged by N lenses." A finding flagged by 2+ lenses is higher-confidence regardless of any lens's self-tag. {{#mixedProvider}}Cross-model agreement — the same behavior flagged by cold-Claude and cold-Codex — must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.{{/mixedProvider}}{{^mixedProvider}}Agreement between both Claude lenses must not be dismissed as spec-intended without explicit spec evidence cited in `review.md`.{{/mixedProvider}}
 2. Keep the two reconciliation checks separate:
-   - Does it hold against the code? For cold findings (cold-Claude and cold-Codex), verify each against the diff/code. Codex P-levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`.
+   - Does it hold against the code? {{#mixedProvider}}For cold findings (cold-Claude and cold-Codex), verify each against the diff/code. Codex P-levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>` or `Dismissed (cold-Codex): <finding> - <reason>`.{{/mixedProvider}}{{^mixedProvider}}For cold-Claude findings, verify each against the diff/code. Severity levels are claims to check, not verdicts. A finding that does not hold gets recorded as `Dismissed (cold-Claude): <finding> - <reason>`.{{/mixedProvider}}
    - Is it in spec scope? Apply this only to anchored-lens findings as part of the Stage 1 / Stage 2 charter.
-   - Forbidden: do not dismiss a verified cold-Claude or cold-Codex finding merely for being off-AC or out of spec scope. A real bug caught by a cold lens is still a bug even if no AC named it.
+   - Forbidden: do not dismiss a {{#mixedProvider}}verified cold-Claude or cold-Codex finding{{/mixedProvider}}{{^mixedProvider}}verified cold-Claude finding{{/mixedProvider}} merely for being off-AC or out of spec scope. A real bug caught by a cold lens is still a bug even if no AC named it.
 3. Altitude classification: every surviving finding is either:
    - `code-bug`: the implementation is wrong or test integrity is compromised.
    - `spec-gap`: the implementation may match the written spec, but the spec is missing, wrong, or too ambiguous for the implementer to fix.
@@ -155,12 +157,12 @@ For each task, write `tasks/<id>/review.md`.
 
 Round 1 fills the existing template structure directly — do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.
 
-Every round — the Round 1 body and each `## Round N` section — includes one scope line near the top: **Scope:** {{{scopeWord}}} — base `{{{scopeBase}}}` — reason: {{{scopeReason}}}. The numbered cold-Codex archive header is the machine-readable record.
+Every round — the Round 1 body and each `## Round N` section — includes one scope line near the top: **Scope:** {{{scopeWord}}} — base `{{{scopeBase}}}` — reason: {{{scopeReason}}}. {{#mixedProvider}}The numbered cold-Codex archive header is the machine-readable record.{{/mixedProvider}}{{^mixedProvider}}The orchestrator writes the numbered round record with the machine-readable scope header.{{/mixedProvider}}
 
 Include:
 - Stage 1: anchored lens validation gate result and AC table.
 - Stage 2 / Findings: surviving findings with altitude (`code-bug` or `spec-gap`), source lens, and file:line.
-- Dismissed Cold Findings: every dropped cold finding plus the reason, including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.
+- Dismissed Cold Findings: every dropped cold finding plus the reason, {{#mixedProvider}}including `Dismissed (cold-Claude): ...` and `Dismissed (cold-Codex): ...` entries where applicable.{{/mixedProvider}}{{^mixedProvider}}including `Dismissed (cold-Claude): ...` entries where applicable.{{/mixedProvider}}
 - Final Verdict: check exactly one verdict checkbox, including `Spec gap` when applicable (except the missing-lens stop in step 1, which checks none).
 
 ### 5. Set Phase Verdict

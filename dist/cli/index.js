@@ -6,7 +6,7 @@ function isPlanCombined(task) {
   return task.task_size === "XS" && !(task.delicate ?? false);
 }
 var AGENT_ROLES = ["author", "spec_reviewer", "implementer", "reviewer", "cold_reviewer", "qa"];
-var DEFAULT_ROLE_ASSIGNMENT = {
+var MIXED_ROLE_ASSIGNMENT = {
   author: "claude",
   spec_reviewer: "codex",
   implementer: "codex",
@@ -14,16 +14,32 @@ var DEFAULT_ROLE_ASSIGNMENT = {
   cold_reviewer: "codex",
   qa: "claude"
 };
-function roleBackendId(role, assignment = DEFAULT_ROLE_ASSIGNMENT) {
+function roleBackendId(role, assignment) {
   return assignment[role];
 }
-function requiredAgentBackends(assignment = DEFAULT_ROLE_ASSIGNMENT) {
+function requiredAgentBackends(assignment) {
   return [...new Set(AGENT_ROLES.map((role) => roleBackendId(role, assignment)))];
 }
+var CLAUDE_ROLE_ASSIGNMENT = {
+  author: "claude",
+  spec_reviewer: "claude",
+  implementer: "claude",
+  reviewer: "claude",
+  cold_reviewer: "claude",
+  qa: "claude"
+};
+function parseProvider(value) {
+  if (value === "mixed" || value === "claude") return value;
+  throw new Error(`Invalid provider '${String(value)}'. Accepted values: mixed, claude.${value === "codex" ? " Codex-only mode is not supported yet." : ""}`);
+}
+function roleAssignmentFor(provider) {
+  return provider === "claude" ? CLAUDE_ROLE_ASSIGNMENT : MIXED_ROLE_ASSIGNMENT;
+}
 
-// src/orchestrator/docs-freshness.ts
-import fs8 from "fs";
-import path7 from "path";
+// src/orchestrator/env.ts
+import fs3 from "fs";
+import path2 from "path";
+import { fileURLToPath } from "url";
 
 // src/orchestrator/cli.ts
 import fs from "fs";
@@ -171,15 +187,6 @@ function warn(message) {
   console.error(`\u26A0\uFE0F  ${message}`);
 }
 
-// src/orchestrator/worktree.ts
-import fs7 from "fs";
-import path6 from "path";
-
-// src/orchestrator/env.ts
-import fs3 from "fs";
-import path2 from "path";
-import { fileURLToPath } from "url";
-
 // src/lib/project-root.ts
 import { spawnSync } from "child_process";
 import fs2 from "fs";
@@ -239,6 +246,20 @@ function isTaskEntry(tasksDirPath, name) {
 // src/orchestrator/env.ts
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path2.dirname(__filename);
+function parseMaxReviewLoops(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!/^-?\d+$/.test(trimmed)) {
+    warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    warn(`Invalid MAX_REVIEW_LOOPS value "${raw}"; using the size-aware default.`);
+    return null;
+  }
+  return parsed;
+}
 var REPO_ROOT = resolveProjectRoot();
 var TASKS_DIR = path2.join(REPO_ROOT, "tasks");
 var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path2.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path2.resolve(REPO_ROOT, ".canon/worktrees");
@@ -259,6 +280,37 @@ var config = {
   projectName: resolveProjectName(),
   maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
 };
+
+// src/orchestrator/policy.ts
+var config2 = {
+  claudeModelSpecReview: process.env.CLAUDE_MODEL_SPEC_REVIEW ?? null,
+  claudeModelImplement: process.env.CLAUDE_MODEL_IMPLEMENT ?? null,
+  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? null,
+  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? null,
+  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? null,
+  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? null,
+  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? null,
+  claudeModelLight: process.env.CLAUDE_MODEL_LIGHT || null,
+  claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
+  claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
+  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
+  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6.1-sol",
+  maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
+  claudeBudget: process.env.CLAUDE_BUDGET ?? null
+};
+var PROVIDER_SETTING_NAME = "CANON_PROVIDER";
+function resolveProviderSetting() {
+  const value = process.env[PROVIDER_SETTING_NAME];
+  return value === void 0 || value === "" ? "mixed" : parseProvider(value);
+}
+
+// src/orchestrator/docs-freshness.ts
+import fs8 from "fs";
+import path7 from "path";
+
+// src/orchestrator/worktree.ts
+import fs7 from "fs";
+import path6 from "path";
 
 // src/orchestrator/git.ts
 import { spawnSync as spawnSync3 } from "child_process";
@@ -597,9 +649,23 @@ var LEGACY_SESSION_SLOTS = {
   reviewer: "claude_review"
 };
 function clearSessionPair(status, slot) {
+  delete status.session_backends?.[slot];
   if (!status.sessions) return;
   delete status.sessions[slot];
   delete status.sessions[LEGACY_SESSION_SLOTS[slot]];
+}
+function storedSessionBackend(status, slot) {
+  return status.session_backends?.[slot] ?? MIXED_ROLE_ASSIGNMENT[slot];
+}
+function clearMismatchedSessions(status, assignment) {
+  const cleared = [];
+  for (const slot of Object.keys(LEGACY_SESSION_SLOTS)) {
+    if ((status.sessions?.[slot] || status.sessions?.[LEGACY_SESSION_SLOTS[slot]]) && storedSessionBackend(status, slot) !== assignment[slot]) {
+      clearSessionPair(status, slot);
+      cleared.push(slot);
+    }
+  }
+  return cleared;
 }
 
 // src/orchestrator/git.ts
@@ -683,7 +749,7 @@ function parseDocsFreshnessConfig(raw) {
   const docs = value.docs_freshness;
   if (!isObject(docs)) return invalid('"docs_freshness" must be an object.');
   unknownKeys.push(...Object.keys(docs).filter((key) => !["protected", "paths", "flag_only"].includes(key)).map((key) => `docs_freshness.${key}`));
-  const config2 = {};
+  const config3 = {};
   for (const key of ["protected", "flag_only"]) {
     if (!Object.hasOwn(docs, key)) continue;
     const list = docs[key];
@@ -692,7 +758,7 @@ function parseDocsFreshnessConfig(raw) {
       const problem = docProblem(doc, `docs_freshness.${key}`);
       if (problem) return invalid(problem);
     }
-    config2[key === "protected" ? "protected" : "flagOnly"] = list.map((doc) => path7.posix.normalize(doc.replaceAll("\\", "/")));
+    config3[key === "protected" ? "protected" : "flagOnly"] = list.map((doc) => path7.posix.normalize(doc.replaceAll("\\", "/")));
   }
   if (Object.hasOwn(docs, "paths")) {
     if (!isObject(docs.paths)) return invalid('"docs_freshness.paths" must be an object mapping globs to arrays of doc paths.');
@@ -708,9 +774,9 @@ function parseDocsFreshnessConfig(raw) {
       }
       mappings[glob] = list.map((doc) => path7.posix.normalize(doc.replaceAll("\\", "/")));
     }
-    config2.paths = mappings;
+    config3.paths = mappings;
   }
-  return { ok: true, source: "file", config: config2, unknownKeys };
+  return { ok: true, source: "file", config: config3, unknownKeys };
 }
 function loadDocsFreshnessConfig(root) {
   try {
@@ -787,11 +853,11 @@ function matchesDocsGlob(pattern, filePath) {
   };
   return match(0, 0);
 }
-function resolveDocsFreshness(config2, diff) {
-  const protectedDocs = [...new Set(config2?.protected ?? DEFAULT_PROTECTED_DOCS)];
-  const mappings = Object.entries(config2?.paths ?? {});
+function resolveDocsFreshness(config3, diff) {
+  const protectedDocs = [...new Set(config3?.protected ?? DEFAULT_PROTECTED_DOCS)];
+  const mappings = Object.entries(config3?.paths ?? {});
   const mapped = [...new Set(mappings.flatMap(([, docs]) => [...docs]))];
-  const flagOnly = [...new Set(config2?.flagOnly ?? [])];
+  const flagOnly = [...new Set(config3?.flagOnly ?? [])];
   const prompt = new Set(protectedDocs);
   const paths = diff?.filter((file) => !isPipelinePath(file)) ?? [];
   for (const [glob, docs] of mappings) {
@@ -1493,10 +1559,12 @@ function upsertCanonBlock(content, block) {
 
 // src/cli/deps.ts
 import { spawnSync as spawnSync4 } from "child_process";
-var HARD_DEPS = [
-  { cmd: "git", installHint: "https://git-scm.com/downloads" },
-  ...requiredAgentBackends().map((cmd) => ({ cmd, installHint: cmd === "claude" ? "npm install -g @anthropic-ai/claude-code" : "npm install -g @openai/codex" }))
-];
+function hardDeps(provider) {
+  return [
+    { cmd: "git", installHint: "https://git-scm.com/downloads" },
+    ...requiredAgentBackends(roleAssignmentFor(provider)).map((cmd) => ({ cmd, installHint: cmd === "claude" ? "npm install -g @anthropic-ai/claude-code" : "npm install -g @openai/codex" }))
+  ];
+}
 var SOFT_DEPS = [
   { cmd: "gh", installHint: "brew install gh && gh auth login  (required for --pr / --push)" }
 ];
@@ -1504,8 +1572,15 @@ function isAvailable(cmd) {
   const result = spawnSync4("which", [cmd], { stdio: "ignore" });
   return result.status === 0;
 }
-function checkDeps(available = isAvailable) {
-  const missing = HARD_DEPS.filter((d) => !available(d.cmd));
+function checkDeps(available = isAvailable, provider) {
+  let resolved;
+  try {
+    resolved = provider ?? resolveProviderSetting();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  const missing = hardDeps(resolved).filter((d) => !available(d.cmd));
   if (missing.length > 0) {
     console.error("canon init requires the following tools to be installed:\n");
     for (const dep of missing) {
@@ -2082,8 +2157,17 @@ function checkDocsFreshness(cwd) {
 function doctorCmd(args2) {
   handlePreScan(DOCTOR_ARGS, args2, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
   const cwd = resolveProjectRoot();
-  const requiredAgents = new Set(requiredAgentBackends());
+  let provider = "mixed";
+  let providerError = null;
+  try {
+    provider = resolveProviderSetting();
+  } catch (error) {
+    providerError = error instanceof Error ? error.message : String(error);
+  }
+  const providerCheck = { label: `Provider (${PROVIDER_SETTING_NAME} setting)`, status: providerError ? "fail" : "pass", detail: providerError ?? provider };
+  const requiredAgents = new Set(requiredAgentBackends(roleAssignmentFor(provider)));
   const envChecks = [
+    providerCheck,
     checkPlatform(),
     checkNodeVersion(),
     checkBinary("git", true, "https://git-scm.com/downloads"),
@@ -3635,19 +3719,19 @@ function resolveTaskDirForValidation(taskId, taskDirOverride) {
   return taskDirOverride ? path15.join(taskDirOverride, taskId) : taskDirFor(taskId);
 }
 function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
-  const config2 = PHASE_GATE_CONFIG[phase];
+  const config3 = PHASE_GATE_CONFIG[phase];
   const taskDir = resolveTaskDirForValidation(taskId, taskDirOverride);
-  if (config2.artifactName) {
-    const artifactPath = path15.join(taskDir, config2.artifactName);
+  if (config3.artifactName) {
+    const artifactPath = path15.join(taskDir, config3.artifactName);
     let content;
     try {
       content = fs15.readFileSync(artifactPath, "utf8");
     } catch {
-      return { ok: false, reason: `${config2.artifactName} is missing for phase '${phase}'` };
+      return { ok: false, reason: `${config3.artifactName} is missing for phase '${phase}'` };
     }
-    const isTemplate = config2.customTemplateCheck ? config2.customTemplateCheck(artifactPath) : isTemplateUnfilled(content);
+    const isTemplate = config3.customTemplateCheck ? config3.customTemplateCheck(artifactPath) : isTemplateUnfilled(content);
     if (isTemplate) {
-      return { ok: false, reason: `${config2.artifactName} is still the unfilled template for phase '${phase}'` };
+      return { ok: false, reason: `${config3.artifactName} is still the unfilled template for phase '${phase}'` };
     }
     let rerouteEv = { reroute: false };
     if (phase === "spec_review" || phase === "plan") {
@@ -3665,15 +3749,15 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
       }
       rerouteEv = checkRerouteEvidence(phase, content, st);
       if (rerouteEv.reroute && !rerouteEv.ok) {
-        return { ok: false, reason: `${config2.artifactName}: ${rerouteEv.reason}` };
+        return { ok: false, reason: `${config3.artifactName}: ${rerouteEv.reason}` };
       }
     }
-    if (config2.verdictMustMatchArtifact) {
+    if (config3.verdictMustMatchArtifact) {
       if (!verdict) {
         return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
       }
       const extracted = rerouteEv.reroute && rerouteEv.ok ? rerouteEv.verdict : extractCheckedVerdict(content);
-      const scopeLabel = rerouteEv.reroute && rerouteEv.ok ? `${config2.artifactName} reroute amendment-review section` : config2.artifactName;
+      const scopeLabel = rerouteEv.reroute && rerouteEv.ok ? `${config3.artifactName} reroute amendment-review section` : config3.artifactName;
       if (!extracted) {
         return { ok: false, reason: `${scopeLabel} has no checked verdict checkbox` };
       }
@@ -3682,7 +3766,7 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
       }
     }
   }
-  if (config2.requiresVerdict && !config2.verdictMustMatchArtifact) {
+  if (config3.requiresVerdict && !config3.verdictMustMatchArtifact) {
     if (!verdict) {
       return { ok: false, reason: `phase '${phase}' requires a verdict argument; none provided` };
     }
@@ -4058,7 +4142,7 @@ var VALID_PHASES = new Set(PHASE_ORDER);
 var VALID_STATUSES = /* @__PURE__ */ new Set(["pending", "in_progress", "done", "changes_requested", "blocked"]);
 var VALID_VERDICTS = /* @__PURE__ */ new Set(["approved", "approved_with_nits", "changes_requested", "needs_re_review", "spec_gap", "sanctioned"]);
 var REVIEW_PHASES = /* @__PURE__ */ new Set(["spec_review", "code_review"]);
-var SETTABLE_FIELDS = ["title", "task_size", "delicate", "worktree", "base_branch", "human_spec_gate"];
+var SETTABLE_FIELDS = ["title", "task_size", "delicate", "worktree", "base_branch", "human_spec_gate", "provider"];
 var SETTABLE_FIELD_SET = new Set(SETTABLE_FIELDS);
 var IMMUTABLE_FIELDS = /* @__PURE__ */ new Set(["id", "created", "updated"]);
 var REDIRECT_MESSAGES = {
@@ -4066,6 +4150,7 @@ var REDIRECT_MESSAGES = {
   status: "derived from phase states. Use `canon task phase <id> <phase> <status>`.",
   branch: "load-bearing git identity; retargeting it desyncs the worktree. Not settable via `canon task set`.",
   phases: "nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.",
+  session_backends: "nested orchestrator-owned state. Use `canon task set <id> provider <mixed|claude>` to switch providers and clear incompatible sessions.",
   sessions: "nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead.",
   canon: "nested orchestrator-owned state. `status.json.canon` is stamped by canon snapshot; use `CANON_UPSTREAM_REPO` to override the upstream slug, not `canon task set`.",
   escalations: "nested orchestrator-owned state. Use `canon task phase`, `canon task reset-spec-review`, `canon task reset-code-review`, or `canon task accept` instead."
@@ -4073,6 +4158,7 @@ var REDIRECT_MESSAGES = {
 var ACCEPT_PHASES = ["implement", "spec_review", "code_review"];
 var BOOLEAN_VALUES = ["true", "false"];
 var TASK_SET_FIELD_VALUES = {
+  provider: ["mixed", "claude"],
   task_size: SIZE_ORDER,
   delicate: BOOLEAN_VALUES,
   worktree: BOOLEAN_VALUES,
@@ -4245,6 +4331,7 @@ function parseTaskNewArgs(args2) {
   return { id, title, baseBranch };
 }
 function taskNew(args2) {
+  const provider = resolveProviderSetting();
   const { id, title, baseBranch: parsedBaseBranch } = parseTaskNewArgs(args2);
   let baseBranch = parsedBaseBranch;
   validateTaskId(id);
@@ -4281,6 +4368,7 @@ function taskNew(args2) {
   status.created = today();
   status.updated = today();
   status.base_branch = baseBranch;
+  status.provider = provider;
   writeStatusAtomic(statusPath, status);
   try {
     refreshCanonSnapshotAtPath(statusPath);
@@ -4881,6 +4969,7 @@ function taskResetSpecReview(id) {
   specReview.iterations_current_loop = 0;
   specReview.verdict = "";
   clearSessionPair(status, "author");
+  if (storedSessionBackend(status, "spec_reviewer") === "claude") clearSessionPair(status, "spec_reviewer");
   const rearmGate = status.full_send !== true && status.human_spec_gate !== true;
   if (rearmGate) status.human_spec_gate = true;
   status.updated = today();
@@ -5116,6 +5205,12 @@ function nudgeShippableTasks() {
 }
 function taskSetValue(taskId, field, value, status) {
   switch (field) {
+    case "provider": {
+      const provider = parseProvider(value);
+      const cleared = clearMismatchedSessions(status, roleAssignmentFor(provider));
+      status.provider = provider;
+      return cleared.length ? [`Cleared sessions: ${cleared.join(", ")}.`] : [];
+    }
     case "title":
       if (value.includes("\n") || value.includes("\r")) {
         throw new Error("Error: title must be single-line (no embedded newlines).");
@@ -5229,7 +5324,7 @@ function taskSet(args2) {
   if (field === "branch") {
     throw new Error(`Error: branch is ${taskSetRedirectMessage(field)}`);
   }
-  if (field === "phases" || field === "sessions" || field === "canon" || field === "escalations") {
+  if (field === "phases" || field === "sessions" || field === "session_backends" || field === "canon" || field === "escalations") {
     throw new Error(`Error: ${field} is ${taskSetRedirectMessage(field)}`);
   }
   if (IMMUTABLE_FIELDS.has(field) || field.startsWith("_")) {

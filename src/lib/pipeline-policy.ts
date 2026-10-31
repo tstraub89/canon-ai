@@ -25,6 +25,7 @@ export type CodeReviewScopeFacts = {
     prevRecord: CodeReviewPrevRecord;
     previousArchiveMalformed?: boolean;
     previousRecordsDisagree?: boolean;
+    previousRecordConflict?: boolean;
     deltaPaths: readonly string[] | null;
     priorChangeSetPaths: readonly string[] | null;
     deltaFileStats: readonly { path: string; added: number; deleted: number }[] | null;
@@ -46,9 +47,11 @@ export function resolveCodeReviewScope(facts: CodeReviewScopeFacts): CodeReviewS
     const prev = facts.prevRecord;
     if (prev === null) return full(facts.previousRecordsDisagree
         ? 'bundle members disagree on the previous reviewed commit'
-        : facts.previousArchiveMalformed
-            ? 'unparseable cold-Codex archive record for the previous round'
-            : 'no cold-Codex archive record for the previous round');
+        : facts.previousRecordConflict
+            ? 'round records for the previous round disagree on the reviewed commit'
+            : facts.previousArchiveMalformed
+                ? 'unparseable cold-Codex archive record for the previous round'
+                : 'no cold-Codex archive record for the previous round');
     if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
     if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
     if (prev.equalsHead) return full('previous reviewed commit equals HEAD');
@@ -69,7 +72,7 @@ export function resolveCodeReviewScope(facts: CodeReviewScopeFacts): CodeReviewS
 }
 export type PipelineTier = 'fast' | 'full';
 export type CodexPhase = 'spec_review' | 'implement' | 'code_review';
-export type ClaudePhase = 'spec' | 'plan' | 'code_review' | 'qa';
+export type ClaudePhase = 'spec' | 'spec_review' | 'plan' | 'implement' | 'code_review' | 'qa';
 export type CodexModelConfig = { model: string; effort: string };
 type ClaudeMatrixConfig = { model: string; effort: string };
 
@@ -83,6 +86,8 @@ export type PolicyInput = {
 // Config values the policy consumes. The orchestrator passes raw env values;
 // this pure policy resolves model precedence per cell.
 export type PolicyConfig = {
+    claudeModelSpecReview?: string | null;
+    claudeModelImplement?: string | null;
     claudeModelSpec: string | null;
     claudeModelPlan: string | null;
     claudeModelReview: string | null;
@@ -140,6 +145,8 @@ const CODE_REVIEW_BUDGET_BY_SIZE: Record<TaskSize, string> = {
     XL: '40.00',
 };
 const BUDGET_BY_PHASE_AND_SIZE: Record<ClaudePhase, Record<TaskSize, string>> = {
+    spec_review: SINGLE_PASS_BUDGET_BY_SIZE,
+    implement: { XS: '10.00', S: '15.00', M: '25.00', L: '40.00', XL: '60.00' },
     spec: SINGLE_PASS_BUDGET_BY_SIZE,
     plan: SINGLE_PASS_BUDGET_BY_SIZE,
     code_review: CODE_REVIEW_BUDGET_BY_SIZE,
@@ -260,6 +267,20 @@ const QA_DEFAULT_MODEL = 'claude-haiku-5-5';
 
 // Every phase/size cell is explicit so a retune changes one table entry.
 const CLAUDE_CELLS: Record<ClaudePhase, Record<TaskSize, ClaudeCell>> = {
+    spec_review: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'strong', effort: 'medium' },
+        L: { tier: 'strong', effort: 'medium' },
+        XL: { tier: 'strong', effort: 'high' },
+    },
+    implement: {
+        XS: { tier: 'light', effort: 'medium' },
+        S: { tier: 'light', effort: 'medium' },
+        M: { tier: 'strong', effort: 'medium' },
+        L: { tier: 'strong', effort: 'medium' },
+        XL: { tier: 'strong', effort: 'high' },
+    },
     spec: {
         XS: { tier: 'light', effort: 'medium' },
         S: { tier: 'light', effort: 'medium' },
@@ -292,6 +313,8 @@ const CLAUDE_CELLS: Record<ClaudePhase, Record<TaskSize, ClaudeCell>> = {
 
 function claudePinFor(phase: ClaudePhase, size: TaskSize, config: PolicyConfig): string | null {
     switch (phase) {
+        case 'spec_review': return config.claudeModelSpecReview ?? null;
+        case 'implement': return config.claudeModelImplement ?? null;
         case 'spec': return config.claudeModelSpec;
         case 'plan': return config.claudeModelPlan;
         case 'qa': return config.claudeModelQa;
@@ -323,6 +346,8 @@ function claudeMatrix(config: PolicyConfig): Record<ClaudePhase, Record<TaskSize
         XL: cell(phase, 'XL'),
     });
     return {
+        spec_review: row('spec_review'),
+        implement: row('implement'),
         spec: row('spec'),
         plan: row('plan'),
         code_review: row('code_review'),
@@ -361,7 +386,7 @@ export type AgentBackendId = 'claude' | 'codex';
 export type SessionSlot = 'author' | 'spec_reviewer' | 'implementer' | 'reviewer';
 export type RoleAssignment = Readonly<Record<AgentRole, AgentBackendId>>;
 export const AGENT_ROLES: readonly AgentRole[] = ['author', 'spec_reviewer', 'implementer', 'reviewer', 'cold_reviewer', 'qa'];
-const DEFAULT_ROLE_ASSIGNMENT: RoleAssignment = {
+export const MIXED_ROLE_ASSIGNMENT: RoleAssignment = {
     author: 'claude', spec_reviewer: 'codex', implementer: 'codex',
     reviewer: 'claude', cold_reviewer: 'codex', qa: 'claude',
 };
@@ -374,11 +399,26 @@ const PHASE_SESSION_SLOT: Record<PipelinePhase, SessionSlot | null> = {
     spec: 'author', spec_review: 'spec_reviewer', plan: null, implement: 'implementer',
     code_review: 'reviewer', qa: null, human_review: null,
 };
-export function roleBackendId(role: AgentRole, assignment: RoleAssignment = DEFAULT_ROLE_ASSIGNMENT): AgentBackendId {
+export function roleBackendId(role: AgentRole, assignment: RoleAssignment): AgentBackendId {
     return assignment[role];
 }
 export function phasePrimaryRole(phase: PipelinePhase): AgentRole | null { return PHASE_PRIMARY_ROLE[phase]; }
 export function phaseSessionSlot(phase: PipelinePhase): SessionSlot | null { return PHASE_SESSION_SLOT[phase]; }
-export function requiredAgentBackends(assignment: RoleAssignment = DEFAULT_ROLE_ASSIGNMENT): AgentBackendId[] {
+export function requiredAgentBackends(assignment: RoleAssignment): AgentBackendId[] {
     return [...new Set(AGENT_ROLES.map(role => roleBackendId(role, assignment)))];
 }
+
+export type Provider = 'mixed' | 'claude';
+export const PROVIDERS: readonly Provider[] = ['mixed', 'claude'];
+const CLAUDE_ROLE_ASSIGNMENT: RoleAssignment = {
+    author: 'claude', spec_reviewer: 'claude', implementer: 'claude',
+    reviewer: 'claude', cold_reviewer: 'claude', qa: 'claude',
+};
+export function parseProvider(value: unknown): Provider {
+    if (value === 'mixed' || value === 'claude') return value;
+    throw new Error(`Invalid provider '${String(value)}'. Accepted values: mixed, claude.${value === 'codex' ? ' Codex-only mode is not supported yet.' : ''}`);
+}
+export function roleAssignmentFor(provider: Provider): RoleAssignment {
+    return provider === 'claude' ? CLAUDE_ROLE_ASSIGNMENT : MIXED_ROLE_ASSIGNMENT;
+}
+export function providerRunsColdLens(provider: Provider): boolean { return provider === 'mixed'; }

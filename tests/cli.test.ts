@@ -4218,3 +4218,37 @@ void test('docs-freshness config stays adopter-owned during init and upgrade', (
         assert.ok(!result.dirtyRefused.includes('.canon/config.json'));
     });
 });
+
+void test('doctor and init resolve provider dependencies without Codex and report invalid settings cleanly', () => {
+    withTempDir(dir => {
+        const bins = path.join(dir, 'bin'); fs.mkdirSync(bins);
+        writeExecutable(bins, 'claude', ['echo "2.1.72 (Claude Code)"']);
+        const env = { ...process.env, PATH: `${bins}:/usr/bin:/bin`, CANON_PROVIDER: 'claude', HOME: dir };
+        const init = runDistCli(['init'], { cwd: dir, env });
+        assert.equal(init.status, 0, init.stdout + init.stderr);
+        const doctor = runDistCli(['doctor'], { cwd: dir, env });
+        assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);
+        assert.match(doctor.stdout, /Provider \(CANON_PROVIDER setting\).*claude/);
+        assert.match(doctor.stdout, /✓.*claude/);
+        assert.doesNotMatch(doctor.stdout, /codex project trust|✗ codex|✗.*codex/);
+        const mixed = runDistCli(['init'], { cwd: dir, env: { ...env, CANON_PROVIDER: '' } });
+        assert.equal(mixed.status, 1); assert.match(mixed.stderr, /✗ codex/);
+        const mixedDoctor = runDistCli(['doctor'], { cwd: dir, env: { ...env, CANON_PROVIDER: '' } });
+        assert.equal(mixedDoctor.status, 1); assert.match(mixedDoctor.stdout, /codex project trust|✗.*codex/);
+        for (const command of ['doctor', 'init']) {
+            const invalid = runDistCli([command], { cwd: dir, env: { ...env, CANON_PROVIDER: 'bogus' } });
+            assert.equal(invalid.status, 1);
+            assert.match(invalid.stdout + invalid.stderr, /Accepted values: mixed, claude/);
+            assert.doesNotMatch(invalid.stderr, /at .*\.js:/);
+        }
+        const invalidNew = runDistCli(['task', 'new', 'invalid-provider', 'Invalid provider'], { cwd: dir, env: { ...env, CANON_PROVIDER: 'bogus' } });
+        // The command's repository guard runs first; create a scratch repo to exercise provider validation.
+        execFileSync('git', ['init', '-b', 'main'], { cwd: dir, stdio: 'ignore' });
+        const invalidInRepo = runDistCli(['task', 'new', 'invalid-provider', 'Invalid provider'], { cwd: dir, env: { ...env, CANON_PROVIDER: 'bogus' } });
+        assert.equal(invalidNew.status, 1);
+        assert.equal(invalidInRepo.status, 1);
+        assert.match(invalidInRepo.stderr, /Accepted values: mixed, claude/);
+        assert.doesNotMatch(invalidInRepo.stderr, /at .*\.js:/);
+        assert.equal(fs.existsSync(path.join(dir, 'tasks/invalid-provider')), false);
+    });
+});

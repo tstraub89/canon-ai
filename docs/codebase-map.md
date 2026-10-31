@@ -30,11 +30,11 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Orchestrator entrypoint | `src/orchestrator/run-task.ts` | Thin wrapper that invokes `src/orchestrator/main.ts` |
 | Orchestrator loop, phase dispatch, auto-commit, reroute | `src/orchestrator/main.ts` | Core control flow and phase-aware switches |
 | Per-phase handlers | `src/orchestrator/phases/*.ts` | One file per phase (`spec`, `spec_review`, `plan`, `implement`, `code_review`, `qa`) |
-| Role-based agent interface | `src/orchestrator/agents/backend.ts` | Resolves roles to backends; normalizes sessions and cold reviews |
+| Role-based agent interface | `src/orchestrator/agents/backend.ts` | Resolves roles using an explicit provider assignment; normalizes sessions and cold reviews |
 | Agent runners | `src/orchestrator/agents/*.ts` | Shared subprocess wrappers for Claude and Codex |
 | Prompt builders and templates | `src/orchestrator/prompts/index.ts`, `src/orchestrator/prompts/templates/*.md` | Data prep + Mustache rendering; phase templates carry JIT operating rules for their consumers |
 | CLI parsing and logging | `src/orchestrator/cli.ts` | Args, usage, `die` / `info` / `warn` |
-| State I/O and session storage | `src/orchestrator/state.ts` | `status.json`, derived status, task/worktree path helpers; exports `validateStatus`, `readStatusFromPath`, and the `--reroute` admission predicate `isRerouteAdmitted` |
+| State I/O and session storage | `src/orchestrator/state.ts` | `status.json`, backend-tagged session writes/clears and use-time compatibility, derived status, task/worktree path helpers; exports `validateStatus`, `readStatusFromPath`, and the `--reroute` admission predicate `isRerouteAdmitted` |
 | Shared run-context resolver | `src/orchestrator/run-context.ts` | Orphan-tolerant task-dir lookup, EPERM-tolerant PID probe, `gatherRunContext()` — consumed by `watch`, `doctor`, `stop`; injectable seams for tests |
 | Git plumbing and porcelain parsing | `src/orchestrator/git.ts` | Branch helpers, commits, porcelain parsers |
 | Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator, pure set resolver, dot-aware glob matcher |
@@ -49,7 +49,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | CLI command registry | `src/cli/registry.ts` | Side-effect-free command declarations and global flags |
 | CLI argument declarations | `src/lib/cli-args.ts` | Argument declarations, help/unknown pre-scan, and shared message builders |
 | Canon-managed template sync | `scripts/sync-canon-templates.mjs` | Root → `templates/` sync command; `--stage` re-stages changed templates files |
-| Pure routing policy (tier, sizing, model/effort, loop caps) | `src/lib/pipeline-policy.ts` | Side-effect-free; table-driven; tested in isolation |
+| Pure routing policy (tier, sizing, model/effort, loop caps) | `src/lib/pipeline-policy.ts` | Side-effect-free provider presets, model cells and budgets; table-driven; tested in isolation |
 | Project root / tasks dir resolution | `src/lib/project-root.ts` | `resolveProjectRoot()`, `tasksDir()`, `templatesDir()`, `isValidTaskId()`, `isTaskEntry()`; side-effect-free, no task/orchestrator imports |
 | Task management helper (status.json updates, phase transitions) | `src/task/index.ts` | `taskCmd()` implementation; `src/cli/commands/task.ts` is the thin CLI wrapper |
 | `canon run` CLI dispatch wrapper | `src/cli/commands/run-task.ts` | Spawns the compiled `dist/orchestrator/run-task.js` via `spawnSync`; the installed-package entry point for `canon run` |
@@ -69,7 +69,8 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 |---|---|---|
 | Type definitions | `src/orchestrator/types.ts` | `Phase`, `PhaseStatus`, `Verdict`, `PHASE_ORDER`, `StatusJson`, `CliArgs` |
 | Environment constants | `src/orchestrator/env.ts` | `REPO_ROOT` from `src/lib/project-root.ts`, `WORKTREES_ROOT`, shared environment helpers, and legacy warnings |
-| Policy config wrappers | `src/orchestrator/policy.ts` | Sole policy env resolver; Claude/Codex model and size getters wrapping `src/lib/pipeline-policy.ts` |
+| Init dependency checks | `src/cli/deps.ts` | Computes required binaries at check time from the provider setting or explicit provider |
+| Policy config wrappers | `src/orchestrator/policy.ts` | Sole provider-setting resolver; validates task/bundle pins; Claude/Codex model and size getters wrapping `src/lib/pipeline-policy.ts` |
 | Task context extractors | `src/orchestrator/context.ts` | `extractAffectedFiles()`, `extractAcSummary()`, `extractValidationChecks()` — feeds prompt builders |
 | Signal handlers | `src/orchestrator/signals.ts` | SIGHUP survival; installed before heavy imports so the handler is always present |
 | Detached-mode isolation | `src/orchestrator/detach.ts` | Process group detachment for SIGHUP-safe background runs |
@@ -78,7 +79,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Canon snapshot | `src/orchestrator/canon-snapshot.ts` | Records and compares the canon-ai git snapshot governing a run; used for provenance stamping |
 | Markdown table parser | `src/orchestrator/markdown-table.ts` | Parses markdown tables including escaped-pipe cells; used by handoff and spec parsers |
 | Prompt rendering | `src/orchestrator/prompts/render.ts` | Mustache rendering with LLM-safe escape-disable; consumed by `src/orchestrator/prompts/index.ts` |
-| Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | `CLAUDE_STARTUP`, `CODEX_STARTUP` strings injected into every agent prompt; includes communication norms and Codex git-workflow guidance |
+| Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | Startup and headless strings, `implementationStartup(provider)`, `PHASE_ARTIFACT_COMPLETION`, `toResumePrompt()` |
 | Agent stream handler | `src/orchestrator/agents/stream.ts` | Child process stdout/stderr muxer with stall detection and graceful kill; shared by `claude.ts` and `codex.ts` |
 | Scaffold destination safety | `src/lib/scaffold-paths.ts` | Rejects symlinks in init/upgrade destination paths before writes, including dangling links and parent directories |
 | Canon-managed files whitelist | `src/lib/canon-owned.ts` | `CANON_OWNED` and `DELIMITED` lists — authoritative source for which files `canon upgrade` controls |

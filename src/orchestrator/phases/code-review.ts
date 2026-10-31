@@ -1,3 +1,4 @@
+import { roleAssignmentFor, providerRunsColdLens } from '../policy.js';
 import { AgentSessionError } from '../agents/errors.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,7 +14,7 @@ import { buildAdmittedAllowlist, classifyPreflightBlockers, isTemplateUnfilled, 
 import type { AffectedFilesAllowlist, ClassifiedBlocker } from '../validation.js';
 import type { PipelineState, PhaseRunResult, TaskContext } from '../types.js';
 import { promptCodeReview, resolveCodeReviewRound } from '../prompts/index.js';
-import { findColdCodexArchiveForRound, hasMalformedColdCodexArchive, writeColdCodexArchive } from '../review-archive.js';
+import { findColdCodexArchiveForRound, hasMalformedColdCodexArchive, hasConflictingRoundRecords, writeColdCodexArchive, writeRoundRecord } from '../review-archive.js';
 import { resolveCodeReviewScope } from '../../lib/pipeline-policy.js';
 import { taskPhase, taskPhasePreflightRejected } from '../../task/index.js';
 
@@ -82,6 +83,8 @@ export type CodeReviewPhaseDeps = {
     findColdCodexArchiveForRound: typeof findColdCodexArchiveForRound;
     hasMalformedColdCodexArchive: typeof hasMalformedColdCodexArchive;
     writeColdCodexArchive: typeof writeColdCodexArchive;
+    writeRoundRecord: typeof writeRoundRecord;
+    hasConflictingRoundRecords: typeof hasConflictingRoundRecords;
     getMaxReviewLoops: typeof getMaxReviewLoops;
 };
 
@@ -102,6 +105,8 @@ const defaultDeps: CodeReviewPhaseDeps = {
     findColdCodexArchiveForRound,
     hasMalformedColdCodexArchive,
     writeColdCodexArchive,
+    writeRoundRecord,
+    hasConflictingRoundRecords,
     getMaxReviewLoops,
 };
 
@@ -396,6 +401,8 @@ export async function runCodeReviewPhase(
         records.every(record => record !== null) && !agreed;
     const previousArchiveMalformed = records.some((record, index) =>
         record === null && deps.hasMalformedColdCodexArchive(taskDirFor(tasks[index].taskId)));
+    const previousRecordConflict = records.some((record, index) =>
+        record === null && deps.hasConflictingRoundRecords(taskDirFor(tasks[index].taskId), roundN - 1));
     const reviewedSha = agreed ? records[0]?.reviewedSha : undefined;
     const resolved = reviewedSha ? deps.resolveCommit(reviewedSha, activeCwd) : null;
     const prevRecord = reviewedSha ? {
@@ -406,7 +413,7 @@ export async function runCodeReviewPhase(
     } : null;
     const canProbe = prevRecord?.exists === true && prevRecord.isAncestor && !prevRecord.equalsHead;
     const scope = resolveCodeReviewScope({
-        isRound1, effectiveSize, delicate, baseBranch, prevRecord, previousArchiveMalformed, previousRecordsDisagree,
+        isRound1, effectiveSize, delicate, baseBranch, prevRecord, previousArchiveMalformed, previousRecordsDisagree, previousRecordConflict,
         deltaPaths: canProbe ? deps.getPathsInRange(`${reviewedSha}..${headSha}`, activeCwd) : [],
         priorChangeSetPaths: canProbe ? deps.getPathsInRange(`${baseBranch}...${reviewedSha}`, activeCwd) : [],
         deltaFileStats: canProbe && reviewedSha ? deps.getDeltaLineStats(reviewedSha, activeCwd, headSha) : [],
@@ -416,45 +423,57 @@ export async function runCodeReviewPhase(
         ? deps.getScopedDiffInRange(`${scope.base}..${headSha}`, activeCwd)
         : null;
 
-    const coldBackend = deps.agentBackendFor('cold_reviewer');
-    const coldReviewStartMs = Date.now();
-    const coldReview = await coldBackend.coldReview({ role: 'cold_reviewer', phase: 'code_review', tasks, baseBranch: scope.base, cwd: activeCwd, metricsContext: {
-        taskId: taskIds.join('+'),
-        phase: 'code_review',
-        iteration: maxIter,
-        activeCwd,
-    } });
-    const coldReviewDurationMs = Date.now() - coldReviewStartMs;
+    let coldFindings: string | null = null;
+    if (providerRunsColdLens(state.provider)) {
+        const coldBackend = deps.agentBackendFor('cold_reviewer', roleAssignmentFor(state.provider));
+        const coldReviewStartMs = Date.now();
+        const coldReview = await coldBackend.coldReview({ role: 'cold_reviewer', phase: 'code_review', tasks, baseBranch: scope.base, cwd: activeCwd, metricsContext: {
+            taskId: taskIds.join('+'),
+            phase: 'code_review',
+            iteration: maxIter,
+            activeCwd,
+        } });
+        const coldReviewDurationMs = Date.now() - coldReviewStartMs;
 
-    if (!coldReview.success) {
-        // The cold review reports success only, without a specific failure kind.
-        throw new AgentSessionError({
-            agent: coldBackend.id,
-            kind: 'exit_code',
-            reason: `cold-Codex review could not be obtained for task(s) ${taskIds.join(', ')} ` +
-                `(no findings output / spawn error / stall / signal). Re-run when Codex is available — ` +
-                `the code_review phase has not advanced.`,
-        });
+        if (!coldReview.success) {
+            // The cold review reports success only, without a specific failure kind.
+            throw new AgentSessionError({
+                agent: coldBackend.id,
+                kind: 'exit_code',
+                reason: `cold-Codex review could not be obtained for task(s) ${taskIds.join(', ')} ` +
+                    `(no findings output / spawn error / stall / signal). Re-run when Codex is available — ` +
+                    `the code_review phase has not advanced.`,
+            });
+        }
+
+        for (const t of tasks) {
+            fs.writeFileSync(
+                path.join(taskDirFor(t.taskId), 'review-cold-codex.md'),
+                coldReview.findings,
+                'utf8',
+            );
+        }
+        coldFindings = coldReview.findings;
+        for (const t of tasks) {
+            deps.writeColdCodexArchive(taskDirFor(t.taskId), {
+                round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
+            }, coldReview.findings);
+        }
+        info(`→ cold-codex review (${taskIds.join(', ')}): ${Math.round(coldReviewDurationMs / 1000)}s`);
+
+    } else {
+        for (const t of tasks) {
+            fs.rmSync(path.join(taskDirFor(t.taskId), 'review-cold-codex.md'), { force: true });
+            deps.writeRoundRecord(taskDirFor(t.taskId), {
+                round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
+            });
+        }
     }
 
-    for (const t of tasks) {
-        fs.writeFileSync(
-            path.join(taskDirFor(t.taskId), 'review-cold-codex.md'),
-            coldReview.findings,
-            'utf8',
-        );
-    }
-    for (const t of tasks) {
-        deps.writeColdCodexArchive(taskDirFor(t.taskId), {
-            round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason,
-        }, coldReview.findings);
-    }
-    info(`→ cold-codex review (${taskIds.join(', ')}): ${Math.round(coldReviewDurationMs / 1000)}s`);
-
-    const backend = deps.agentBackendFor('reviewer');
+    const backend = deps.agentBackendFor('reviewer', roleAssignmentFor(state.provider));
     const reviewResumeId = maxIter > 0 ? resumeId : null;
     const scopedDiff = scope.scope === 'delta' ? null : deps.getScopedDiff(baseBranch, activeCwd);
-    const result = await backend.run({ role: 'reviewer', phase: 'code_review', tasks, prompt: promptCodeReview(state, baseBranch, scopedDiff, coldReview.findings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, resumeId: reviewResumeId, metricsContext: {
+    const result = await backend.run({ role: 'reviewer', phase: 'code_review', tasks, prompt: promptCodeReview(state, baseBranch, scopedDiff, coldFindings, { ...scope, deltaDiff }, outOfScopeFiles), interactive, resumeId: reviewResumeId, metricsContext: {
         taskId: taskIds.join('+'),
         phase: 'code_review',
         iteration: maxIter,

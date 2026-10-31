@@ -32,7 +32,7 @@ void test('completion metadata and shared value sets are attached to declaration
     assert.deepEqual(TASK_SUBCOMMAND_ARGS.set.completion?.positionals?.map(s => s.kind), ['taskId', 'settableField', 'fieldValue']);
     assert.deepEqual(SIZE_ORDER, ['XS', 'S', 'M', 'L', 'XL']);
     assert.deepEqual(ACCEPT_PHASES, ['implement', 'spec_review', 'code_review']);
-    assert.deepEqual(Object.keys(TASK_SET_FIELD_VALUES).sort(), ['delicate', 'human_spec_gate', 'task_size', 'worktree']);
+    assert.deepEqual(Object.keys(TASK_SET_FIELD_VALUES).sort(), ['delicate', 'human_spec_gate', 'provider', 'task_size', 'worktree']);
     for (const phase of model.values.phase) assert.doesNotThrow(() => assertValidPhase(phase));
     for (const status of model.values.phaseStatus) assert.doesNotThrow(() => assertValidStatus(status));
     for (const [phase, verdicts] of Object.entries(model.verdictsByPhase)) for (const verdict of verdicts) assert.doesNotThrow(() => assertValidVerdict(phase as 'spec_review' | 'code_review', verdict));
@@ -399,7 +399,7 @@ void test('completion value sets pass the corresponding command validators', () 
     fs.writeFileSync(path.join(statusDir, 'status.json'), JSON.stringify(statusTemplate, null, 2));
     process.env.CANON_TASKS_DIR_OVERRIDE = root;
     try {
-        const fields = ['task_size', 'human_spec_gate', 'delicate', 'worktree'];
+        const fields = ['task_size', 'human_spec_gate', 'delicate', 'worktree', 'provider'];
         for (const field of fields) {
             const values = TASK_SET_FIELD_VALUES[field as keyof typeof TASK_SET_FIELD_VALUES] ?? [];
             for (const value of values) taskSet(['zz-task', field, value]);

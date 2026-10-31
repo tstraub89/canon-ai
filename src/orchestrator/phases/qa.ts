@@ -1,3 +1,4 @@
+import { roleAssignmentFor } from '../policy.js';
 import { requireDocsFreshnessConfig, resolveDocsFreshness } from '../docs-freshness.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,7 +34,7 @@ export async function runQaPhase(
     verifyBranch(taskIds);
     info(`Phase: qa (Claude writes QA${state.isBundle ? ' for bundle' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'qa', 'in_progress');
-    const backend = agentBackendFor('qa');
+    const backend = agentBackendFor('qa', roleAssignmentFor(state.provider));
     const activeCwd = getActiveCwd(taskIds);
     const result = await backend.run({ role: 'qa', phase: 'qa', tasks, prompt: promptQa(state, resolvedPrTemplate, resolveQaDocsFreshness(taskIds, activeCwd)), interactive: interactive, resumeId: null, metricsContext: {
         taskId: taskIds.join('+'),

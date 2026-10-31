@@ -483,3 +483,135 @@ Run `npm run build`, which rewrites `dist/cli/index.js` and `dist/orchestrator/r
 ## Rollback Plan
 
 Revert the merge commit. `provider` and `session_backends` are optional, and their absence means today's behavior. Tasks created after the change keep a `"provider"` key that the reverted code ignores, because `StatusJson` parsing is untyped JSON. A `claude`-pinned task in flight at revert time would silently run as mixed; switch it back with a hand edit or let it run mixed. There is no data migration.
+
+## Reroute Plan
+
+### Round Scope
+
+This round covers the amendment (AC-16 to AC-19): in Claude mode the per-round record is written as `review-round-N.md`, and the round lookup reads both families. The original ACs are implemented and committed (`cc87035`, `b87d2c0`). The archived review `review-prior-1.md` ended Round 2 at **approved with nits**. Its Round 1 findings F1–F4 are verified fixed, and no `code-bug` or `spec-gap` finding is still open, so no prior finding is binding this round. Its optional nits stay out of scope. The amendment review approved with no nits. The working tree is clean apart from the task artifacts.
+
+- **Exists:** these were confirmed by search, not recalled:
+  - In `src/orchestrator/review-archive.ts`: `COLD_CODEX_ARCHIVE_PREFIX`, `COLD_CODEX_ARCHIVE_RE`, `writeColdCodexArchive`, `parseColdCodexArchiveHeader`, `findColdCodexArchiveForRound`, `hasMalformedColdCodexArchive`.
+  - In `src/orchestrator/phases/code-review.ts`: `CodeReviewPhaseDeps` with those three keys (`:83-85`) and `defaultDeps` (`:103-105`). The record lookup is at `:391-399`. The Claude-mode branch at `:458-464` currently calls `deps.writeColdCodexArchive(…, 'No orchestrator cold lens runs in Claude mode.')`.
+  - `resolveCodeReviewScope`'s `prev === null` reason chain (`src/lib/pipeline-policy.ts:47-51`).
+  - Test helpers `makeDeps` (`tests/run-task-code-review.test.ts:283-301`) and `realGitDeps` (`:340-349`), and the existing Claude-mode test (`:1781`).
+  - The untyped deps stub in `tests/recovery-hints.test.ts:990-1002`.
+- **Real path:** `runCodeReviewPhase` runs `resolveCodeReviewRound`, then builds `records` by calling `deps.findColdCodexArchiveForRound(taskDir, roundN-1)` per task (skipped on round 1 and XL). `agreed`, `previousRecordsDisagree` and `previousArchiveMalformed` (via `deps.hasMalformedColdCodexArchive`) are derived from `records` and passed to `resolveCodeReviewScope`. The lens branch then writes the record. The round header format, `parseColdCodexArchiveHeader` and the per-family numbering already do what the new family needs. Only the family regex, the writer entry point and the lookup/malformed scans change.
+- **Callers:**
+  - `findColdCodexArchiveForRound` / `hasMalformedColdCodexArchive`:
+    - In `src`: only `code-review.ts` (deps).
+    - Tests: `run-task-code-review.test.ts`, both direct calls and deps overrides at `:296-297, 346-347, 1501-1502, 1576, 1634, 1669-1679, 1720, 1798-1814`, and the `recovery-hints.test.ts:1000-1001` stub.
+    - The names, signatures and return types stay as they are. Their behavior widens to both families. In a dir that holds only one family the result is identical, so every existing direct call keeps its expected value.
+  - `writeColdCodexArchive`: the mixed branch, plus test seeding. It stays byte-identical.
+  - The only other reader of the filename is `scripts/docs-refs-check.mjs:521`, which skips `review-cold-codex-run-N.md` as noisy. That script is not in scope, and it needs no change because `review-round-N.md` holds no backticked refs (see Step R1).
+- **Tests that can fail:** each AC-17 case seeds a record family that today's lookup does not read, or a state that it reads but resolves wrongly:
+  - (a) and (c) seed only `review-round-1.md`. Today the lookup returns `null`, so they run full scope with the "no cold-Codex archive record" reason, not `delta`.
+  - (d) seeds both families with different SHAs. Today the lookup reads only cold-Codex and returns `delta`.
+  - The malformed case seeds a malformed `review-round-1.md`. Today the reason is "no …", not "unparseable …".
+  - AC-16 asserts `review-round-1.md` exists and no `review-cold-codex-run-*` exists. Today's code writes the opposite.
+  - (b) seeds the cold-Codex family, so it already passes today. It is a regression pin for the switch direction, not a red test. The handoff should label it that way.
+- **Predicates:** the per-task lookup takes `c` (newest cold-Codex record with `round === N−1`) and `r` (the same for `review-round-`):
+
+  | `c` | `r` | Result |
+  |---|---|---|
+  | null | null | null |
+  | set | null | `c` |
+  | null | set | `r` |
+  | set | set, `c.reviewedSha === r.reviewedSha` | `r` (an arbitrary but deterministic pick; only `reviewedSha` is consumed) |
+  | set | set, SHAs differ | null, and the conflict probe returns true |
+
+  The file regexes match `\d+` only, exactly like today. Number 0 still matches. Non-numeric names and suffixed names (`review-round-1.md.bak`) are ignored. The `review-prior-N.md` family is a different prefix and is never read. Malformed means any file in either family whose header fails to parse or cannot be read. Both families run through the same parser, so a CRLF header is accepted in both.
+- **Scope:** every file below is in the amendment's or the original Design's `### Affected Files` table. `parseAffectedFilesFromSpec` takes the union of `## Design` and `## Amendment`. The original table supplies `src/lib/pipeline-policy.ts`, `tests/pipeline-policy.test.ts` and `tests/recovery-hints.test.ts` (Step R2). `scripts/docs-refs-check.mjs` is not touched.
+- **Async/stateful:** N/A. These are synchronous per-task-dir file writes. Numbering is per family, and the lookup matches on the header's round rather than the file number, so equal numbers across families are harmless (amendment Known Risks).
+
+Decision recorded in notes `[plan]` 7: a same-round SHA conflict gets its own honest full-scope reason. It is a new pure-policy fact, not a reuse of "no record" or "bundle members disagree", both of which would misstate the cause. Notes `[plan]` 8: the exported function names stay cold-Codex-named to avoid deps-key churn across tests, and get JSDoc instead.
+
+### Step R1: Round-record family in `src/orchestrator/review-archive.ts`
+
+1. Add `export const ROUND_RECORD_PREFIX = 'review-round-';` and `const ROUND_RECORD_RE = /^review-round-(\d+)\.md$/;`.
+2. Extract a private `writeNumberedRecord(taskDir, re, prefix, header, body)` holding today's writer body: numeric max+1 within `re`, `"` → `'` in the reason, and the same header line and blank line. `writeColdCodexArchive(taskDir, header, findings)` delegates with the cold family, so its output is byte-identical (AC-18). Add `export function writeRoundRecord(taskDir, header): string`, which delegates with the round family and a fixed body:
+   ```ts
+   const ROUND_RECORD_BODY = 'Code-review round record. No lens findings: the header above is the round state that delta scope reads.\n';
+   ```
+   The body has no backticks, so docs-refs-check finds no refs in it. It names no vendor.
+3. Extract a private `newestRecordForRound(taskDir, names, re, round)` holding today's within-family rule: sort numerically descending, return the first readable file whose parsed header has `round === round`.
+4. Add a private `roundRecordsForRound(taskDir, round): { cold, neutral }`. It does one `readdirSync`, returning `{ cold: null, neutral: null }` on error, then calls `newestRecordForRound` for each family. Rewrite the exported functions on top of it:
+   - `findColdCodexArchiveForRound(taskDir, round)`: if both records are set and their `reviewedSha`s differ, return `null`. Otherwise return `neutral ?? cold`.
+   - `export function hasConflictingRoundRecords(taskDir, round): boolean`: both set and the SHAs differ.
+   - `hasMalformedColdCodexArchive(taskDir)`: test each name against both regexes, keeping today's parse/read-failure rule.
+   - Add a one-line JSDoc on the two existing exported functions saying they read both the `review-cold-codex-run-` and `review-round-` families.
+
+### Step R2: Conflict reason in the pure scope policy
+
+- `src/lib/pipeline-policy.ts`:
+  - Add `previousRecordConflict?: boolean` to `CodeReviewScopeFacts`, next to `previousRecordsDisagree`.
+  - In the `prev === null` chain, insert it after `previousRecordsDisagree` and before `previousArchiveMalformed`, with the reason `'round records for the previous round disagree on the reviewed commit'`.
+  - Every existing reason string is unchanged, and the order of the existing branches is preserved. The two flags are mutually exclusive in practice: `previousRecordsDisagree` requires every record to be non-null, and a conflict makes that task's record null.
+- `tests/pipeline-policy.test.ts`: add a row beside the existing reason rows (`:40-41`): `['conflicting round records', { prevRecord: null, previousRecordConflict: true }, /round records for the previous round disagree/]`. Existing rows are untouched.
+
+### Step R3: Code-review phase wiring in `src/orchestrator/phases/code-review.ts`
+
+1. Import `hasConflictingRoundRecords` and `writeRoundRecord`. Add both to `CodeReviewPhaseDeps` (typed `typeof …`) and to `defaultDeps`, next to the existing archive keys.
+2. After `previousArchiveMalformed` (`:398-399`), add:
+   ```ts
+   const previousRecordConflict = records.some((record, index) =>
+       record === null && deps.hasConflictingRoundRecords(taskDirFor(tasks[index].taskId), roundN - 1));
+   ```
+   Pass `previousRecordConflict` into `resolveCodeReviewScope`.
+3. Change the Claude-mode branch (`:458-464`) to keep the `review-cold-codex.md` removal and replace the `deps.writeColdCodexArchive(…, 'No orchestrator cold lens runs in Claude mode.')` call with `deps.writeRoundRecord(taskDirFor(t.taskId), { round: roundN, reviewedSha: headSha, scope: scope.scope, base: scope.base, reason: scope.reason })`. The mixed branch is untouched.
+4. Leave the foreman prompt alone (amendment Non-Goal). Its Claude branch already says "the numbered round record" with no filename (`code-review-foreman.md:160`).
+
+### Step R4: Tests
+
+- **`tests/recovery-hints.test.ts:1000-1001`:** add `hasConflictingRoundRecords() { return false; },` and `writeRoundRecord() {},` to the untyped stub so every deps key exists. The fixture is mixed, but a missing key would crash at runtime if a later fixture reached the null-record path.
+- **`tests/run-task-code-review.test.ts`:**
+  - `makeDeps`: add `hasConflictingRoundRecords: () => false` and `writeRoundRecord`.
+  - `realGitDeps`: also assign the real `hasConflictingRoundRecords`.
+  - Import `writeRoundRecord`, `hasConflictingRoundRecords` and `ROUND_RECORD_PREFIX`.
+  - **AC-16 and AC-17(a): update the existing Claude-mode test** (`:1781`). It is a Claude-mode test, so AC-18 does not freeze it.
+    - Round 1 writes `review-round-1.md` with the round-1 header, which `findColdCodexArchiveForRound(dir, 1)` returns.
+    - Round 1 writes no file starting with `review-cold-codex-run-` and no `review-cold-codex.md`, and the stale `review-cold-codex.md` is removed.
+    - The content does not match `/No orchestrator cold lens/` (the old body) and does not match `/\bCodex\b/`.
+    - Round 2 writes `review-round-2.md` with `scope=delta` and `base = round-1 reviewedSha`.
+    - Replace the old `review-cold-codex-run-1.md` content assertion.
+  - **New `AC-17 round lookup across record families` test.**
+    - Setup: use `withTempTasksAsync` + `writeRoundTwoTask`. Start from `makeDeps` with the real `findColdCodexArchiveForRound`, `hasMalformedColdCodexArchive` and `hasConflictingRoundRecords`. `resolveCommit` maps `HEAD` → `'b'.repeat(40)`, and other refs → themselves, so the stub ancestry and path probes reach `delta`. One sub-case per fresh task id:
+    - **(b) mixed r1 → Claude r2.** Seed `writeColdCodexArchive(dir, { round: 1, reviewedSha: 'a'.repeat(40), … }, 'prior')`, then run a `claude` state. Assert `review-round-1.md` has `round=2 scope=delta base=aaaa…`.
+    - **(c) Claude r1 → mixed r2.** Seed `writeRoundRecord(dir, { round: 1, reviewedSha: 'a'.repeat(40), … })`, then run a `mixed` state; the stub cold backend succeeds. Assert:
+      - `findColdCodexArchiveForRound(dir, 2)` is `delta` with base `aaaa…`;
+      - the new file is `review-cold-codex-run-1.md`;
+      - `review-cold-codex.md` is written;
+      - the only `review-round-` file is still the seeded one (AC-18: a mixed round writes no neutral record).
+    - **(d) conflict.** Seed both families at round 1 with `'a'.repeat(40)` and `'c'.repeat(40)`, then run a `claude` state. Assert the new round-2 record has `scope=full` and `reason="round records for the previous round disagree on the reviewed commit"`.
+    - **(d′) agreement.** Seed both at round 1 with the same SHA. Assert `delta`.
+    - **Malformed.** Write `review-round-1.md` with the content `'malformed header\n'`, then run a `claude` state. Assert the round-2 reason matches `/unparseable cold-Codex archive record/`, the same text the existing mixed malformed test asserts (`:1615`).
+  - **Unit test: per-family numbering.** Seed `review-round-1.md`, `-2.md` and `-10.md` with valid headers, plus `review-cold-codex-run-1.md` through `-12.md` (or just `-12.md`). Assert:
+    - `writeRoundRecord` returns `review-round-11.md`;
+    - `writeColdCodexArchive` returns `review-cold-codex-run-13.md`;
+    - `hasConflictingRoundRecords(dir, 1)` follows the SHAs seeded.
+  - Existing mixed tests and their expected values are unchanged (AC-18).
+- **Golden check:** run `git diff -- tests/run-task-prompts.golden.json` after the suite and expect no change. Neither the foreman prompt nor any reason string reached by existing fixtures changes.
+
+### Step R5: Docs (AC-19)
+
+- **`docs/pipeline-orchestrator.md:482`.** Rewrite the record sentences:
+  - Mixed-mode invocations add `review-cold-codex-run-N.md`, and the unnumbered file keeps the latest findings.
+  - Claude-mode invocations add `tasks/<id>/review-round-N.md`, which has the same header and no lens findings, and remove any stale unnumbered findings file.
+  - Each family numbers max+1 on its own.
+  - The round N−1 lookup reads both families, taking the newest matching file within each. If the two families disagree on the reviewed SHA, the round runs full scope.
+  - Then run `npm run sync-templates`, which updates `templates/docs/pipeline-orchestrator.md`.
+- **`docs/decisions.md` §"Provider-scoped orchestrator cold lens (2026-10)" (`:579-585`).**
+  - **Why:** replace "without inventing a second archive format" with "the neutral record reuses the archive's header format under a lens-neutral filename".
+  - **Rule:** replace the `review-cold-codex-run-N.md` sentence and "The numbered filename remains for compatibility" with: "Claude mode writes a numbered `review-round-N.md` record (header only, no lens findings); the delta-scope lookup reads both record families, so a provider switch between rounds keeps delta scope."
+  - Leave the 2026-09 cold-Codex archive entry (`:370-374`) as is: it describes mixed mode and is still true.
+- **Verify:** `git grep -n "review-cold-codex-run" -- docs templates/docs`. Read every hit and confirm none attributes that file to Claude mode.
+
+### Step R6: Build and validate
+
+- Run `npm run build`, which rewrites `dist/cli/index.js` and `dist/orchestrator/run-task.js`.
+- Then run `npm run type-check`, `npm run lint`, `npm test`, `npm run sync-templates:check` and `npm run docs-refs-check`.
+- Mutation checks before handoff; confirm each red, then restore:
+  - Make `findColdCodexArchiveForRound` read only the cold family: (a), (c) and malformed go red.
+  - Drop the conflict branch: (d) goes red.
+  - Revert the Claude branch to `writeColdCodexArchive`: AC-16 goes red.
+- In the handoff, list `scripts/docs-refs-check.mjs` as deliberately untouched, with the reason given in Round Scope.

@@ -1,4 +1,4 @@
-import { roleBackendId, type AgentRole, type AgentBackendId, type PipelinePhase } from '../../lib/pipeline-policy.js';
+import { roleBackendId, type AgentRole, type AgentBackendId, type PipelinePhase, type RoleAssignment } from '../../lib/pipeline-policy.js';
 import type { TaskContext } from '../types.js';
 import { claudeBackend } from './claude.js';
 import { codexBackend, type ColdCodexReviewResult } from './codex.js';
@@ -44,6 +44,6 @@ export interface AgentBackend {
     run(request: AgentRunRequest): Promise<AgentRunResult>;
     coldReview(request: ColdReviewRequest): Promise<ColdCodexReviewResult>;
 }
-export function agentBackendFor(role: AgentRole): AgentBackend {
-    return roleBackendId(role) === 'claude' ? claudeBackend : codexBackend;
+export function agentBackendFor(role: AgentRole, assignment: RoleAssignment): AgentBackend {
+    return roleBackendId(role, assignment) === 'claude' ? claudeBackend : codexBackend;
 }

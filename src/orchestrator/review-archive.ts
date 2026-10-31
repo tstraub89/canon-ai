@@ -7,6 +7,8 @@ import { isTemplateUnfilled } from './validation.js';
 export const REVIEW_ARCHIVE_PREFIX = 'review-prior-';
 export const COLD_CODEX_ARCHIVE_PREFIX = 'review-cold-codex-run-';
 const COLD_CODEX_ARCHIVE_RE = /^review-cold-codex-run-(\d+)\.md$/;
+export const ROUND_RECORD_PREFIX = 'review-round-';
+const ROUND_RECORD_RE = /^review-round-(\d+)\.md$/;
 
 export type ColdCodexArchiveHeader = {
     round: number;
@@ -16,18 +18,27 @@ export type ColdCodexArchiveHeader = {
     reason: string;
 };
 
-export function writeColdCodexArchive(taskDir: string, header: ColdCodexArchiveHeader, findings: string): string {
+function writeNumberedRecord(taskDir: string, pattern: RegExp, prefix: string, header: ColdCodexArchiveHeader, body: string): string {
     let newest = 0;
     for (const name of fs.readdirSync(taskDir)) {
-        const match = COLD_CODEX_ARCHIVE_RE.exec(name);
+        const match = pattern.exec(name);
         if (match) newest = Math.max(newest, Number(match[1]));
     }
-    const name = `${COLD_CODEX_ARCHIVE_PREFIX}${newest + 1}.md`;
+    const name = `${prefix}${newest + 1}.md`;
     const reason = header.reason.replaceAll('"', "'");
     fs.writeFileSync(path.join(taskDir, name),
-        `<!-- round=${header.round} reviewed_sha=${header.reviewedSha} scope=${header.scope} base=${header.base} reason="${reason}" -->\n\n${findings}`,
+        `<!-- round=${header.round} reviewed_sha=${header.reviewedSha} scope=${header.scope} base=${header.base} reason="${reason}" -->\n\n${body}`,
         'utf8');
     return name;
+}
+
+export function writeColdCodexArchive(taskDir: string, header: ColdCodexArchiveHeader, findings: string): string {
+    return writeNumberedRecord(taskDir, COLD_CODEX_ARCHIVE_RE, COLD_CODEX_ARCHIVE_PREFIX, header, findings);
+}
+
+export function writeRoundRecord(taskDir: string, header: ColdCodexArchiveHeader): string {
+    return writeNumberedRecord(taskDir, ROUND_RECORD_RE, ROUND_RECORD_PREFIX, header,
+        'Code-review round record. No lens findings: the header above is the round state that delta scope reads.\n');
 }
 
 export function parseColdCodexArchiveHeader(content: string): ColdCodexArchiveHeader | null {
@@ -42,11 +53,9 @@ export function parseColdCodexArchiveHeader(content: string): ColdCodexArchiveHe
     };
 }
 
-export function findColdCodexArchiveForRound(taskDir: string, round: number): ColdCodexArchiveHeader | null {
-    let names: string[];
-    try { names = fs.readdirSync(taskDir); } catch { return null; }
+function newestRecordForRound(taskDir: string, names: string[], pattern: RegExp, round: number): ColdCodexArchiveHeader | null {
     const numbered = names.flatMap(name => {
-        const match = COLD_CODEX_ARCHIVE_RE.exec(name);
+        const match = pattern.exec(name);
         return match ? [{ name, number: Number(match[1]) }] : [];
     }).sort((a, b) => b.number - a.number);
     for (const { name } of numbered) {
@@ -58,11 +67,33 @@ export function findColdCodexArchiveForRound(taskDir: string, round: number): Co
     return null;
 }
 
+function roundRecordsForRound(taskDir: string, round: number): { cold: ColdCodexArchiveHeader | null; neutral: ColdCodexArchiveHeader | null } {
+    let names: string[];
+    try { names = fs.readdirSync(taskDir); } catch { return { cold: null, neutral: null }; }
+    return {
+        cold: newestRecordForRound(taskDir, names, COLD_CODEX_ARCHIVE_RE, round),
+        neutral: newestRecordForRound(taskDir, names, ROUND_RECORD_RE, round),
+    };
+}
+
+/** Reads both review-cold-codex-run- and review-round- families; conflicting SHAs are unusable. */
+export function findColdCodexArchiveForRound(taskDir: string, round: number): ColdCodexArchiveHeader | null {
+    const { cold, neutral } = roundRecordsForRound(taskDir, round);
+    if (cold && neutral && cold.reviewedSha !== neutral.reviewedSha) return null;
+    return neutral ?? cold;
+}
+
+export function hasConflictingRoundRecords(taskDir: string, round: number): boolean {
+    const { cold, neutral } = roundRecordsForRound(taskDir, round);
+    return cold !== null && neutral !== null && cold.reviewedSha !== neutral.reviewedSha;
+}
+
+/** Checks malformed records in both review-cold-codex-run- and review-round- families. */
 export function hasMalformedColdCodexArchive(taskDir: string): boolean {
     let names: string[];
     try { names = fs.readdirSync(taskDir); } catch { return false; }
     return names.some(name => {
-        if (!COLD_CODEX_ARCHIVE_RE.test(name)) return false;
+        if (!COLD_CODEX_ARCHIVE_RE.test(name) && !ROUND_RECORD_RE.test(name)) return false;
         try {
             return parseColdCodexArchiveHeader(fs.readFileSync(path.join(taskDir, name), 'utf8')) === null;
         } catch { return true; }

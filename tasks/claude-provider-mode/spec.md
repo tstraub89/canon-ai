@@ -195,3 +195,54 @@ Add a per-task **provider** that selects the role assignment.
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes) — N/A, feature
 - [x] (Refactors) — N/A, feature; mixed-mode preservation is pinned by AC-14 and AC-12a
+
+---
+
+## Amendment
+
+### Problem
+
+In Claude mode, code review still writes `review-cold-codex-run-N.md`. The file holds only the round header that delta scope reads plus the line "No orchestrator cold lens runs in Claude mode." Its name names a lens that did not run, and the foreman reports a "Cold-Codex run" file in its synthesis. The record is round state, not a Codex artifact.
+
+### Decision
+
+Claude mode writes its per-round record as `tasks/<id>/review-round-N.md`: the same header line (`round`, `reviewed_sha`, `scope`, `base`, `reason`) and no lens findings. Numbering is numeric max+1 within the `review-round-` family, independent of round number, like the existing archive. Mixed mode is unchanged and keeps writing `review-cold-codex-run-N.md` byte-for-byte.
+
+The round lookup that delta scope uses reads **both** families, so a task that switches provider between review rounds still finds round N−1 in either family. Within a family it keeps today's rule (highest-numbered file whose header round matches). If both families hold a match for the round and their reviewed SHAs differ, the record is treated as unusable, so the round falls back to full scope; if the SHAs agree, either record is used. The malformed-record check covers both families. Claude mode still removes a stale unnumbered `review-cold-codex.md`.
+
+### Non-Goals
+
+- Moving round metadata into `status.json` (a possible follow-up; it would change mixed mode).
+- Renaming the mixed-mode archive or migrating existing `review-cold-codex-run-N.md` files.
+- Changing the header format, delta triggers, or foreman prompt.
+
+### Acceptance Criteria
+
+- [ ] AC-16: On a Claude-provider task, a code-review round writes `review-round-N.md` with the round header and writes no `review-cold-codex-run-*.md` and no `review-cold-codex.md`; a stale `review-cold-codex.md` present before the round is removed. Verified by a test in the code-review suite.
+- [ ] AC-17: Round-2 scope is resolved as follows, verified by tests — delta from the round-1 record in (a)–(c): (a) Claude round 1 → Claude round 2 (`review-round-1.md`); (b) mixed round 1 → Claude round 2 (`review-cold-codex-run-1.md`); (c) Claude round 1 → mixed round 2 (`review-round-1.md`). (d) both families hold round 1 with different reviewed SHAs → round 2 runs full scope. A malformed `review-round-N.md` is reported by the malformed-record check the same way a malformed cold-Codex archive is.
+- [ ] AC-18: Mixed mode is unchanged: the existing mixed code-review tests and goldens pass without edits to their expected values, and a mixed round still writes `review-cold-codex-run-N.md` and `review-cold-codex.md`.
+- [ ] AC-19: `docs/pipeline-orchestrator.md` (and its synced mirror) and the Claude-mode entry in `docs/decisions.md` describe the Claude-mode record as `review-round-N.md` and say the lookup reads both families; no doc says Claude mode writes `review-cold-codex-run-N.md`.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `src/orchestrator/review-archive.ts` | Add the `review-round-` record writer; make the round lookup and malformed check read both families. |
+| `src/orchestrator/phases/code-review.ts` | Claude-mode branch writes the neutral round record instead of the cold-Codex archive. |
+| `tests/run-task-code-review.test.ts` | Tests for AC-16, AC-17 and AC-18. |
+| `docs/pipeline-orchestrator.md` | Describe the Claude-mode round record and the two-family lookup. |
+| `templates/docs/pipeline-orchestrator.md` | Synced mirror. |
+| `docs/decisions.md` | Update the Claude-mode code-review entry's filename sentence. |
+| `dist/cli/index.js` | Rebuilt. |
+| `dist/orchestrator/run-task.js` | Rebuilt. |
+
+### Validation Required
+
+- [x] `npm run build && npm run type-check && npm run lint && npm test`
+- [x] `npm run sync-templates:check`
+- [x] `npm run docs-refs-check`
+
+### Known Risks
+
+- **One-family lookup.** Reading only the new family would make every provider switch mid-review fall back to full scope, and reading only the old one would make every Claude round 2 a full review. AC-17 (a)–(c) pin both directions.
+- **Numbering collision across families.** Each family numbers on its own; the lookup matches on the header's round, not the file number, so equal numbers in both families are harmless.

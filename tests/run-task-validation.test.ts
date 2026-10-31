@@ -1,3 +1,4 @@
+import { MIXED_ROLE_ASSIGNMENT } from '../src/lib/pipeline-policy.js';
 import { DEFAULT_PROTECTED_DOCS } from '../src/orchestrator/docs-freshness.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -4354,6 +4355,6 @@ void test('status template agent defaults agree with primary role assignment', a
     };
     for (const phase of PHASE_ORDER) {
         const role = phasePrimaryRole(phase);
-        assert.equal(template.phases[phase].agent, role ? roleBackendId(role) : 'human', phase);
+        assert.equal(template.phases[phase].agent, role ? roleBackendId(role, MIXED_ROLE_ASSIGNMENT) : 'human', phase);
     }
 });
