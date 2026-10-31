@@ -1612,10 +1612,10 @@ void test('missing, malformed, and unresolved previous records force full review
         const cold = coldBackend.coldReview.bind(coldBackend);
         deps.agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT).coldReview = (request) => { bases.push(request.baseBranch); return cold(request); };
         await runCodeReviewPhase(makeState([id]), false, null, deps);
-        assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-1.md'), 'utf8'), /no cold-Codex archive record/);
+        assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-1.md'), 'utf8'), /no round record for the previous round/);
         fs.writeFileSync(path.join(dir, 'review-cold-codex-run-2.md'), 'malformed header\n');
         await runCodeReviewPhase(makeState([id]), false, null, deps);
-        assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-3.md'), 'utf8'), /unparseable cold-Codex archive record/);
+        assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-3.md'), 'utf8'), /unparseable round record/);
         writeColdCodexArchive(dir, { round: 1, reviewedSha: 'f'.repeat(40), scope: 'full', base: 'main', reason: 'old' }, 'prior');
         await runCodeReviewPhase(makeState([id]), false, null, deps);
         assert.match(fs.readFileSync(path.join(dir, 'review-cold-codex-run-5.md'), 'utf8'), /does not resolve/);
@@ -1679,7 +1679,7 @@ void test('bundle disagreement is named as the full-scope reason', { concurrency
             ? { round: 1, reviewedSha: 'b'.repeat(40), scope: 'full', base: 'main', reason: 'Round 1' }
             : null;
         await runCodeReviewPhase(makeState(['member-a', 'member-b']), false, null, deps);
-        assert.match(fs.readFileSync(path.join(tasksRoot, 'member-a', 'review-cold-codex-run-2.md'), 'utf8'), /no cold-Codex archive record/);
+        assert.match(fs.readFileSync(path.join(tasksRoot, 'member-a', 'review-cold-codex-run-2.md'), 'utf8'), /no round record for the previous round/);
     });
 });
 
@@ -1761,7 +1761,7 @@ console.log(JSON.stringify({type:'turn.completed'}));
                 const result = await runCodeReviewPhase(state, false, 'prior-review', deps);
                 assert.equal(result?.agent, 'claude');
                 const scope = { scope: 'full' as const, base: 'main', reason: iteration === 0
-                    ? 'Round 1 (initial review)' : 'no cold-Codex archive record for the previous round' };
+                    ? 'Round 1 (initial review)' : 'no round record for the previous round' };
                 const prompt = promptCodeReview(state, 'main', deps.getScopedDiff('main', activeCwd), 'clean review', { ...scope, deltaDiff: null }, []);
                 const claude = getClaudeConfig('code_review', state.tasks);
                 await runClaude(prompt, false, iteration > 0 ? 'prior-review' : null, claude.model, claude.effort, claude.budget, undefined, activeCwd);
@@ -1857,7 +1857,7 @@ for (const scenario of ['mixed-to-claude', 'claude-to-mixed', 'conflict', 'agree
                 assert.match(record.reason, /round records for the previous round disagree on the reviewed commit/);
             } else if (scenario === 'malformed') {
                 assert.equal(record.scope, 'full');
-                assert.match(record.reason, /unparseable cold-Codex archive record/);
+                assert.match(record.reason, /unparseable round record/);
                 assert.equal(hasMalformedColdCodexArchive(dir), true);
             } else {
                 assert.equal(record.scope, 'delta');

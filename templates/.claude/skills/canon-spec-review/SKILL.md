@@ -1,6 +1,6 @@
 ---
 name: canon-spec-review
-description: Use when a canon task spec is written and the human wants to surface BLOCKING issues before invoking `canon run <id>`. Triggers on "/canon-spec-review", "review the spec", "pre-flight the spec", "what would Codex catch", or before kicking off the pipeline. Useful for any spec with logic — for full-tier (S/M/L/XL/delicate) it pre-empts Codex spec_review iterations, for fast-tier (XS non-delicate) it's the only automated review layer since Codex spec_review auto-approves.
+description: Use when a canon task spec is written and the human wants to surface BLOCKING issues before invoking `canon run <id>`. Triggers on "/canon-spec-review", "review the spec", "pre-flight the spec", "what would Codex catch", or before kicking off the pipeline. Useful for any spec with logic — for full-tier (S/M/L/XL/delicate) it pre-empts `spec_review` iterations, for fast-tier (XS non-delicate) it's the only automated review layer since the fast tier auto-approves `spec_review`.
 argument-hint: "[task-id]"
 allowed-tools: Read Glob Grep Bash(canon task list*) Bash(git status*) Agent AskUserQuestion
 effort: high
@@ -8,13 +8,13 @@ effort: high
 
 # canon-spec-review
 
-Previews what Codex's `spec_review` phase would surface — BEFORE `canon run <id>` — by dispatching three parallel sub-agents at the spec from different angles. Returns one inline report; the human revises the spec or proceeds.
+Previews what the pipeline's `spec_review` phase would surface — BEFORE `canon run <id>` — by dispatching three parallel sub-agents at the spec from different angles. Returns one inline report; the human revises the spec or proceeds.
 
 ## When to use
 
 - Spec is written, `human_spec_gate` not yet cleared
-- Task is **full-tier (S/M/L/XL/delicate)** — pre-empts Codex spec_review iterations; saves time and cost
-- Task is **fast-tier (XS non-delicate)** — this is the *only* automated review layer (fast-tier auto-approves `spec_review`, so without this skill the human's read is the only gate before Codex hits the spec at implement-time)
+- Task is **full-tier (S/M/L/XL/delicate)** — pre-empts `spec_review` iterations; saves time and cost
+- Task is **fast-tier (XS non-delicate)** — this is the *only* automated review layer (fast-tier auto-approves `spec_review`, so without this skill the human's read is the only gate before the implementer hits the spec at implement-time)
 - After a reroute amendment, before re-invoking the pipeline
 
 Don't use for code-diff review (use `/canon-inline-review`), or for XS changes with no logic to vet (typo fixes, version bumps).

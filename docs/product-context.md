@@ -32,13 +32,13 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 |---|---|
 | **Task** | A unit of work tracked under `tasks/<id>/`. Has a spec, plan, implementation, review, QA, and human-review phases. |
 | **Phase** | One stage of a task's lifecycle (`spec`, `spec_review`, `plan`, `implement`, `code_review`, `qa`, `human_review`). |
-| **Spec** | The contract for what a task accomplishes. Written by Claude (architect), reviewed by Codex (full tier) or by the human (fast tier). Approved before implementation begins. |
+| **Spec** | The contract for what a task accomplishes. Written by Claude (architect), reviewed by the spec reviewer (full tier) or by the human (fast tier). Approved before implementation begins. |
 | **Plan** | The implementation steps Claude lays out after spec approval. References specific files and existing patterns. |
-| **Handoff** | The artifact Codex writes after implementing — what files changed, what ACs were met, what validation outcomes are. The reviewer reads this alongside the diff. |
-| **Review** | Three-lens code review. The orchestrator pre-obtains a cold-Codex diff review, then a Claude foreman spawns an anchored Claude lens (Stage 1 gate + Stage 2 quality) and a cold-Claude lens (diff only), synthesizes all three, and writes one `review.md`. |
+| **Handoff** | The artifact the implementer writes after implementing — what files changed, what ACs were met, what validation outcomes are. The reviewer reads this alongside the diff. |
+| **Review** | Multi-lens code review. In mixed mode the orchestrator pre-obtains a cold-Codex diff review; then a Claude foreman spawns an anchored Claude lens (Stage 1 gate + Stage 2 quality) and a cold-Claude lens (diff only), synthesizes all three, and writes one `review.md`. Claude mode uses the anchored and cold-Claude lenses only. |
 | **Verdict** | The review outcome: `approved`, `approved_with_nits`, `changes_requested`, `needs_re_review`, `spec_gap` (blocks for operator action — see below), or `sanctioned` (operator override via `canon task accept --reason`). |
 | **Done** | The QA artifact Claude writes after review passes — plain-English summary, files changed, test plan for the human. |
-| **Tier** | The level of orchestrator effort applied. Fast tier (XS non-delicate) collapses spec+plan and skips Codex spec review. Full tier (S/M/L/XL or any delicate) runs the complete workflow. |
+| **Tier** | The level of orchestrator effort applied. Fast tier (XS non-delicate) collapses spec+plan and skips the `spec_review` phase. Full tier (S/M/L/XL or any delicate) runs the complete workflow. |
 | **Task size** | `XS` (fast-tier floor, more than trivial inline but no spec premise to challenge), `S` (smallest full-tier), `M` (default, contained), `L` (substantial), `XL` (large or sensitive). Drives tier, model, effort, and loop caps via `pipeline-policy.ts`. |
 | **Delicate** | A boolean flag that promotes a task's effective size to XL, regardless of nominal size. For surfaces where regressions have unbounded blast radius (auth, billing, persistent storage, or — for canon-ai itself — the orchestrator's own routing logic). |
 | **Bundle mode** | Multiple task IDs passed to one `run-task.ts` invocation. Tasks share a tier, share a review loop, and reroute together on `changes_requested`. |
@@ -87,8 +87,8 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 (See `src/lib/pipeline-policy.ts` for the authoritative matrix; this is the human-readable summary.)
 
-- **Fast tier**: `XS` non-delicate. Spec+plan in one Claude session. Codex spec review skipped (human gate replaces it). Uses the XS model/effort cells (Claude light/medium; Codex implementation mini/xhigh).
-- **Full tier**: anything `S`, `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. Codex runs spec review. Codex implement uses mini/xhigh at S, mini/max at M/L, and full/high at XL/delicate; see `docs/decisions.md` §"Codex implement effort raised; full-model default → GPT-6.1 Sol (2026-10)". Claude moves to Opus for M and above on spec, plan, and code review, capping at `high` effort for XL/delicate; QA runs Haiku 5.5/medium (see `docs/pipeline-orchestrator.md` §"Claude Model/Effort Matrix").
+- **Fast tier**: `XS` non-delicate. Spec+plan in one Claude session. The `spec_review` phase is skipped (human gate replaces it). Uses the XS model/effort cells (Claude light/medium; in mixed mode Codex implementation mini/xhigh).
+- **Full tier**: anything `S`, `M`, `L`, `XL`, or `delicate`. Spec and plan in separate Claude sessions. The spec reviewer runs spec review. In mixed mode Codex implementation uses mini/xhigh at S, mini/max at M/L, and full/high at XL/delicate; see `docs/decisions.md` §"Codex implement effort raised; full-model default → GPT-6.1 Sol (2026-10)". Claude moves to Opus for M and above on spec, plan, and code review, capping at `high` effort for XL/delicate; QA runs Haiku 5.5/medium (see `docs/pipeline-orchestrator.md` §"Claude Model/Effort Matrix"). In `claude` mode spec review and implementation use the Claude matrix's `spec_review` and `implement` rows.
 
 ### `delicate` flag — project-specific domains
 
@@ -125,7 +125,7 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 ## Roadmap (Brief)
 
 - **Current state**: canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task, watch, stop, completion), bundled Claude Code skills, template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Development is trunk-based on `main`; releases are cut from `main` (see `docs/release-process.md`). Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the hardening pass.
-- **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon"). Multi-agent cold review now includes a cold-Codex third lens: `code_review` runs an orchestrator-owned `codex review` step followed by a Claude foreman over anchored-Claude, cold-Claude, and cold-Codex inputs.
+- **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon"). Mixed-mode cold review includes a cold-Codex third lens: `code_review` runs an orchestrator-owned `codex review` step followed by a Claude foreman over anchored-Claude, cold-Claude, and cold-Codex inputs. Claude mode uses the two Claude lenses only.
 - **Future**: Additional agent-CLI adapters (Gemini, Aider). Public release decision.
 
 (See `docs/pipeline-orchestrator.md` for orchestrator mechanics.)

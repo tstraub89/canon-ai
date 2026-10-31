@@ -8,7 +8,7 @@ import { WATCH_ARGS, parseWatchArgs } from '../src/cli/commands/watch.ts';
 import { UPDATE_ARGS, parseUpdateArgs } from '../src/cli/commands/update.ts';
 import { UPGRADE_ARGS, parseUpgradeArgs } from '../src/cli/commands/upgrade.ts';
 import { COMPLETION_ARGS } from '../src/cli/commands/completion.ts';
-import { RUN_ARGS, parseArgs } from '../src/orchestrator/cli.ts';
+import { RUN_ARGS, RUN_USAGE, parseArgs } from '../src/orchestrator/cli.ts';
 import { TASK_ARGS, TASK_SUBCOMMAND_ARGS, parseTaskAcceptArgs, parseTaskNewArgs } from '../src/task/index.ts';
 
 function parseRun(args: string[]): { status: number; stdout: string; stderr: string } {
@@ -25,6 +25,12 @@ function parseRun(args: string[]): { status: number; stdout: string; stderr: str
     finally { process.exit = oldExit; console.log = oldLog; console.error = oldError; }
     return { status, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
 }
+
+void test('RUN_USAGE names roles, not vendors', () => {
+    assert.doesNotMatch(RUN_USAGE, /Codex/);
+    assert.match(RUN_USAGE, /Fast tier \(XS, non-delicate only\) skips the spec-review phase/);
+    assert.match(RUN_USAGE, /The implementer re-reads spec\.md only/);
+});
 
 void test('preScanArgs honors help precedence and positional value rules', () => {
     const decl = { command: 'test', usage: 'Usage: canon test', booleanFlags: [], valueFlags: ['--value'], freeTextSlots: [0], rejectPositionals: true } as const;

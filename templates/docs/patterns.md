@@ -7,7 +7,7 @@
 This is the project's hard-won implementation knowledge. It has two main sections:
 
 1. **Trigger Table** — at the top, an index agents skim to jump to the relevant section. If your task touches an area listed here, the pointed-at section is likely load-bearing for what you're doing.
-2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. The orchestrator pre-injects task-relevant pitfalls into Codex's implement prompt; agents still need this file open for spec authorship and code review.
+2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. The orchestrator pre-injects task-relevant pitfalls into the implementer's prompt; agents still need this file open for spec authorship and code review.
 
 ## Trigger Table — Scan This First
 

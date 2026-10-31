@@ -175,7 +175,7 @@ var RUN_USAGE = [
   "  Bundle:       canon run fix-hover-state dark-tokens empty-cta",
   "",
   "  Bundle mode runs all tasks together per phase (one agent session each).",
-  "  Fast tier (XS, non-delicate only) skips Codex spec review. Full tier (any S/M/L/XL",
+  "  Fast tier (XS, non-delicate only) skips the spec-review phase. Full tier (any S/M/L/XL",
   "  or delicate task) runs the complete pipeline \u2014 any such task pulls the entire",
   "  bundle to full tier.",
   "",
@@ -223,7 +223,7 @@ var RUN_USAGE = [
   "                      Full-tier tasks (S/M/L/XL or delicate) re-enter at spec_review; fast-tier",
   "                      tasks (XS) re-enter at implement.",
   "                      Feedback channel: append a new section to tasks/<id>/spec.md describing",
-  "                      what to address. Codex re-reads spec.md only \u2014 additions to review.md",
+  "                      what to address. The implementer re-reads spec.md only \u2014 additions to review.md",
   "                      or PR comments are NOT consulted on reroute.",
   "                      Pre-flight requires `## Amendment` on round 1 or `## Amendment Round N`",
   "                      on round 2+. Bypass with --force. See docs/pipeline-orchestrator.md",
@@ -668,7 +668,7 @@ function resolveCodeReviewScope(facts) {
   if (facts.isRound1) return full("Round 1 (initial review)");
   if (facts.effectiveSize === "XL" || facts.delicate) return full(facts.delicate ? "delicate" : "XL task size");
   const prev = facts.prevRecord;
-  if (prev === null) return full(facts.previousRecordsDisagree ? "bundle members disagree on the previous reviewed commit" : facts.previousRecordConflict ? "round records for the previous round disagree on the reviewed commit" : facts.previousArchiveMalformed ? "unparseable cold-Codex archive record for the previous round" : "no cold-Codex archive record for the previous round");
+  if (prev === null) return full(facts.previousRecordsDisagree ? "bundle members disagree on the previous reviewed commit" : facts.previousRecordConflict ? "round records for the previous round disagree on the reviewed commit" : facts.previousArchiveMalformed ? "unparseable round record for the previous round" : "no round record for the previous round");
   if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
   if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
   if (prev.equalsHead) return full("previous reviewed commit equals HEAD");

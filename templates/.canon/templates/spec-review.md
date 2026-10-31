@@ -1,6 +1,6 @@
 # Spec Review: [TASK-ID]
 
-> Reviewer: Codex | Spec: `tasks/[TASK-ID]/spec.md`
+> Reviewer: spec reviewer | Spec: `tasks/[TASK-ID]/spec.md`
 
 ## Shape Check
 

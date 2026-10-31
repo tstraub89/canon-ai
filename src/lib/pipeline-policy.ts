@@ -50,8 +50,8 @@ export function resolveCodeReviewScope(facts: CodeReviewScopeFacts): CodeReviewS
         : facts.previousRecordConflict
             ? 'round records for the previous round disagree on the reviewed commit'
             : facts.previousArchiveMalformed
-                ? 'unparseable cold-Codex archive record for the previous round'
-                : 'no cold-Codex archive record for the previous round');
+                ? 'unparseable round record for the previous round'
+                : 'no round record for the previous round');
     if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
     if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
     if (prev.equalsHead) return full('previous reviewed commit equals HEAD');

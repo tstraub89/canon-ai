@@ -561,7 +561,7 @@ Writing a route-back marker on an approved sibling was declined because it would
 
 Provider selection and session safety are extended by "Per-task provider pins and backend-tagged sessions (2026-10)" below.
 
-**Decision**: Pipeline phases invoke roles through the backend interface. The only assignment remains author/reviewer/qa → Claude and spec_reviewer/implementer/cold_reviewer → Codex. Spec and plan share author but retain separate model pins. Cross-model review and each runner's argv, budgets and failure semantics are unchanged.
+**Decision**: Pipeline phases invoke roles through the backend interface. At this decision the only assignment was the mixed one (author/reviewer/qa → Claude, spec_reviewer/implementer/cold_reviewer → Codex); §"Per-task provider pins and backend-tagged sessions (2026-10)" later added the Claude assignment. Spec and plan share author but retain separate model pins. Cross-model review and each runner's argv, budgets and failure semantics are unchanged.
 
 **Sessions**: spec, spec_review, implement and code_review persist author, spec_reviewer, implementer and reviewer respectively. Plan and QA remain one-offs. Role keys take precedence over legacy read fallbacks; writes use only role keys with a parallel `session_backends` backend tag, and clears remove both keys and the tag. Phase agent fields record the backend that ran rather than driving routing. In-flight task files need no bulk migration.
 
