@@ -31,7 +31,7 @@ diff .canon/templates/spec.md tasks/_templates/spec.md
 Real checks should live in project scripts such as `package.json` commands (or
 the local equivalent), not in canon-side policy modules.
 In mixed mode, fresh headless Codex runs use `--sandbox workspace-write`
-(writes confined to the worktree; network off unless your Codex config enables it)
+(writes confined to the worktree and temp directories; network off unless your Codex config enables it)
 — appropriate for the checks an `implement` phase typically runs (lint,
 type-check, unit tests, build). In `claude` mode these checks run in Claude
 sessions without that sandbox.

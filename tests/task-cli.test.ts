@@ -10,7 +10,7 @@ import { findUntrackedClobberPaths, parseTaskAcceptArgs, parseTaskNewArgs, taskA
 import { parseTable } from '../src/orchestrator/markdown-table.js';
 import type { StatusJson } from '../src/orchestrator/types.js';
 import { extractDoneMdFromStdout, isDoneMdTemplate } from '../src/orchestrator/validation.js';
-import { renderTaskTemplate } from '../src/task/templates.js';
+import { renderTaskTemplate, resolveTaskTemplateSource } from '../src/task/templates.js';
 
 const WORKSPACE_ROOT = process.cwd();
 const TSX_LOADER = path.join(WORKSPACE_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
@@ -1233,7 +1233,9 @@ void test('task reset-code-review archives prior review, resets loop-local field
         assert.equal(fs.existsSync(path.join(taskDir, 'review-prior-1.md')), true);
         // The archived review is replaced by a fresh scaffold rendered exactly
         // as `canon task new` would have written it (task id substituted).
-        const expectedScaffold = fs.readFileSync(path.join(WORKSPACE_ROOT, '.canon', 'templates', 'review.md'), 'utf8')
+        const reviewTemplate = resolveTaskTemplateSource('review.md');
+        assert.ok(reviewTemplate);
+        const expectedScaffold = fs.readFileSync(reviewTemplate, 'utf8')
             .replaceAll('[TASK-ID]', 'reset-cr-task');
         assert.equal(fs.readFileSync(path.join(taskDir, 'review.md'), 'utf8'), expectedScaffold);
         assert.throws(() => taskResetCodeReview(''), /usage: canon task reset-code-review <TASK-ID>/);

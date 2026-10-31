@@ -23,7 +23,7 @@ cd your-project
 canon init          # scaffold canon into the repo
 ```
 
-Codex CLI is needed for the default `mixed` provider and for `/canon-inline-review`. For Claude-only pipeline runs (`CANON_PROVIDER=claude`), `npm install -g @anthropic-ai/claude-code canon-ai` is enough; keep Codex if you want `/canon-inline-review`, which always runs `codex exec review`.
+Codex CLI is needed for the default `mixed` provider and for `/canon-inline-review`. For Claude-only pipeline runs (`CANON_PROVIDER=claude`), `npm install -g @anthropic-ai/claude-code canon-ai` is enough. `/canon-inline-review` always runs `codex exec review`; without Codex, use Claude Code's built-in `/code-review` for inline work instead.
 
 Open Claude Code in `your-project` and run `/canon-init` to generate the `docs/` knowledge corpus, then:
 
@@ -116,7 +116,7 @@ Multiple task IDs in one invocation activates **bundle mode** — `canon run id1
 - **Node 24.x**
 - **git**
 - **Claude Code (≥ 2.1.72)** — `npm install -g @anthropic-ai/claude-code`
-- **Codex CLI** (required for the default `mixed` provider and for `/canon-inline-review` under either provider; `CANON_PROVIDER=claude` pipeline runs don't need it) — `npm install -g @openai/codex`
+- **Codex CLI** (required for the default `mixed` provider and for `/canon-inline-review` under either provider; `CANON_PROVIDER=claude` pipeline runs don't need it, and Claude Code's `/code-review` covers inline review without it) — `npm install -g @openai/codex`
 - **gh** (optional, for `--pr` / `--push`) — `brew install gh && gh auth login`
 
 ### Install
@@ -189,7 +189,7 @@ canon task new my-first-feature "Short description"
 canon run my-first-feature
 ```
 
-Run `canon doctor` after install to verify your environment — it checks Node/git/Claude Code versions, allowlist coverage, and that any local Claude settings file is gitignored, plus Codex version and codex project trust when `CANON_PROVIDER` is `mixed` or unset. Doctor checks that environment setting, not providers pinned on existing tasks, so mixed-pinned tasks still need Codex.
+Run `canon doctor` after install to verify your environment — it checks Node/git/Claude Code versions, allowlist coverage, and that any local Claude settings file is gitignored, plus Codex CLI presence and codex project trust when `CANON_PROVIDER` is `mixed`, empty, or unset. Doctor checks that environment setting, not providers pinned on existing tasks, so mixed-pinned tasks still need Codex.
 
 ### Discovery nudge (recommended)
 
@@ -203,7 +203,7 @@ Start with `/canon-spec` rather than implementing directly.
 
 ### Independent review for inline work
 
-For below-pipeline changes or trivial inline work, do not self-review. Use `/canon-inline-review` for an independent cross-review before committing, or `codex review` if you are not running canon.
+For below-pipeline changes or trivial inline work, do not self-review. Use `/canon-inline-review` for an independent cross-review before committing, or `codex review` if you are not running canon. Without Codex (for example, `CANON_PROVIDER=claude` with no Codex CLI installed), run Claude Code's built-in `/code-review` in a fresh session instead; it is a separate Claude session, not a second model family.
 
 ### Skip the permission prompts (optional)
 
@@ -273,7 +273,7 @@ Claude Code creates `settings.json` on first use — check what's already there 
 Pipeline sessions are headless, so nobody is at the keyboard to answer a permission prompt. Know what that means before you run `canon run` on a repo you care about. Everything below describes the default headless runs; `--interactive` opens ordinary Claude Code sessions, plus Codex sessions for Codex-held roles in mixed mode, under your own permission settings instead.
 
 - **Claude Code sessions run with `--dangerously-skip-permissions`.** Every tool call is auto-approved. This is required today because a headless session cannot answer prompts, and your project's validation commands (test suites, builds, linters) cannot be allowlisted in advance. Without additional confinement, a session can run anything your user account can run. In `claude` mode spec review and implementation also run as Claude sessions under `--dangerously-skip-permissions`, with no OS-level write confinement unless you opt into the Claude sandbox below.
-- **In mixed mode, fresh headless Codex runs use `--sandbox workspace-write`.** Codex's OS-level sandbox confines those runs' writes to the directory canon launches them in: the task worktree once one exists, otherwise the main checkout (a task's first spec review runs before its worktree is created, and `worktree: false` tasks never get one). Network is off unless your Codex config enables it. The flag is not passed on session resumes, on the `codex exec review` code-review lens, or in interactive Codex sessions, which follow your own Codex sandbox settings.
+- **In mixed mode, fresh headless Codex runs use `--sandbox workspace-write`.** Codex's OS-level sandbox confines those runs' writes to the directory canon launches them in, plus temporary directories such as `/tmp` and `$TMPDIR`: the task worktree once one exists, otherwise the main checkout (a task's first spec review runs before its worktree is created, and `worktree: false` tasks never get one). Network is off unless your Codex config enables it. The flag is not passed on session resumes, on the `codex exec review` code-review lens, or in interactive Codex sessions, which follow your own Codex sandbox settings.
 - **Worktrees separate branch state by convention, not by enforcement.** Each task, or each bundle when you pass several task ids together, gets its own worktree and branch, and the pipeline's dirty-tree gates inspect the active worktree at phase boundaries. But Claude sessions are also given the main checkout via `--add-dir` and run with permissions skipped, so nothing stops a session from writing there, and an unrelated file dropped into the main checkout is not something those gates look for; tasks with `worktree: false` run in the main checkout outright. Validation commands run with your normal privileges.
 - **Budget caps bound cost, not access.** Each headless Claude phase runs with `--max-budget-usd`; hitting the cap stops the session. It does not narrow what the session may do beforehand, and interactive sessions (`--interactive`) run uncapped.
 - **Your code goes to the model providers.** Each agent phase sends prompts and repository context to the provider running it. In mixed mode that is Anthropic for Claude phases and OpenAI for Codex phases, with mixed-mode `code_review` using both. In `claude` mode prompts and repository context go only to Anthropic; the exception is `/canon-inline-review`, which, if you use it, sends the diff to OpenAI. These sessions use the relevant CLIs under whatever data terms your accounts have. Treat a `canon run` like any other agent session in that respect.
@@ -303,7 +303,7 @@ Run canon on repositories where you would be comfortable running your test suite
 | Command | What it does |
 |---|---|
 | `canon init` | Install canon into the current repo. Refuses symlinks at destination files or parent directories; replace them with regular files/directories first. |
-| `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`/unset), recommended-permission coverage in `.claude/settings.json`, and that any local settings file is gitignored. |
+| `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage in `.claude/settings.json`, and that any local settings file is gitignored. |
 | `canon completion <shell>` | Print a completion script for bash, zsh, fish, or tcsh; see Shell completion. |
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
