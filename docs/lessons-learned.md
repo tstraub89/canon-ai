@@ -222,3 +222,11 @@ When a spec keeps the owning module out of scope, a prompt builder that rewrites
 *(2026-10-30, source: claude-provider-mode)*
 
 A reroute keeps a lifetime counter (`changes_requested_total`) and clears the reviewer session and loop counters. A re-review predicate that used the lifetime counter to decide whether a resumed reviewer had already reviewed in this loop was wrong. It kept the old history after the reset had cleared the session, so the revised-spec preamble went to a reviewer that had no prior review in the current loop. The first fix, which switched to the lifetime counter, was caught on review round 2. Prevention: before using a cumulative counter as a proxy for a loop-local fact, list every reset path that zeroes one field but not the other, and key the predicate on the field that the reset clears together with the session. Canonical example: the re-review predicate in `src/orchestrator/phases/spec-review.ts` and the reviewer clear in `src/task/index.ts`.
+
+---
+
+### Re-run a sandbox probe under the same flags the pipeline uses before documenting it
+
+*(2026-10-31, source: provider-neutral-vendor-wording)*
+
+A backlog probe of Claude Code's opt-in sandbox (2026-09) ran in default permission mode and reported that network access was denied. Canon's headless sessions pass `--dangerously-skip-permissions`, and under that flag the same sandbox let `curl` through even with `network.allowedDomains` set. The earlier note was true for the mode it tested and wrong for canon's runs. A task that documents, trusts or relies on a permission or sandbox behavior must probe it with the exact flags canon passes, plus one control run in the default mode, and record the Claude Code version. Canonical example: the 2026-10-31 probe in `docs/BACKLOG.md` and the sandbox section of `README.md`.

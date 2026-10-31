@@ -1443,3 +1443,11 @@
 | 2026-10-30T20:22:35.686Z | claude-provider-mode | code_review | claude:code-review-cold | claude-opus-5-5 | 2 | 504.3s | 10274803 | ok |
 | 2026-10-30T20:22:35.692Z | claude-provider-mode | code_review | claude:code-review-anchored | claude-opus-5-5 | 2 | 779.5s | 3628210 | ok |
 | 2026-10-30T20:24:19.856Z | claude-provider-mode | qa | claude | claude-haiku-5-5 | 0 | 104.1s | 1990102 | ok |
+| 2026-10-31T15:04:54.501Z | provider-neutral-vendor-wording | spec_review | codex | gpt-6-luna | 0 | 56.5s | 764194 | ok |
+| 2026-10-31T15:09:12.041Z | provider-neutral-vendor-wording | plan | claude | opus | 0 | 241.2s | 4190625 | ok |
+| 2026-10-31T15:31:51.765Z | provider-neutral-vendor-wording | implement | codex | gpt-6-luna | 0 | 1358.9s | 12611284 | ok |
+| 2026-10-31T15:32:18.802Z | provider-neutral-vendor-wording | code_review | codex | gpt-6-luna | 0 | 22.8s | - | ok |
+| 2026-10-31T15:36:18.289Z | provider-neutral-vendor-wording | code_review | claude | opus | 0 | 239.4s | 1206513 | ok |
+| 2026-10-31T15:36:18.295Z | provider-neutral-vendor-wording | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 102.0s | 2473883 | ok |
+| 2026-10-31T15:36:18.300Z | provider-neutral-vendor-wording | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 143.6s | 2465621 | ok |
+| 2026-10-31T15:37:22.374Z | provider-neutral-vendor-wording | qa | claude | claude-haiku-5-5 | 0 | 64.1s | 912629 | ok |
