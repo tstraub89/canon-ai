@@ -1,9 +1,9 @@
 {
   "id": "claude-provider-mode",
   "title": "Claude-only provider mode",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-30",
-  "updated": "2026-10-30",
+  "updated": "2026-10-31",
   "branch": "task/claude-provider-mode",
   "base_branch": "main",
   "canon": {
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
