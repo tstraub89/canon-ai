@@ -30,12 +30,14 @@ Describe what to change rather than citing a canon-ai file the reader cannot ope
 | Agent | Primary Role | Writes | Reviews |
 |---|---|---|---|
 | Claude | Architect, code reviewer, QA | Specs, plans, code reviews, QA summaries | Code |
-| Codex | Implementer, spec reviewer | Code, handoff reports | Specs |
+| Codex (mixed mode) | Implementer, spec reviewer, cold code-review lens | Code, handoff reports | Specs |
 | Human | Product owner, final arbiter | Product decisions, priorities | Specs, previews, test plans |
+
+In `claude` mode (`CANON_PROVIDER=claude`) every role runs on Claude Code, and code review uses two Claude lenses; see `docs/pipeline-orchestrator.md` §"Provider Selection".
 
 ## Shared Norms
 
-- Cross-review: each agent reviews the other agent's work. Claude writes specs; Codex reviews specs. Codex writes code; Claude reviews code. No agent reviews its own output.
+- Cross-review: no agent reviews its own output. In mixed mode, Claude writes specs and Codex reviews them; Codex writes code and Claude reviews it. In `claude` mode separate Claude sessions hold each side.
 - Communication: lead with the finding, surface real disagreement, and make risks and tradeoffs visible to the human. Tone is project taste; honest signal is canon discipline.
 
 ## Workflow

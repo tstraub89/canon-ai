@@ -1,6 +1,6 @@
 # Implementation Handoff: [TASK-ID]
 
-> Author: Codex | Spec: `tasks/[TASK-ID]/spec.md` | Plan: `tasks/[TASK-ID]/plan.md`
+> Author: implementer | Spec: `tasks/[TASK-ID]/spec.md` | Plan: `tasks/[TASK-ID]/plan.md`
 >
 > **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 

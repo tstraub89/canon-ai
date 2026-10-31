@@ -7,7 +7,7 @@
 Each row records what *actually happened* in a task — spec verdicts, review iteration counts, dropped ACs, validation gaps, failure phases. Trends across rows surface pipeline-quality issues:
 
 - Many tasks needing 3+ spec_review iterations? → Spec authorship rules need work.
-- Repeated dropped ACs in code review? → Codex prompts or AC clarity need work.
+- Repeated dropped ACs in code review? → Implementer prompts or AC clarity need work.
 - Validation gaps slipping through to human_review? → Validation matrix or handoff template needs work.
 
 The qa → done transition writes or updates this task's quality-log.md fragment; `--ship` folds that row into this shared log. The product owner reviews trends periodically (e.g., end of release milestone) and uses signals to update `AGENTS.md`, prompts, or templates.
@@ -18,7 +18,7 @@ The qa → done transition writes or updates this task's quality-log.md fragment
 |---|---|
 | Task | TASK-ID |
 | Size | XS / S / M / L / XL (and `delicate: true` if applicable) |
-| Spec verdict | First Codex spec_review verdict (approved / approved_with_nits / changes_requested) |
+| Spec verdict | First `spec_review` verdict (approved / approved_with_nits / changes_requested) |
 | Spec iterations | How many spec_review rounds before approval |
 | Code review iterations | How many code_review rounds before approval |
 | Dropped ACs | Count of ACs that the implementation missed (caught in code review) |

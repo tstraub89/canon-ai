@@ -23,6 +23,8 @@ cd your-project
 canon init          # scaffold canon into the repo
 ```
 
+Codex CLI is needed for the default `mixed` provider and for `/canon-inline-review`. For Claude-only pipeline runs (`CANON_PROVIDER=claude`), `npm install -g @anthropic-ai/claude-code canon-ai` is enough. `/canon-inline-review` always runs `codex exec review`; without Codex, use Claude Code's built-in `/code-review` for inline work instead.
+
 Open Claude Code in `your-project` and run `/canon-init` to generate the `docs/` knowledge corpus, then:
 
 ```bash
@@ -34,7 +36,7 @@ Needs Node 24.x and git. See [Getting started](#getting-started) below for prere
 
 ## What this is
 
-Canon is an opinionated workflow framework for AI-driven software development. It encodes a hard-won discipline — accumulated over many shipped features and many post-mortems — into scripts, templates, and rules that two AI agents (an architect and an implementer) operate under, with a human as the final arbiter.
+Canon is an opinionated workflow framework for AI-driven software development. It encodes a hard-won discipline — accumulated over many shipped features and many post-mortems — into scripts, templates, and rules carried out by pipeline roles, with a human as the final arbiter.
 
 The goal: make AI coding agents reliably ship correct, on-spec, well-reviewed work without constant babysitting. Not "the agents do everything" — **the agents do the right thing, and the human catches what they miss, and over time the rules absorb every miss so the next miss never happens**.
 
@@ -62,14 +64,23 @@ Canon is what happens when you treat those failure modes as engineering problems
 | Agent forgets a past mistake | **`docs/lessons-learned.md`** — distilled cross-task wisdom that promotes into permanent rules over time |
 | Reviews loop forever on the same disagreement | **Auto-block on runaway review loops** — per-size caps (see `pipeline-policy.ts`), escalation to human after the cap |
 | Spec drift between conversation and pipeline | **File-based handoff protocol** — every artifact lives in `tasks/<id>/`, no copy-pasting |
-| Sensitive surfaces (auth, payments) get refactored on theoretical grounds | **`delicate: true` flag** that moves Codex spec review and implementation to the full model and triggers extra review discipline |
+| Sensitive surfaces (auth, payments) get refactored on theoretical grounds | **`delicate: true` flag** that moves spec review and implementation to the XL cells (the full Codex model in mixed mode) and triggers extra review discipline |
 
 ## How it works
 
-Canon orchestrates two AI coding CLIs:
+Canon runs work through these pipeline roles:
 
-- **Claude Code** (Anthropic) plays the **architect**: writes specs, reviews code, writes QA summaries.
-- **Codex CLI** (OpenAI) plays the **implementer**: reviews specs (full-tier tasks), writes code, writes handoff reports.
+- **Author / architect** writes specs and plans.
+- **Spec reviewer** reviews specs on full-tier tasks.
+- **Implementer** writes code and handoff reports.
+- **Code reviewer** is a foreman over independent lenses.
+- **QA** writes the completion summary.
+
+### Roles and providers
+
+**Providers.** `CANON_PROVIDER` picks who holds the roles. In `mixed` (the default), Claude Code is the author, planner, code reviewer and QA, and Codex CLI is the spec reviewer, implementer and the orchestrator's cold code-review lens. In `claude`, every role runs on Claude Code and code review uses two Claude lenses (anchored and cold). Codex-only mode is not supported. A task's provider is pinned when it is created; switch an existing task with `canon task set <id> provider <mixed|claude>`. See [`docs/pipeline-orchestrator.md`](docs/pipeline-orchestrator.md#provider-selection) for the mechanics.
+
+Mixed mode gets review independence from a second model family; Claude mode gets it from separate sessions and spec-blind review lenses.
 
 A **human** is the product owner: approves specs, runs final behavioral tests, ships.
 
@@ -83,10 +94,10 @@ The human gates between `spec_review` and `plan` — they approve the spec befor
 
 The pipeline supports two tiers:
 
-- **Fast tier** (XS tasks): spec + plan in one Claude session, skip Codex spec review, human gate replaces it.
-- **Full tier** (S / M / L / XL / delicate tasks): every phase runs separately, Codex reviews specs before they reach the human.
+- **Fast tier** (XS tasks): spec + plan in one Claude session; skip the `spec_review` phase, and the human gate replaces it.
+- **Full tier** (S / M / L / XL / delicate tasks): every phase runs separately, and the spec reviewer checks specs before they reach the human.
 
-`delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus moves Codex spec review and implementation to the full model; QA and the cold-Codex review lens stay on their regular cells. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
+`delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus moves spec review and implementation to their XL cells (in mixed mode, the full Codex model); QA and, in mixed mode, the cold-Codex review lens stay on their regular cells. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
 
 A single command runs a task end-to-end:
 
@@ -105,7 +116,7 @@ Multiple task IDs in one invocation activates **bundle mode** — `canon run id1
 - **Node 24.x**
 - **git**
 - **Claude Code (≥ 2.1.72)** — `npm install -g @anthropic-ai/claude-code`
-- **Codex CLI** — `npm install -g @openai/codex`
+- **Codex CLI** (required for the default `mixed` provider and for `/canon-inline-review` under either provider; `CANON_PROVIDER=claude` pipeline runs don't need it, and Claude Code's `/code-review` covers inline review without it) — `npm install -g @openai/codex`
 - **gh** (optional, for `--pr` / `--push`) — `brew install gh && gh auth login`
 
 ### Install
@@ -178,7 +189,7 @@ canon task new my-first-feature "Short description"
 canon run my-first-feature
 ```
 
-Run `canon doctor` after install to verify your environment — it checks Node/git/Claude Code/Codex versions, codex project trust, allowlist coverage, and that any local Claude settings file is gitignored.
+Run `canon doctor` after install to verify your environment — it checks Node/git/Claude Code versions, allowlist coverage, and that any local Claude settings file is gitignored, plus Codex CLI presence and codex project trust when `CANON_PROVIDER` is `mixed`, empty, or unset. Doctor checks that environment setting, not providers pinned on existing tasks, so mixed-pinned tasks still need Codex.
 
 ### Discovery nudge (recommended)
 
@@ -192,7 +203,7 @@ Start with `/canon-spec` rather than implementing directly.
 
 ### Independent review for inline work
 
-For below-pipeline changes or trivial inline work, do not self-review. Use `/canon-inline-review` for an independent cross-review before committing, or `codex review` if you are not running canon.
+For below-pipeline changes or trivial inline work, do not self-review. Use `/canon-inline-review` for an independent cross-review before committing, or `codex review` if you are not running canon. Without Codex (for example, `CANON_PROVIDER=claude` with no Codex CLI installed), run Claude Code's built-in `/code-review` in a fresh session instead; it is a separate Claude session, not a second model family.
 
 ### Skip the permission prompts (optional)
 
@@ -259,23 +270,40 @@ Claude Code creates `settings.json` on first use — check what's already there 
 
 ### Trust model
 
-Pipeline sessions are headless, so nobody is at the keyboard to answer a permission prompt. Know what that means before you run `canon run` on a repo you care about. Everything below describes the default headless runs; `--interactive` opens ordinary Claude Code and Codex sessions under your own permission settings instead.
+Pipeline sessions are headless, so nobody is at the keyboard to answer a permission prompt. Know what that means before you run `canon run` on a repo you care about. Everything below describes the default headless runs; `--interactive` opens ordinary Claude Code sessions, plus Codex sessions for Codex-held roles in mixed mode, under your own permission settings instead.
 
-- **Claude Code sessions run with `--dangerously-skip-permissions`.** Every tool call is auto-approved. This is required today because a headless session cannot answer prompts, and your project's validation commands (test suites, builds, linters) cannot be allowlisted in advance. A session can run anything your user account can run.
-- **Fresh headless Codex runs use `--sandbox workspace-write`.** Codex's OS-level sandbox confines those runs' writes to the directory canon launches them in: the task worktree once one exists, otherwise the main checkout (a task's first spec review runs before its worktree is created, and `worktree: false` tasks never get one). Network is off unless your Codex config enables it. The flag is not passed on session resumes, on the `codex exec review` code-review lens, or in interactive Codex sessions, which follow your own Codex sandbox settings.
+- **Claude Code sessions run with `--dangerously-skip-permissions`.** Every tool call is auto-approved. This is required today because a headless session cannot answer prompts, and your project's validation commands (test suites, builds, linters) cannot be allowlisted in advance. Without additional confinement, a session can run anything your user account can run. In `claude` mode spec review and implementation also run as Claude sessions under `--dangerously-skip-permissions`, with no OS-level write confinement unless you opt into the Claude sandbox below.
+- **In mixed mode, fresh headless Codex runs use `--sandbox workspace-write`.** Codex's OS-level sandbox confines those runs' writes to the directory canon launches them in, plus temporary directories such as `/tmp` and `$TMPDIR`: the task worktree once one exists, otherwise the main checkout (a task's first spec review runs before its worktree is created, and `worktree: false` tasks never get one). Network is off unless your Codex config enables it. The flag is not passed on session resumes, on the `codex exec review` code-review lens, or in interactive Codex sessions, which follow your own Codex sandbox settings.
 - **Worktrees separate branch state by convention, not by enforcement.** Each task, or each bundle when you pass several task ids together, gets its own worktree and branch, and the pipeline's dirty-tree gates inspect the active worktree at phase boundaries. But Claude sessions are also given the main checkout via `--add-dir` and run with permissions skipped, so nothing stops a session from writing there, and an unrelated file dropped into the main checkout is not something those gates look for; tasks with `worktree: false` run in the main checkout outright. Validation commands run with your normal privileges.
 - **Budget caps bound cost, not access.** Each headless Claude phase runs with `--max-budget-usd`; hitting the cap stops the session. It does not narrow what the session may do beforehand, and interactive sessions (`--interactive`) run uncapped.
-- **Your code goes to the model providers.** Each agent phase sends prompts and repository context to the provider running it, Anthropic for Claude phases and OpenAI for Codex phases, with `code_review` using both, all through the Claude Code and Codex CLIs under whatever data terms your accounts have. Treat a `canon run` like any other agent session in that respect.
+- **Your code goes to the model providers.** Each agent phase sends prompts and repository context to the provider running it. In mixed mode that is Anthropic for Claude phases and OpenAI for Codex phases, with mixed-mode `code_review` using both. In `claude` mode prompts and repository context go only to Anthropic; the exception is `/canon-inline-review`, which, if you use it, sends the diff to OpenAI. These sessions use the relevant CLIs under whatever data terms your accounts have. Treat a `canon run` like any other agent session in that respect.
 - **Git side effects need a flag.** The pipeline never pushes, opens PRs, merges, or publishes on its own. `--pr` pushes the task branch and opens a draft PR, stopping at `human_review`. `--ship` squash-merges that PR; it checks the task's phase, not whether anyone approved, so PR approval is your prerequisite (or your branch protection's), not something canon enforces. `--full-send` skips the human spec gate and opens the draft PR on clean QA, still stopping before merge. `--pr`, `--push` and full-send first push canon's own unpushed scaffold and telemetry commits on the base, creating it on origin if missing when every local-only commit is canon-safe or already published. Other unpushed base commits block unless `--allow-divergent-base` is set; that escape does not apply to a missing remote base. On a `delicate` task, `--full-send` refuses without `--force`.
 
-Run canon on repositories where you would be comfortable running your test suite unattended. If that is not your situation, keep it to a machine or container scoped for the purpose. Replacing the blanket permission skip with a narrower confinement is on the roadmap; the constraint to solve is that adopter validation commands legitimately need network and system access the sandbox would block. Security reports go through [SECURITY.md](SECURITY.md).
+#### Optional: Claude Code sandbox
+
+This is opt-in; canon neither scaffolds nor requires it. Merge this setting into `.claude/settings.json`:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": []
+  }
+}
+```
+
+Add validation commands that need system paths and must run unsandboxed to `excludedCommands`. Under canon's headless flags, as observed on Claude Code 2.1.312, the sandbox confines Bash subprocesses only: Bash writes outside the working directory and temp directory were blocked, but Claude's built-in file edit tools are not covered. Network is not confined in canon's headless runs because `--dangerously-skip-permissions` auto-approves the sandbox's network prompts, even when `network.allowedDomains` is set. Without `allowUnsandboxedCommands: false`, a session can step outside the sandbox through the `dangerouslyDisableSandbox` escape hatch and be auto-approved. The probe ran in a plain repository; canon also gives headless Claude sessions the main checkout via `--add-dir`, and whether sandboxed Bash may write there, or whether git in a linked worktree still works, was not tested. Behavior may change between Claude Code releases.
+
+Run canon on repositories where you would be comfortable running your test suite unattended. If that is not your situation, keep it to a machine or container scoped for the purpose. An opt-in Claude sandbox for shell commands exists above. A verified default that replaces the blanket permission skip is still on the roadmap; the constraint to solve is that adopter validation commands legitimately need network and system access a sandbox may block. Security reports go through [SECURITY.md](SECURITY.md).
 
 ### Key commands
 
 | Command | What it does |
 |---|---|
 | `canon init` | Install canon into the current repo. Refuses symlinks at destination files or parent directories; replace them with regular files/directories first. |
-| `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72) and Codex CLI presence, codex project trust, recommended-permission coverage in `.claude/settings.json`, and that any local settings file is gitignored. |
+| `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage in `.claude/settings.json`, and that any local settings file is gitignored. |
 | `canon completion <shell>` | Print a completion script for bash, zsh, fish, or tcsh; see Shell completion. |
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
@@ -403,7 +431,7 @@ Drop this into any repo and you have:
 
 ❌ **Not in scope for MVP:**
 
-- Adapters for other agentic CLIs (Gemini CLI, Aider, etc.) — assumed Claude Code + Codex CLI
+- Adapters for other agentic CLIs (Gemini CLI, Aider, etc.) — assumed Claude Code, plus Codex CLI in mixed mode
 - Pre-built docs-check / external-API-citation tooling (project-specific)
 - Per-language project bootstrappers (Python / Rust / Go variants)
 

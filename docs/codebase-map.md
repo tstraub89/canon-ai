@@ -94,10 +94,10 @@ Every task lives in `tasks/<TASK-ID>/`. Templates live in `.canon/templates/`.
 | What | Where | Author |
 |---|---|---|
 | Task state machine | `.canon/templates/status.json` | Updated by whichever agent acts |
-| Spec template | `.canon/templates/spec.md` | Claude writes; Codex reviews (full tier) |
-| Spec review template | `.canon/templates/spec-review.md` | Codex |
+| Spec template | `.canon/templates/spec.md` | Claude writes; spec reviewer reviews (full tier) |
+| Spec review template | `.canon/templates/spec-review.md` | Spec reviewer |
 | Plan template | `.canon/templates/plan.md` | Claude (after spec approval) |
-| Implementation handoff template | `.canon/templates/handoff.md` | Codex |
+| Implementation handoff template | `.canon/templates/handoff.md` | Implementer |
 | Code review template (2-stage) | `.canon/templates/review.md` | Claude |
 | QA / human-facing summary template | `.canon/templates/done.md` | Claude; changelog scope points at `docs/decisions.md` |
 | QA / outward-facing PR body template | `.canon/templates/pr-body.md` | Claude |
@@ -114,7 +114,7 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | System overview, tech stack | `docs/architecture.md` | First read when orienting |
 | File locations (this doc) | `docs/codebase-map.md` | Fast index |
 | Settled architectural decisions | `docs/decisions.md` | Don't re-debate without strong cause |
-| Patterns + Known Pitfalls | `docs/patterns.md` | Pitfalls auto-injected into Codex implement prompts |
+| Patterns + Known Pitfalls | `docs/patterns.md` | Pitfalls auto-injected into implementer prompts |
 | Product / framework context | `docs/product-context.md` | What canon-ai is, who it's for |
 | Pipeline mechanics reference | `docs/pipeline-orchestrator.md` | Flags, env vars, model matrix, reroute, auto-block |
 | Distilled lessons across tasks | `docs/lessons-learned.md` | QA writes task lessons fragments; `--ship` folds them here |

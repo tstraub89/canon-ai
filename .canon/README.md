@@ -29,10 +29,12 @@ diff .canon/templates/spec.md tasks/_templates/spec.md
 ## Project-specific validation checks during `implement`
 
 Real checks should live in project scripts such as `package.json` commands (or
-the local equivalent), not in canon-side policy modules. Canon's pipeline runs
-Codex with `--sandbox workspace-write` (writes within the worktree, plus
-network access) — appropriate for the checks an `implement` phase typically
-runs (lint, type-check, unit tests, build).
+the local equivalent), not in canon-side policy modules.
+In mixed mode, fresh headless Codex runs use `--sandbox workspace-write`
+(writes confined to the worktree and temp directories; network off unless your Codex config enables it)
+— appropriate for the checks an `implement` phase typically runs (lint,
+type-check, unit tests, build). In `claude` mode these checks run in Claude
+sessions without that sandbox.
 
 ## Project config (config.json)
 

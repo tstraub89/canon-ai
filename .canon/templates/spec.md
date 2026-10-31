@@ -1,6 +1,6 @@
 # Spec: [TASK-ID] — [Title]
 
-> Written by: Claude | Review by: Codex
+> Written by: Claude | Review by: spec reviewer
 > Status: draft | reviewed | approved | implemented
 
 ## Problem
