@@ -3601,7 +3601,7 @@ function parkAgentSessionFailure(phase: Phase, taskIds: string[], error: AgentSe
     }
     // Reopen even completed members so the whole bundle re-enters this phase.
     // This is safe only while no agent session runs after routing writes.
-    splitState.autoBlockPhase(taskIds, phase, phaseIterationCount(taskIds, phase), `${error.reason}. ${recovery}`);
+    splitState.autoBlockPhase(taskIds, phase, phaseIterationCount(taskIds, phase), `${error.reason}. ${recovery}`, error.reason);
     console.log('');
     console.log('════════════════════════════════════════════════════════');
     console.log(`  ✋  AGENT SESSION FAILED — ${phase} parked as blocked.`);

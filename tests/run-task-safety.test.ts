@@ -10627,6 +10627,8 @@ void test('main parks a failed plan durably and a plain rerun completes it', { c
         assert.equal(parked.escalations?.[0].phase, 'plan');
         assert.match(parked.escalations[0].reason, /claude session exited 1/);
         assert.match(parked.escalations[0].reason, /canon run plan-failure/);
+        assert.match(parked.escalations[0].cause ?? '', /claude session exited 1/);
+        assert.doesNotMatch(parked.escalations[0].cause ?? '', /canon run|Fix the cause/);
         assert.match(failed.stderr, /■ orchestrator exit code=2 \[reason=claude session exited 1/);
         assert.match(failed.stdout, /AGENT SESSION FAILED/);
 

@@ -517,6 +517,7 @@ export function autoBlockPhase(
     phase: Phase,
     iterationCount: number,
     reason: string,
+    cause?: string,
 ): void {
     const today = new Date().toISOString().slice(0, 10);
     for (const taskId of taskIds) {
@@ -527,7 +528,7 @@ export function autoBlockPhase(
             phaseEntry.auto_block_count = (phaseEntry.auto_block_count ?? 0) + 1;
         }
         status.escalations = status.escalations ?? [];
-        status.escalations.push({ date: today, phase, iteration_count: iterationCount, reason });
+        status.escalations.push({ date: today, phase, iteration_count: iterationCount, reason, ...(cause ? { cause } : {}) });
         status.updated = today;
         writeStatus(taskId, status);
     }

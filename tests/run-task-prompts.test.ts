@@ -1286,6 +1286,16 @@ void test('spec prompts inject maps only when configured', () => {
     }
 });
 
+void test('implement park-resume prompt quotes the failure cause without operator recovery text', () => {
+    const task = baseState.tasks[0];
+    const parked: PipelineState = { ...baseState, provider: 'claude', tasks: [{ ...task, status: { ...task.status, escalations: [
+        { date: '2026-10-31', phase: 'implement', reason: 'claude hit error_max_budget_usd. Fix the cause (auth, budget, network), then re-run `canon run test-pf-001`.', cause: 'claude hit error_max_budget_usd' },
+    ] } }] };
+    const prompt = promptImplementParkResume(parked);
+    assert.match(prompt, /stopped before finishing: claude hit error_max_budget_usd\n/);
+    assert.doesNotMatch(prompt, /Fix the cause|re-run `canon run/);
+});
+
 void test('Claude provider prompt builders use role holders and preserve task content verbatim', () => {
     const asClaude = (state: PipelineState): PipelineState => ({ ...state, provider: 'claude' });
     const initial = asClaude(baseState);

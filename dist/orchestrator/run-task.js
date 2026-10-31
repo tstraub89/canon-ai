@@ -1325,7 +1325,7 @@ function getStoredSessionId(taskIds, agent) {
   const sessions = readStatus(taskIds[0]).sessions;
   return sessions?.[agent] ?? sessions?.[LEGACY_SESSION_SLOTS[agent]] ?? null;
 }
-function autoBlockPhase(taskIds, phase, iterationCount, reason) {
+function autoBlockPhase(taskIds, phase, iterationCount, reason, cause) {
   const today2 = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   for (const taskId of taskIds) {
     const status = readStatus(taskId);
@@ -1335,7 +1335,7 @@ function autoBlockPhase(taskIds, phase, iterationCount, reason) {
       phaseEntry.auto_block_count = (phaseEntry.auto_block_count ?? 0) + 1;
     }
     status.escalations = status.escalations ?? [];
-    status.escalations.push({ date: today2, phase, iteration_count: iterationCount, reason });
+    status.escalations.push({ date: today2, phase, iteration_count: iterationCount, reason, ...cause ? { cause } : {} });
     status.updated = today2;
     writeStatus(taskId, status);
   }
@@ -5909,7 +5909,8 @@ function promptImplement(state, mode = "fresh", affectedFiles, baseBranch) {
   });
 }
 function promptImplementParkResume(state, affectedFiles, baseBranch) {
-  const reason = state.tasks.flatMap((task) => task.status.escalations ?? []).filter((entry) => entry.phase === "implement").at(-1)?.reason ?? "agent session failure";
+  const escalation = state.tasks.flatMap((task) => task.status.escalations ?? []).filter((entry) => entry.phase === "implement").at(-1);
+  const reason = escalation?.cause ?? escalation?.reason ?? "agent session failure";
   return [
     `The previous session stopped before finishing: ${reason}`,
     "Work may be partial. Re-read the spec and plan and inspect the current working tree. Continue the implementation against the spec and plan, then validate, write handoff.md, and run the phase command for every task.",
@@ -10259,7 +10260,7 @@ function parkAgentSessionFailure(phase, taskIds, error) {
     if (slot) storeSessionId(taskIds, slot, error.sessionId, "claude");
     recordPhaseAgent(taskIds, phase, error.agent);
   }
-  autoBlockPhase(taskIds, phase, phaseIterationCount(taskIds, phase), `${error.reason}. ${recovery}`);
+  autoBlockPhase(taskIds, phase, phaseIterationCount(taskIds, phase), `${error.reason}. ${recovery}`, error.reason);
   console.log("");
   console.log("\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550");
   console.log(`  \u270B  AGENT SESSION FAILED \u2014 ${phase} parked as blocked.`);

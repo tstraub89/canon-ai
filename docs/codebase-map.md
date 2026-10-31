@@ -79,7 +79,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Canon snapshot | `src/orchestrator/canon-snapshot.ts` | Records and compares the canon-ai git snapshot governing a run; used for provenance stamping |
 | Markdown table parser | `src/orchestrator/markdown-table.ts` | Parses markdown tables including escaped-pipe cells; used by handoff and spec parsers |
 | Prompt rendering | `src/orchestrator/prompts/render.ts` | Mustache rendering with LLM-safe escape-disable; consumed by `src/orchestrator/prompts/index.ts` |
-| Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | `CLAUDE_STARTUP`, `CODEX_STARTUP` strings injected into agent prompts; `CODEX_STARTUP` carries Codex git-workflow guidance and `CLAUDE_IMPLEMENTER_STARTUP` (derived from it) replaces it for Claude-held implementer and spec-reviewer prompts |
+| Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | Startup and headless strings, `implementationStartup(provider)`, `PHASE_ARTIFACT_COMPLETION`, `toResumePrompt()` |
 | Agent stream handler | `src/orchestrator/agents/stream.ts` | Child process stdout/stderr muxer with stall detection and graceful kill; shared by `claude.ts` and `codex.ts` |
 | Scaffold destination safety | `src/lib/scaffold-paths.ts` | Rejects symlinks in init/upgrade destination paths before writes, including dangling links and parent directories |
 | Canon-managed files whitelist | `src/lib/canon-owned.ts` | `CANON_OWNED` and `DELIMITED` lists — authoritative source for which files `canon upgrade` controls |

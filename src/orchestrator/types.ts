@@ -78,6 +78,8 @@ export type Escalation = {
     phase: Phase;
     iteration_count?: number;
     reason: string;
+    /** The failure cause without operator recovery text; set when an agent session is parked. */
+    cause?: string;
 };
 
 export type CanonStamp = {

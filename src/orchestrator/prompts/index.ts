@@ -360,7 +360,8 @@ export function promptImplement(
 }
 
 export function promptImplementParkResume(state: PipelineState, affectedFiles?: readonly string[] | null, baseBranch?: string): string {
-    const reason = state.tasks.flatMap(task => task.status.escalations ?? []).filter(entry => entry.phase === 'implement').at(-1)?.reason ?? 'agent session failure';
+    const escalation = state.tasks.flatMap(task => task.status.escalations ?? []).filter(entry => entry.phase === 'implement').at(-1);
+    const reason = escalation?.cause ?? escalation?.reason ?? 'agent session failure';
     return [
         `The previous session stopped before finishing: ${reason}`,
         'Work may be partial. Re-read the spec and plan and inspect the current working tree. Continue the implementation against the spec and plan, then validate, write handoff.md, and run the phase command for every task.',
