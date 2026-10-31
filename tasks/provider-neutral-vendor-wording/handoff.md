@@ -6,16 +6,32 @@
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `README.md` | Made setup, provider roles, doctor checks, tier descriptions, privacy, and trust-model wording accurate for `mixed` and `claude`; documented the opt-in Claude sandbox and its observed limits. |
+| `.canon/README.md`, `templates/.canon/README.md` | Qualified Codex sandbox behavior as mixed-mode and aligned network wording with the user's Codex configuration. |
+| `src/orchestrator/cli.ts` | Reworded fast-tier and reroute help to name the phase and implementer role. |
+| `src/lib/pipeline-policy.ts` | Reworded the two scope reasons to refer to round records. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Rebuilt CLI bundles for the wording changes. |
+| `tests/cli-args.test.ts` | Added provider-neutral `RUN_USAGE` assertions. |
+| `tests/pipeline-policy.test.ts`, `tests/run-task-code-review.test.ts` | Updated expectations and fixtures for the provider-neutral scope reasons. |
+| `.claude/skills/canon-spec/SKILL.md`, `templates/.claude/skills/canon-spec/SKILL.md` | Replaced pipeline role-holder wording and clarified mixed/Claude assignment. |
+| `.claude/skills/canon-spec-review/SKILL.md`, `templates/.claude/skills/canon-spec-review/SKILL.md` | Replaced role-holder wording in the spec-review description. |
+| `.claude/skills/canon-pipeline/SKILL.md`, `templates/.claude/skills/canon-pipeline/SKILL.md` | Qualified provider-specific spec-review ownership. |
+| `.claude/skills/canon-status/SKILL.md`, `templates/.claude/skills/canon-status/SKILL.md` | Named the implementer as the iterating role. |
+| `.canon/templates/spec.md`, `templates/.canon/templates/spec.md` | Changed the reviewer byline to the spec reviewer role. |
+| `.canon/templates/spec-review.md`, `templates/.canon/templates/spec-review.md` | Changed the reviewer byline to the spec reviewer role. |
+| `.canon/templates/handoff.md`, `templates/.canon/templates/handoff.md` | Changed the author byline to the implementer role. |
+| `.canon/templates/review.md`, `templates/.canon/templates/review.md` | Named the implementer in per-round guidance and qualified the cold-Codex lens and dismissal instruction as mixed-mode. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Made role and provider mappings explicit in the operator, tier, matrix, failure, and reroute guidance. |
+| `AGENTS.md` | Qualified the Codex role row and cross-review split by provider; documented Claude-mode assignment. |
+| `docs/product-context.md` | Replaced vendor-bound glossary and tier wording with roles and mixed-mode qualifications. |
+| `docs/patterns.md`, `templates/docs/patterns.md` | Named the implementer role and qualified the Codex spec-review crash as mixed-mode. |
+| `templates/docs/task-quality-log.md` | Replaced Codex-specific implementation wording with role-based wording. |
+| `docs/codebase-map.md` | Updated template authorship and pitfalls-injection descriptions to name roles. |
+| `docs/architecture.md` | Qualified the Codex CLI and matrix to mixed mode and described spec-review and implementation by role/provider. |
+| `docs/decisions.md` | Clarified that the earlier backend assignment decision described mixed mode and points to the later Claude assignment. |
+| `docs/BACKLOG.md` | Added the 2026-10-31 probe under canon's headless flags and retained network confinement as open work. |
 
 ## Canon Governance
 
@@ -31,107 +47,67 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Changed provider-dependent user-facing statements to describe the pipeline role first, then state who holds it in each provider mode. Preserved mixed-mode model and lens facts. Documented the Claude sandbox from the observed 2.1.312 run under canon's headless flags, including the network and escape-hatch limitations, without claiming parity with Codex's sandbox.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
+**Spec ACs are binding. Plan approach is guidance.** Any implementation difference is recorded here.
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Clarified the 2026-09 backlog probe as a default-permissions result and stated that canon's bypass flags were not tested in that probe. | The new 2026-10-31 probe found that the default-mode network denial does not hold under canon's `--dangerously-skip-permissions` flags; the historical note needed that scope to avoid contradicting the current observation. | AC-9f; no behavior change. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 — `RUN_USAGE` is provider-neutral | Met | No `Codex` in `RUN_USAGE`; fast-tier and reroute role assertions added. |
+| AC-2 — Scope reasons are provider-neutral | Met | Old phrase grep is empty; source diff contains only the two requested string replacements; fixtures and generated bundle updated. |
+| AC-3 — No unqualified “Codex spec review” | Met | Spec grep returned no unqualified hits. |
+| AC-4 — No unqualified Codex role-holder verbs | Met | Spec grep returned no unqualified hits. |
+| AC-5 — Artifact templates name roles | Met | Bylines and cold-lens greps returned no unqualified hits; review template states the mixed and Claude lens sets. |
+| AC-6 — README setup and doctor statements are conditional | Met | Read Install, Prerequisites, How it works, tier, doctor, and MVP adapter sections; pinned Claude Code floor remains. |
+| AC-7 — README trust model covers both providers | Met | Privacy, interactive sessions, mixed-mode Codex sandbox, and Claude-mode permissions are provider-qualified. |
+| AC-8 — Docs, skills, and AGENTS.md read correctly under both providers | Met | Reviewed the named sections; provider mappings and mixed-mode model/lens facts are retained. |
+| AC-9 — Opt-in Claude sandbox is documented without overclaiming | Met | Settings snippet, opt-in status, version, Bash-only scope, filesystem/network results, and escape-hatch guard are stated. |
+| AC-10 — `.canon/README.md` matches README on Codex network | Met | Both root and mirrored text say the network follows the mixed-mode Codex config. |
+| AC-11 — Skills are role-based | Met | Reviewed the four skills; fast-tier approval note says “spec review skipped” without naming Codex. |
+| AC-12 — Mirrors, refs, and suite are clean | Partial | Build, type-check, lint, template sync, docs refs, and golden-file checks passed. The full unit suite has one reproducible failure outside the Affected Files; see Blockers and Validation Outcomes. |
 
 ## Edge Cases Considered
 
-- ...
+- Checked exact-line qualifiers for mixed-only Codex statements as well as the requested pattern greps.
+- Preserved the mixed-mode full Codex implement/spec-review model promotion and the cold-Codex lens's flat mini/high setting.
+- Distinguished the opt-in Bash sandbox from Claude's built-in file-edit tools; recorded that `network.allowedDomains` did not confine network under the bypass flags and that `allowUnsandboxedCommands: false` closes the observed escape hatch.
+- Preserved pinned README/AGENTS strings and confirmed the prompt golden files are unchanged.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- `[scope]` `npm test` has one reproducible failure in `tests/task-cli.test.ts:1238`, outside this task's Affected Files. The reset-code-review fixture receives the older supervising-checkout scaffold while its expected content comes from the updated worktree template. The isolated test command is recorded in Validation Outcomes. Resolving the worktree template/test path is outside this task's scope, so no out-of-scope file was changed.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| _(none — no red-first ACs)_ | | | | |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Completed successfully. |
+| `npm run type-check` | Pass | Completed successfully. |
+| `npm test` | Fail – unrelated | Single reported failure at `tests/task-cli.test.ts:1238` (outside the Affected Files). Isolated repro: `node --test --test-name-pattern='task reset-code-review archives prior review' --import ./tests/md-loader-register.mjs --import tsx tests/task-cli.test.ts`; the scaffold/expected-template mismatch is described in Blockers. |
+| `npm run build` | Pass | Rebuilt `dist/cli/index.js` and `dist/orchestrator/run-task.js`; no other `dist/` paths changed. |
+| `npm run sync-templates` | Pass | Updated the ten canon-managed mirrors. |
+| `npm run sync-templates:check` | Pass | All canon-managed files are in sync. |
+| `npm run docs-refs-check` | Pass | Completed successfully before and after writing this handoff. |
+| AC greps (AC-2–AC-5, AC-6c/AC-7a/AC-10) | Pass | All requested grep checks returned no forbidden hits; `using both` occurs only in a mixed-qualified README line. |
+| Prompt golden diff check | Pass | `tests/run-task-prompts.golden.json` and `tests/completion.golden.json` are unchanged. |
+| E2E | deferred_by_spec | Spec: `Validation Required` — E2E is N/A because there is no UI. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [ ] All spec ACs met (AC-12 is partial due to the unrelated unit-test failure above)
+- [ ] All applicable validation checks pass
+- [x] All deviations from plan documented with rationale

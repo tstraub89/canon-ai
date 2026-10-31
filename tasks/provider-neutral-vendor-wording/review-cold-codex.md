@@ -1,0 +1,1 @@
+The changes consistently describe provider-specific behavior while retaining Codex details where they apply to mixed mode. The template sync check passes, and I found no actionable regressions in the changed code or documentation.
