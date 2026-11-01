@@ -1,7 +1,7 @@
 {
   "id": "spec-manifest-lint",
   "title": "Reject malformed scope manifests before planning and implementation",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-01",
   "updated": "2026-11-01",
   "branch": "task/spec-manifest-lint",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
