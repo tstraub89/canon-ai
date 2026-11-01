@@ -155,7 +155,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | ESLint flat config | `eslint.config.mjs` | `@typescript-eslint/recommendedTypeChecked`, `projectService: true` |
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `src/`, `tests/`, and the remaining `scripts/**/*.d.ts` tooling declaration |
 | Claude permissions, SessionStart and PreToolUse guard registration | `.claude/settings.json` | Auto-shows in-progress tasks at session start; guard registration is opt-in |
-| Claude Code guard hook | `.claude/hooks/canon-guard.mjs` | PreToolUse deny for `status.json` writes, piped `canon run` / `canon watch` and run-log polling, and squash/default merges of task PRs; registration snippet `RECOMMENDED_GUARD_HOOKS` in `src/cli/commands/doctor.ts` |
+| Claude Code guard hook | `.claude/hooks/canon-guard.mjs` | PreToolUse deny for `status.json` writes, piped `canon run` / `canon watch` and run-log polling, and every `gh pr merge` of a task PR (any strategy); registration snippet `RECOMMENDED_GUARD_HOOKS` in `src/cli/commands/doctor.ts` |
 | Codex sandbox baseline | `src/orchestrator/agents/codex.ts` | `--sandbox workspace-write` passed on fresh exec |
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
 | Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | none needed — task worktrees live in-repo under `.canon/worktrees/`, inside the session cwd |

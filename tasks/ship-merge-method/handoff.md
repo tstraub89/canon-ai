@@ -58,6 +58,7 @@ The shared config loader owns parsing and validation, so every consumer gets the
 
 | Deviation | Rationale | AC impact |
 |---|---|---|
+| Amended after the first code review: the guard hook now denies `gh pr merge --rebase` and `--merge` on `task/*` PRs, not only squash/default, and its deny message explains setting `ship.merge_method`. | The human decided to deny them because `--ship` can now merge by any method. This expands AC-9 and the spec's Non-Goal that left the hook's allow/deny behavior unchanged; recorded in the spec's `## Amendment`. | AC-9: wording change plus the deny set widened by amendment. |
 | Moved the existing `assertTaskBranchPushed` loop to after the new read-only method pre-flight. | That guard runs `git fetch`, which updates local Git state. A rejected or unreadable pre-flight should stop before the fetch, while the guard still runs before telemetry preservation, branch switching, or destructive work. | AC-3, AC-4 |
 
 ## AC Coverage
@@ -74,7 +75,7 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 | AC-6 | Met | Progress and recovery output name the configured method; `--ship` help and `post-merge-sync` text are generalized. |
 | AC-7 | Met | README, adopter config docs, pipeline docs, decisions, patterns, and skills are updated; canon-managed mirrors are synced. |
 | AC-8 | Met | Both fake-`gh` scripts support method settings and failures, PR-list failures/malformed output, and non-mutating merge failure; full test suite passes. |
-| AC-9 | Met | Hook guidance directs task-PR merges through the configured method; reason-text assertions are updated and hook behavior is unchanged. |
+| AC-9 | Met | Hook guidance directs task-PR merges through the configured method; reason-text assertions are updated. Per the spec Amendment, the hook now also denies rebase and merge-commit `gh pr merge` on task PRs (deliberate behavior change). |
 
 ## Edge Cases Considered
 

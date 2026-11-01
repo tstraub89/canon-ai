@@ -238,3 +238,7 @@ The test asserts that the append is present in the file after exit, that the bac
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes) — AC-5 fixes a pre-existing bug: the mechanism is a deterministic control-flow trace (`die` in `mergeOpenPRsAndPull` before `restorePreservedSharedDocDirt`), and AC-5 is red-first
 - [x] (Refactors) N/A — feature; the Problem audit records each strategy-dependent behavior anyway
+
+## Amendment
+
+Post-review decision by the human: the `adopter-bypass-guards` hook now denies every `gh pr merge` strategy (squash, rebase, merge commit) on `task/*` PRs, because `--ship` can merge with any configured `ship.merge_method`. This supersedes the Non-Goal "No change to what the `adopter-bypass-guards` hook allows or denies" and the sentence "The hook's allow/deny behavior is unchanged" in AC-9. The deny message explains setting `ship.merge_method` to `"rebase"` or `"merge"` in `.canon/config.json`. The `assertNoOpenPRForTask` hint now says to merge in the GitHub UI, since `gh pr merge` is blocked on task PRs.

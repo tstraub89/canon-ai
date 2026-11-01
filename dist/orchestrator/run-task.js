@@ -9824,8 +9824,14 @@ function shipTasks(taskIds, mergeMethod) {
   }
   const mergeResult = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId, openPRByBranch, mergeMethod);
   if ("failed" in mergeResult) {
-    restorePreservedSharedDocDirt();
-    die(formatMergeFailureMessage({ ...mergeResult.failed, taskIds }));
+    const failureMessage = formatMergeFailureMessage({ ...mergeResult.failed, taskIds });
+    try {
+      restorePreservedSharedDocDirt();
+    } catch (error) {
+      const backups = preservedSharedDocDirt.map(({ backupPath }) => backupPath).filter((backupPath) => fs25.existsSync(backupPath)).join(", ") || "none";
+      warn2(`Could not restore the telemetry notes set aside for this --ship (${error instanceof Error ? error.message : String(error)}). Backups that may remain: ${backups}`);
+    }
+    die(failureMessage);
   }
   const merged = mergeResult.merged;
   if (!merged) {

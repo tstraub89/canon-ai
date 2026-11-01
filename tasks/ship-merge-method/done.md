@@ -4,7 +4,7 @@
 
 ## What Changed
 
-`canon run <id> --ship` used to squash-merge the task PR no matter what the repository allowed. It now merges with the method set in `.canon/config.json` under `ship.merge_method`: `squash` (the default, so nothing changes for existing projects), `rebase`, or `merge`. Before `--ship` changes anything locally, it asks GitHub whether the repo allows that method, but only when there is an open task PR to merge. If the listing of open PRs or the repo's merge settings can't be read, or the method isn't allowed, `--ship` stops with the configured method, the setting name, and the methods the repo allows, and the working tree is untouched. A merge that fails without merging now puts back any telemetry notes `--ship` had set aside before it exits, so those notes are no longer lost. Progress lines, recovery hints, the `--ship` help, and the docs name the configured method instead of "squash". The hook's allow/deny behavior is unchanged; only its wording moved.
+`canon run <id> --ship` used to squash-merge the task PR no matter what the repository allowed. It now merges with the method set in `.canon/config.json` under `ship.merge_method`: `squash` (the default, so nothing changes for existing projects), `rebase`, or `merge`. Before `--ship` changes anything locally, it asks GitHub whether the repo allows that method, but only when there is an open task PR to merge. If the listing of open PRs or the repo's merge settings can't be read, or the method isn't allowed, `--ship` stops with the configured method, the setting name, and the methods the repo allows, and the working tree is untouched. A merge that fails without merging now puts back any telemetry notes `--ship` had set aside before it exits, so those notes are no longer lost. Progress lines, recovery hints, the `--ship` help, and the docs name the configured method instead of "squash". The guard hook now denies every `gh pr merge` strategy on task PRs, and its deny message explains how to set `ship.merge_method`.
 
 ## Files Changed
 
@@ -12,7 +12,7 @@
 - `src/orchestrator/main.ts` — fail-closed pre-flight, configured merge flag, restore on failed merge, method-aware messages.
 - `src/orchestrator/cli.ts` — `--ship` help text only; no new flag.
 - `src/task/index.ts` — `post-merge-sync` wording.
-- `.claude/hooks/canon-guard.mjs` and `templates/.claude/hooks/canon-guard.mjs` — PR-merge deny reason reworded; behavior unchanged.
+- `.claude/hooks/canon-guard.mjs` and `templates/.claude/hooks/canon-guard.mjs` — PR-merge rule now denies every strategy (squash, rebase, merge commit) per the spec Amendment; deny reason explains `ship.merge_method`.
 - `tests/canon-guard.test.ts` — reason-text assertions updated.
 - `tests/docs-freshness.test.ts`, `tests/cli.test.ts` — config parsing and doctor cases.
 - `tests/run-task-ship.test.ts`, `tests/run-task-safety.test.ts` — per-method merge tests, pre-flight and restore tests, fake `gh` extended.
@@ -77,8 +77,7 @@ Scope check: the setting, the pre-flight stop, and the restored telemetry notes 
 
 ## Open Questions
 
-- **Remaining review nit (not fixed here).** `src/orchestrator/main.ts:2204` tells the operator to "merge PR #n outside canon (any method)". The guard hook still denies default `gh pr merge` on task PRs, so that hint can point at a step the hook blocks. The code review flagged it as optional. Decide whether to reword it to name `--rebase`/`--merge` as the hook-permitted path.
-- **Hook follow-up.** The guard hook still allows direct `--rebase` and `--merge` and denies only the default. Whether to deny them now that `--ship` can do both is a separate decision (spec, Interaction Dependencies).
+- **Hook follow-up (resolved).** After review, the human chose to deny direct `--rebase` and `--merge` as well, recorded in the spec Amendment. The `--ship` open-PR hint now says to merge in the GitHub UI.
 - **Rebase-merge history.** Rebase-merge adds several commits per task to base, including canon's artifact commits. Documented in `docs/pipeline-orchestrator.md`; no action taken.
 - **Human Test Plan.** Steps 1–5 above are unverified against live GitHub.
 
