@@ -243,7 +243,7 @@ function runCanon(cwd: string, args: readonly string[], fakeTools: string, env: 
     };
 }
 
-function makeStatus(taskId: string, branch: string): Record<string, unknown> {
+function makeStatus(taskId: string, branch: string, provider?: unknown): Record<string, unknown> {
     const status: Record<string, unknown> = {
         id: taskId,
         title: taskId,
@@ -267,6 +267,7 @@ function makeStatus(taskId: string, branch: string): Record<string, unknown> {
         escalations: [],
         sessions: {},
     };
+    if (provider !== undefined) status.provider = provider;
     return status;
 }
 
@@ -375,6 +376,7 @@ function prepareShipFixture(
         materializeAdvancedHead?: boolean;
         initialFiles?: Record<string, string>;
         taskFiles?: Record<string, string>;
+        providers?: Record<string, unknown>;
     } = {},
 ): { localDir: string; originDir: string; branch: string; tip: string; prHead: string; fakeTools: string } {
     const { localDir, originDir } = makeGitFixture(dir, options.initialFiles);
@@ -385,7 +387,7 @@ function prepareShipFixture(
     gitIn(localDir, 'checkout', '-b', branch);
     const statuses: Record<string, Record<string, unknown>> = {};
     for (const taskId of taskIds) {
-        const status = makeStatus(taskId, branch);
+        const status = makeStatus(taskId, branch, options.providers?.[taskId]);
         statuses[taskId] = status;
         writeTaskFiles(localDir, taskId, status);
         if (options.prNumbers?.[taskId] !== undefined) {
@@ -1252,6 +1254,75 @@ void test('--ship orphaned worktree state reads the sidecar without crashing', (
 
         assert.equal(result.status, 0, result.stderr);
         expectArchivedAndDeleted(localDir, taskId, branch);
+    });
+});
+
+void test('--ship does not resolve an invalid provider pin', () => {
+    withTempDir('run-task-ship-invalid-pin-', dir => {
+        const taskId = 'ship-invalid-pin';
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 110 },
+            providers: { [taskId]: 'bogus' },
+        });
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stdout + result.stderr, /Invalid provider/);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+    });
+});
+
+void test('--ship does not refuse a bundle whose provider pins differ', () => {
+    withTempDir('run-task-ship-mixed-pins-', dir => {
+        const taskIds = ['ship-pins-a', 'ship-pins-b'];
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, taskIds, {
+            prNumbers: { [taskIds[0]]: 111, [taskIds[1]]: 111 },
+            providers: { [taskIds[0]]: 'claude' },
+        });
+
+        const result = runCanon(localDir, [...taskIds, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.doesNotMatch(result.stdout + result.stderr, /Cannot run a mixed-provider bundle/);
+        for (const taskId of taskIds) {
+            assert.ok(fs.existsSync(path.join(localDir, 'tasks', '_archive', taskId)));
+            assert.ok(!fs.existsSync(path.join(localDir, 'tasks', taskId)));
+        }
+        assert.equal(branchExists(localDir, branch), false);
+    });
+});
+
+void test('--ship still refuses a malformed status.json cleanly', () => {
+    withTempDir('run-task-ship-bad-status-', dir => {
+        const taskId = 'ship-bad-status';
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            prNumbers: { [taskId]: 112 },
+        });
+        const statusPath = path.join(localDir, 'tasks', taskId, 'status.json');
+        const status = JSON.parse(fs.readFileSync(statusPath, 'utf8')) as Record<string, unknown>;
+        status.branch = 'bad branch';
+        fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /branch/);
+        assert.doesNotMatch(result.stderr, /^\s+at /m);
+        assert.ok(fs.existsSync(path.join(localDir, 'tasks', taskId)));
+        assert.equal(branchExists(localDir, branch), true);
     });
 });
 
