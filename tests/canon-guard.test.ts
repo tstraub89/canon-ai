@@ -198,6 +198,7 @@ void test('status.json rule denies task-state writes and allows read and neighbo
             ['perl -F pattern read', { tool_name: 'Bash', tool_input: { command: "perl -Fi -ane 'print' tasks/foo/status.json" }, cwd: fixture.repo }, fixture.repo],
             ['perl unicode input setting read', { tool_name: 'Bash', tool_input: { command: "perl -Ci -ane 'print' tasks/foo/status.json" }, cwd: fixture.repo }, fixture.repo],
             ['perl debugger flag list read', { tool_name: 'Bash', tool_input: { command: "perl -Dpi -ane 'print' tasks/foo/status.json" }, cwd: fixture.repo }, fixture.repo],
+            ['perl unicode cluster swallowing later letters', { tool_name: 'Bash', tool_input: { command: "perl -C16pi -e 's/a/b/' tasks/foo/status.json" }, cwd: fixture.repo }, fixture.repo],
             ['quoted redirect-looking commit message', { tool_name: 'Bash', tool_input: { command: 'git commit -m "fix > tasks/foo/status.json"' }, cwd: fixture.repo }, fixture.repo],
             ['read piped to tee elsewhere', { tool_name: 'Bash', tool_input: { command: 'cat tasks/foo/status.json | tee /tmp/x' }, cwd: fixture.repo }, fixture.repo],
             ['canon template status', statusPayload('Edit', '.canon/templates/status.json', fixture.repo), fixture.repo],
@@ -282,6 +283,10 @@ void test('task PR merge rule denies squash/default and allows other strategies 
             ['explicit squash', 'gh pr merge 12 --squash'],
             ['default merge', 'gh pr merge 12'],
             ['non-strategy short-option cluster', 'gh pr merge 12 -ds'],
+            ['strategy-looking title value', 'gh pr merge 12 --squash -t -dr'],
+            ['strategy-looking title after a clustered value flag', 'gh pr merge 12 -dt -r'],
+            ['cluster mixing squash with rebase', 'gh pr merge 12 -sr'],
+            ['rebase explicitly disabled', 'gh pr merge 12 --rebase=false'],
         ] as const) {
             await t.test(name, () => {
                 const result = run(command);
@@ -326,6 +331,10 @@ void test('task PR merge rule denies squash/default and allows other strategies 
             ['merge commit', 'gh pr merge 12 --merge'],
             ['delete branch plus rebase short cluster', 'gh pr merge 12 -dr'],
             ['delete branch plus merge-commit short cluster', 'gh pr merge 12 -dm'],
+            ['rebase cluster ending in a value flag', 'gh pr merge 12 -rt subject'],
+            ['explicit boolean rebase', 'gh pr merge 12 --rebase=true'],
+            ['explicit boolean merge commit', 'gh pr merge 12 --merge=true'],
+            ['merge-commit cluster ending in a value flag', 'gh pr merge 12 -mb body'],
             ['non-task PR', 'gh pr merge 13 --squash'],
             ['create PR', 'gh pr create --head task/foo --title x'],
             ['edit PR', 'gh pr edit 12 --body x'],
