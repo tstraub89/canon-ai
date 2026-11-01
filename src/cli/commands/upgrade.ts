@@ -30,7 +30,12 @@ export const UPGRADE_USAGE = [
 export const UPGRADE_ARGS: ArgDeclaration = { command: 'upgrade', usage: UPGRADE_USAGE, booleanFlags: ['--check', '--dry-run', '--force', '--no-stage'], valueFlags: [], rejectPositionals: true };
 
 export function guardHookNotice(cwd: string): string | null {
-    if (!existsSync(join(cwd, GUARD_HOOK_PATH)) || guardHookRegistration(cwd) === 'full') return null;
+    if (!existsSync(join(cwd, GUARD_HOOK_PATH))) return null;
+    const registration = guardHookRegistration(cwd);
+    if (registration === 'full') return null;
+    if (registration === 'partial') {
+        return `Heads-up: ${GUARD_HOOK_PATH} is registered as a Claude Code hook, but its matcher does not cover every guarded tool (Bash, Edit, Write, MultiEdit) — run \`canon doctor\` to see which are missing and the settings snippet.`;
+    }
     return `Heads-up: ${GUARD_HOOK_PATH} is installed but not registered as a Claude Code hook — run \`canon doctor\` for the settings snippet.`;
 }
 

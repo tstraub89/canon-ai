@@ -181,6 +181,10 @@ void test('status.json rule denies task-state writes and allows read and neighbo
             ['append redirect task status write', 'echo x >> tasks/foo/status.json', fixture.repo],
             ['attached redirect target task status write', 'echo x >tasks/foo/status.json', fixture.repo],
             ['tee task status write', 'echo x | tee tasks/foo/status.json', fixture.repo],
+            ['jq temp file moved over task status', "jq '.a=1' tasks/foo/status.json > /tmp/s && mv /tmp/s tasks/foo/status.json", fixture.repo],
+            ['mv with flags over task status', 'mv -f /tmp/s tasks/foo/status.json', fixture.repo],
+            ['cp over task status', 'cp /tmp/s tasks/foo/status.json', fixture.repo],
+            ['install over task status', 'install -m 644 /tmp/s tasks/foo/status.json', fixture.repo],
         ] as const;
         for (const [name, command, cwd] of bashDenied) {
             await t.test(name, () => {
@@ -200,6 +204,9 @@ void test('status.json rule denies task-state writes and allows read and neighbo
             ['perl debugger flag list read', { tool_name: 'Bash', tool_input: { command: "perl -Dpi -ane 'print' tasks/foo/status.json" }, cwd: fixture.repo }, fixture.repo],
             ['perl unicode cluster swallowing later letters', { tool_name: 'Bash', tool_input: { command: "perl -C16pi -e 's/a/b/' tasks/foo/status.json" }, cwd: fixture.repo }, fixture.repo],
             ['quoted redirect-looking commit message', { tool_name: 'Bash', tool_input: { command: 'git commit -m "fix > tasks/foo/status.json"' }, cwd: fixture.repo }, fixture.repo],
+            ['cp task status out to a backup', { tool_name: 'Bash', tool_input: { command: 'cp tasks/foo/status.json /tmp/status.bak' }, cwd: fixture.repo }, fixture.repo],
+            ['cp task status into a target directory', { tool_name: 'Bash', tool_input: { command: 'cp -t /tmp tasks/foo/status.json' }, cwd: fixture.repo }, fixture.repo],
+            ['mv a neighboring task file', { tool_name: 'Bash', tool_input: { command: 'mv /tmp/s tasks/foo/notes.md' }, cwd: fixture.repo }, fixture.repo],
             ['read piped to tee elsewhere', { tool_name: 'Bash', tool_input: { command: 'cat tasks/foo/status.json | tee /tmp/x' }, cwd: fixture.repo }, fixture.repo],
             ['canon template status', statusPayload('Edit', '.canon/templates/status.json', fixture.repo), fixture.repo],
             ['task template status', statusPayload('Edit', 'tasks/_templates/status.json', fixture.repo), fixture.repo],
@@ -321,6 +328,22 @@ void test('task PR merge rule denies squash/default and allows other strategies 
                 assert.match(fs.readFileSync(ghLogPath, 'utf8'), /-R owner\/repo/);
             });
         }
+        await t.test('bundle PR names every task recorded on the shared branch', () => {
+            for (const id of ['foo', 'baz']) {
+                fs.mkdirSync(path.join(fixture.internalWorktree, 'tasks', id), { recursive: true });
+                fs.writeFileSync(path.join(fixture.internalWorktree, 'tasks', id, 'status.json'), JSON.stringify({ branch: 'task/foo' }));
+            }
+            fs.mkdirSync(path.join(fixture.internalWorktree, 'tasks', 'qux'), { recursive: true });
+            fs.writeFileSync(path.join(fixture.internalWorktree, 'tasks', 'qux', 'status.json'), JSON.stringify({ branch: 'task/qux' }));
+            try {
+                const result = run('gh pr merge 12 --squash');
+                assert.equal(result.denied, true);
+                assert.match(result.reason, /canon run foo baz --ship/);
+                assert.doesNotMatch(result.reason, /qux/);
+            } finally {
+                for (const id of ['foo', 'baz', 'qux']) fs.rmSync(path.join(fixture.internalWorktree, 'tasks', id, 'status.json'), { force: true });
+            }
+        });
         await t.test('implicit PR on the current task branch', () => {
             const result = run('gh pr merge', fixture.internalWorktree);
             assert.equal(result.denied, true, result.reason);

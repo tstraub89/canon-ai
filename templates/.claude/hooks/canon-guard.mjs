@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -77,11 +77,14 @@ function foregroundReason(flag) {
     return `canon guard: \`canon run … ${flag}\` runs in the foreground and prints its own result; a pipe buffers that output and masks the exit code. Retry the same command without the pipe.`;
 }
 
-function mergeReason(taskId) {
+function mergeReason(taskId, taskIds = [taskId]) {
+    const ids = taskIds.join(' ');
+    const subject = taskIds.length > 1 ? `bundle tasks ${taskIds.join(', ')}` : 'the task';
     return `canon guard: this PR's head is task/${taskId}, a canon task branch. Squash and default merges of task PRs go through ` +
-        `\`canon run ${taskId} --ship\`, which squash-merges and then archives the task and cleans up its worktree and branches. ` +
+        `\`canon run ${ids} --ship\`, which squash-merges and then archives ${subject} and cleans up the worktree and branches. ` +
+        `--ship archives only the task ids it is given, so name every task whose status.json records this branch. ` +
         `If the project merges with rebase or merge commits, rerun this command with --rebase or --merge, then run ` +
-        `\`canon run ${taskId} --ship\` for cleanup. Retry with \`canon run ${taskId} --ship\`.`;
+        `\`canon run ${ids} --ship\` for cleanup. Retry with \`canon run ${ids} --ship\`.`;
 }
 
 function isTaskStatusFile(filePath, cwd) {
@@ -369,8 +372,28 @@ function statusRuleBash(commands, cwd) {
         if (invocation.name === 'perl' && invocation.args.some(isPerlInPlace) && hasStatusPathArg(invocation.args, cwd)) {
             return statusReason(taskIdFromArgs(invocation.args, cwd));
         }
+        if (['mv', 'cp', 'install'].includes(invocation.name)) {
+            const destination = copyDestination(invocation.args);
+            if (destination && isTaskStatusFile(destination, cwd)) {
+                return statusReason(path.basename(path.dirname(path.resolve(cwd, destination))));
+            }
+        }
     }
     return null;
+}
+
+// mv/cp/install write to their last operand. With -t/--target-directory the
+// destination is a directory, which cannot be status.json itself.
+function copyDestination(args) {
+    const operands = [];
+    let endOfOptions = false;
+    for (const arg of args) {
+        if (!endOfOptions && arg === '--') { endOfOptions = true; continue; }
+        if (!endOfOptions && (arg === '-t' || /^--target-directory(?:=|$)/.test(arg) || /^-[a-zA-Z]*t/.test(arg) && !arg.startsWith('--'))) return null;
+        if (!endOfOptions && arg.startsWith('-')) continue;
+        operands.push(arg);
+    }
+    return operands.length >= 2 ? operands.at(-1) : null;
 }
 
 function hasStatusPathArg(args, cwd) {
@@ -502,9 +525,55 @@ function mergeRule(commands, cwd) {
         const head = ref === null ? lookupCurrentBranch(cwd) : lookupPRHead(ref, repo, cwd);
         if (typeof head !== 'string' || !head.startsWith('task/')) continue;
         const taskId = head.slice('task/'.length);
-        return mergeReason(isTaskId(taskId) ? taskId : taskId || '<id>');
+        if (!isTaskId(taskId)) return mergeReason(taskId || '<id>');
+        return mergeReason(taskId, tasksOnBranch(head, taskId, cwd));
     }
     return null;
+}
+
+// Bundle members share the leader's task/<id> branch, and canon records it in
+// each member's status.json inside the leader worktree. Scan that worktree and
+// the current checkout so the --ship hint names every member.
+function tasksOnBranch(branch, leaderId, cwd) {
+    const roots = new Set();
+    const toplevel = gitOutput(['rev-parse', '--show-toplevel'], cwd);
+    if (toplevel) roots.add(toplevel);
+    const worktrees = gitOutput(['worktree', 'list', '--porcelain'], cwd);
+    if (worktrees) {
+        let current = null;
+        for (const line of worktrees.split('\n')) {
+            if (line.startsWith('worktree ')) current = line.slice('worktree '.length);
+            else if (line === `branch refs/heads/${branch}` && current) roots.add(current);
+        }
+    }
+
+    const ids = new Set([leaderId]);
+    for (const root of roots) {
+        let entries;
+        try { entries = readdirSync(path.join(root, 'tasks'), { withFileTypes: true }); }
+        catch { continue; }
+        for (const entry of entries) {
+            if (!entry.isDirectory() || !isTaskId(entry.name)) continue;
+            try {
+                const status = JSON.parse(readFileSync(path.join(root, 'tasks', entry.name, 'status.json'), 'utf8'));
+                if (isRecord(status) && typeof status.branch === 'string' && status.branch.trim() === branch) ids.add(entry.name);
+            } catch {
+                // Missing or malformed status files cannot name a bundle member.
+            }
+        }
+    }
+    return [leaderId, ...[...ids].filter(id => id !== leaderId).sort()];
+}
+
+function gitOutput(args, cwd) {
+    const result = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 3000,
+    });
+    if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
+    return result.stdout.trim() || null;
 }
 
 function parseGhMergeArgs(args) {

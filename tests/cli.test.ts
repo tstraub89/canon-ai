@@ -1779,11 +1779,16 @@ void test('recommended guard hook matcher covers exactly the registered tool nam
     assert.equal(matcher.includes('PowerShell'), false);
 });
 
-void test('guardHookNotice only reports an installed but unregistered hook', () => {
+void test('guardHookNotice reports an unregistered or partially registered hook', () => {
     withTempDir(dir => {
         assert.equal(guardHookNotice(dir), null, 'missing script stays silent');
         writeGuardScript(dir);
         assert.match(guardHookNotice(dir) ?? '', /not registered/);
+        const [entry] = RECOMMENDED_GUARD_HOOKS.hooks.PreToolUse;
+        writeSettings(dir, { hooks: { PreToolUse: [{ ...entry, matcher: 'Bash|Edit' }] } });
+        const partialNotice = guardHookNotice(dir) ?? '';
+        assert.match(partialNotice, /does not cover every guarded tool/);
+        assert.doesNotMatch(partialNotice, /not registered/);
         writeSettings(dir, RECOMMENDED_GUARD_HOOKS);
         assert.equal(guardHookNotice(dir), null, 'full registration stays silent');
     });

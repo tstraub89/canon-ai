@@ -6186,7 +6186,12 @@ var UPGRADE_USAGE = [
 ].join("\n");
 var UPGRADE_ARGS = { command: "upgrade", usage: UPGRADE_USAGE, booleanFlags: ["--check", "--dry-run", "--force", "--no-stage"], valueFlags: [], rejectPositionals: true };
 function guardHookNotice(cwd) {
-  if (!existsSync5(join5(cwd, GUARD_HOOK_PATH)) || guardHookRegistration(cwd) === "full") return null;
+  if (!existsSync5(join5(cwd, GUARD_HOOK_PATH))) return null;
+  const registration = guardHookRegistration(cwd);
+  if (registration === "full") return null;
+  if (registration === "partial") {
+    return `Heads-up: ${GUARD_HOOK_PATH} is registered as a Claude Code hook, but its matcher does not cover every guarded tool (Bash, Edit, Write, MultiEdit) \u2014 run \`canon doctor\` to see which are missing and the settings snippet.`;
+  }
   return `Heads-up: ${GUARD_HOOK_PATH} is installed but not registered as a Claude Code hook \u2014 run \`canon doctor\` for the settings snippet.`;
 }
 var CANON_END = "<!-- canon:end -->";
