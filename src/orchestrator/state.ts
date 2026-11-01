@@ -389,22 +389,28 @@ export function statusFileFor(taskId: string): string {
 export function validateBranchField(value: string | undefined, taskId: string, fieldName: string): void {
     if (value === undefined) return;
     if (typeof value !== 'string') {
-        throw new Error(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. Edit status.json.`);
+        throw new Error(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. ${statusFieldFix(taskId, fieldName)}`);
     }
     const trimmed = value.trim();
     if (trimmed === '') return;
     if (trimmed.startsWith('-')) {
-        throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. Edit status.json.`);
+        throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. ${statusFieldFix(taskId, fieldName)}`);
     }
     if (/[\x00-\x1F\x7F\s:]/.test(trimmed)) {
-        throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. Edit status.json.`);
+        throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. ${statusFieldFix(taskId, fieldName)}`);
     }
+}
+
+function statusFieldFix(taskId: string, fieldName: string): string {
+    return fieldName === 'base_branch'
+        ? `Fix it with \`canon task set ${taskId} base_branch <branch>\` (only before the task branches), or ask the human to correct it in status.json.`
+        : `Ask the human to correct ${fieldName} in status.json.`;
 }
 
 function validateNonNegativeInt(value: unknown, taskId: string, fieldPath: string): void {
     if (value === undefined) return;
     if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-        throw new Error(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. Edit status.json.`);
+        throw new Error(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. ${statusFieldFix(taskId, fieldPath)}`);
     }
 }
 

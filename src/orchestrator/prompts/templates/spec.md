@@ -24,7 +24,7 @@ Note: {{{doneNote}}}{{/doneNote}}
 - **Refactor specs need structural caps** — provide hard size caps, explicit deletion expectations per symbol, and an allow-list grep AC for any symbol that must disappear.
 - **Refactor specs need a correctness audit** — For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record. N/A for features and bug fixes.
 - **UI spatial / gesture tasks** — flag "visual positioning — expect human iteration" or "runtime debugging required" in *Known Risks*.
-- **Sensitive-surface escalation** — flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.
+- **Sensitive-surface escalation** — flag these categories with `canon task set <id> delicate true` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.
 
 {{{selfCheck}}}
 

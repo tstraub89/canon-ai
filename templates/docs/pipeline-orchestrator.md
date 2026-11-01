@@ -65,6 +65,7 @@ If the resolver detects a live disagreement between `.canon-pid` and the pid rec
 **Requires a live run.** If no orchestrator is running at invocation, `watch` classifies the current state and exits non-zero — it does not block waiting for a run to appear. For point-in-time inspection of a finished task, use `canon task status <id>`.
 
 Do not hand-roll a poll loop (`canon task status` + `grep` + `sleep`) — use `canon watch` instead.
+If this project registers canon's guard hook, Claude Code also refuses a piped `canon run` / `canon watch` or run-log polling and points back to this flow. See the canon-ai README's "Guard hooks" section.
 
 ### `canon doctor`
 
@@ -121,7 +122,7 @@ canon task <subcommand> [args]
 | `status` | `<id>` | Print full `status.json` detail for a task. |
 | `phase` | `<id> <phase> <status> [verdict]` | Update a task phase and re-derive the top-level `status` pointer. Phases: `spec spec_review plan implement code_review qa human_review`. Status: `pending in_progress done changes_requested blocked`. |
 | `accept` | `<id...> <phase> [--reason "<text>"] [--force]` | Operator accept supports `implement`, `spec_review`, and `code_review`. For `implement`, it is the escape hatch for already-committed work: it marks implement done and sets `operator_accepted` so post-implement auto-commit is skipped when the recorded HEAD still matches. For `spec_review` and `code_review`, `--reason` is required; accept writes a `sanctioned` verdict for non-advancing review verdicts, preserves already-advancing verdicts in a blocked bundle, records `operator_accepted*`, and appends the audit reason to `notes.md`. Review accept intentionally skips the implement-only diff/handoff guards. |
-| `set` | `<id> <field> <value>` | Set flat task metadata with validation. Metadata fields `title`, `task_size`, `delicate`, and `human_spec_gate` remain settable whenever the task is reachable; setting `human_spec_gate true` clears `full_send` with a note, while setting it `false` is refused on delicate tasks (use `canon run --full-send --force`). Topology fields `worktree` and `base_branch` are only settable before `status.branch` is recorded; once branched, `set` rejects them and points operators at recreating the task or migrating `status.json` manually. Redirected: `full_send` → `canon run --full-send` to enable it (it persists until `--reroute` clears it or arming the spec gate does); `status` → `canon task phase`; `branch` → git identity, not `canon task set`; `phases`/`sessions`/`canon`/`escalations` → their owning canon task commands. Immutable: `id`, `created`, `updated`, and `_`-prefixed inline-doc keys. Writes warn after dispatch has started because metadata changes take effect on the next `canon run`. |
+| `set` | `<id> <field> <value>` | Set flat task metadata with validation. Metadata fields `title`, `task_size`, `delicate`, and `human_spec_gate` remain settable whenever the task is reachable; setting `human_spec_gate true` clears `full_send` with a note, while setting it `false` is refused on delicate tasks (use `canon run --full-send --force`). Topology fields `worktree` and `base_branch` are only settable before `status.branch` is recorded; once branched, `set` rejects them and points operators at recreating the task or asking the human to migrate `status.json`. Redirected: `full_send` → `canon run --full-send` to enable it (it persists until `--reroute` clears it or arming the spec gate does); `status` → `canon task phase`; `branch` → git identity, not `canon task set`; `phases`/`sessions`/`canon`/`escalations` → their owning canon task commands. Immutable: `id`, `created`, `updated`, and `_`-prefixed inline-doc keys. Writes warn after dispatch has started because metadata changes take effect on the next `canon run`. |
 | `reset-spec-review` | `<id>` | Clear router-relevant state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives the prior `spec-review.md`, and drops the stored `sessions.author` ID (and its legacy `claude_spec` fallback) so the next pass runs against a fresh Claude spec session. Also drops the `spec_reviewer` session pair and backend tag when the stored reviewer backend is Claude, so a reset after a loop-cap block or spec-gate halt starts a fresh Claude review; mixed-mode Codex reviewer sessions are retained. Re-arms `human_spec_gate` unless the task is full-send, because the gate disarms itself when it halts. |
 | `reset-code-review` | `<id>` | Clear router-relevant state for a fresh code-review pass after an auto-block. Zeroes the loop-local review counters, clears verdict, archives the prior `review.md` and re-scaffolds a fresh one from the task templates, and drops the stored `sessions.reviewer` ID (and its legacy `claude_review` fallback) so the next pass runs against a fresh Claude review session. |
 | `post-merge-sync` | `[<branch>]` | After a squash-merge PR, reconcile local branch with origin. Hard-resets if the only divergence is pipeline telemetry; refuses if real new work exists. |
@@ -151,7 +152,7 @@ canon task post-merge-sync
 
 ## Pipeline Tiers
 
-The tier is set by the largest task in the run. Task size is set in `status.json` at task creation.
+The tier is set by the largest task in the run. `canon task new` creates tasks with size M by default; change it with `canon task set <task-id> task_size <size>`.
 
 **Fast tier** (all tasks XS, non-delicate):
 ```
@@ -185,14 +186,14 @@ Spec review, implementation and the orchestrator's cold code-review lens run on 
 
 ## Task Sizing Fields
 
-Set in `status.json` at task creation:
+Set by `canon task new` at task creation; change them with `canon task set <id> <field> <value>`:
 
 | Field | Values | Purpose |
 |---|---|---|
 | `task_size` | `XS \| S \| M \| L \| XL` | Drives the pipeline tier and effective-size model/effort cells for Codex-held roles in mixed mode and Claude roles. XS is fast-tier; S+ runs the full pipeline (including spec review). |
 | `delicate` | `true \| false` | Forces the XL bucket (in mixed mode the full Codex model; high Claude spec/plan/code-review effort, and in `claude` mode high Claude spec-review and implement effort too) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
 | `human_spec_gate` | `true \| false` | **Single-use latch**, not a persistent toggle. `true` arms a one-time halt after `spec_review`, before planning (default: `true`). A human can re-arm it with `canon task set <id> human_spec_gate true`; setting it `false` on a delicate task is refused. The orchestrator flips it to `false` *at the moment it halts*, but a human can also disarm it, so `false` means "fired, pre-cleared, or disarmed," not proof the gate fired. See [Spec gate is a single-use latch](#spec-gate-is-a-single-use-latch). |
-| `worktree` | `true \| false` | Worktree isolation. `canon task new` scaffolds this to `true`, so worktree mode is the effective default for every scaffolded task — set it to `false` to opt out and run in the main checkout. The orchestrator treats an *absent* field as `false`, but that fallback only applies to hand-rolled `status.json` files. See Worktree Isolation below. |
+| `worktree` | `true \| false` | Worktree isolation. `canon task new` scaffolds this to `true`, so worktree mode is the effective default for every scaffolded task — run `canon task set <id> worktree false` to opt out and run in the main checkout. The orchestrator treats an *absent* field as `false`, but that fallback only applies to hand-rolled `status.json` files. See Worktree Isolation below. |
 | `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `canon task new` from the current git checkout at task creation. |
 
 ### Task sizing guide

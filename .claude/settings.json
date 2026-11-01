@@ -79,6 +79,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs\" && node \"$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs\" || true",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "sandbox": {

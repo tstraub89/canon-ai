@@ -353,7 +353,7 @@ export function taskList(): void {
         console.log(`${row.id.padEnd(25)} ${row.title.padEnd(40)} ${row.phase}`);
     }
     if (invalidCount > 0) {
-        throw new Error(`${invalidCount} task(s) had invalid status.json — see INVALID: rows above. Fix the malformed files or remove the task dir.`);
+        throw new Error(`${invalidCount} task(s) had invalid status.json — see INVALID: rows above. Ask the human to repair the malformed status.json files or remove the task dir.`);
     }
 }
 
@@ -1572,7 +1572,7 @@ export function taskSet(args: string[]): void {
     if (recordedBranch && (field === 'worktree' || field === 'base_branch')) {
         throw new Error(
             `Error: ${field} is locked once branch '${recordedBranch}' is recorded. ` +
-            'Topology changes are only allowed before branching; recreate the task or migrate status.json manually.',
+            'Topology changes are only allowed before branching; recreate the task or ask the human to migrate status.json.',
         );
     }
 

@@ -590,21 +590,24 @@ function statusFileFor(taskId) {
 function validateBranchField(value, taskId, fieldName) {
   if (value === void 0) return;
   if (typeof value !== "string") {
-    throw new Error(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. Edit status.json.`);
+    throw new Error(`Invalid ${fieldName} in task '${taskId}': expected string, got ${typeof value}. ${statusFieldFix(taskId, fieldName)}`);
   }
   const trimmed = value.trim();
   if (trimmed === "") return;
   if (trimmed.startsWith("-")) {
-    throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. Edit status.json.`);
+    throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. ${statusFieldFix(taskId, fieldName)}`);
   }
   if (/[\x00-\x1F\x7F\s:]/.test(trimmed)) {
-    throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. Edit status.json.`);
+    throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. ${statusFieldFix(taskId, fieldName)}`);
   }
+}
+function statusFieldFix(taskId, fieldName) {
+  return fieldName === "base_branch" ? `Fix it with \`canon task set ${taskId} base_branch <branch>\` (only before the task branches), or ask the human to correct it in status.json.` : `Ask the human to correct ${fieldName} in status.json.`;
 }
 function validateNonNegativeInt(value, taskId, fieldPath) {
   if (value === void 0) return;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new Error(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. Edit status.json.`);
+    throw new Error(`Invalid ${fieldPath} in task '${taskId}': expected non-negative integer, got ${JSON.stringify(value)}. ${statusFieldFix(taskId, fieldPath)}`);
   }
 }
 function validateStatus(taskId, parsed) {
@@ -1787,6 +1790,98 @@ var RECOMMENDED_ALLOW = [
   "Skill(canon-sweep)",
   "Skill(canon-sweep:*)"
 ];
+var GUARD_HOOK_PATH = ".claude/hooks/canon-guard.mjs";
+var GUARD_HOOK_TOOLS = ["Bash", "Edit", "Write", "MultiEdit"];
+var RECOMMENDED_GUARD_HOOKS = {
+  hooks: {
+    PreToolUse: [{
+      matcher: "Bash|Edit|Write|MultiEdit",
+      hooks: [{
+        type: "command",
+        command: 'test -f "$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs" && node "$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs" || true',
+        timeout: 10
+      }]
+    }]
+  }
+};
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readGuardHookTools(settingsPath) {
+  if (!existsSync(settingsPath)) return /* @__PURE__ */ new Set();
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.hooks)) return /* @__PURE__ */ new Set();
+  const preToolUse = parsed.hooks.PreToolUse;
+  const entries = Array.isArray(preToolUse) ? preToolUse : preToolUse === void 0 ? [] : [preToolUse];
+  const tools = /* @__PURE__ */ new Set();
+  for (const rawEntry of entries) {
+    if (!isRecord(rawEntry)) continue;
+    const innerHooks = Array.isArray(rawEntry.hooks) ? rawEntry.hooks : [];
+    const runsGuard = innerHooks.some(
+      (hook) => isRecord(hook) && typeof hook.command === "string" && hook.command.includes("canon-guard.mjs")
+    );
+    if (!runsGuard) continue;
+    const matcher = rawEntry.matcher;
+    if (typeof matcher !== "string" || matcher.trim() === "" || matcher.trim() === "*") {
+      GUARD_HOOK_TOOLS.forEach((tool) => tools.add(tool));
+      continue;
+    }
+    const names = matcher.replace(/[\^$()]/g, "").split("|").map((name) => name.trim());
+    for (const tool of GUARD_HOOK_TOOLS) {
+      if (names.includes(tool)) tools.add(tool);
+    }
+  }
+  return tools;
+}
+function guardHookRegistration(cwd) {
+  const tools = /* @__PURE__ */ new Set();
+  for (const settingsPath of [
+    join(cwd, ".claude", "settings.json"),
+    join(cwd, ".claude", "settings.local.json")
+  ]) {
+    readGuardHookTools(settingsPath).forEach((tool) => tools.add(tool));
+  }
+  if (GUARD_HOOK_TOOLS.every((tool) => tools.has(tool))) return "full";
+  return tools.size > 0 ? "partial" : "none";
+}
+function checkGuardHook(cwd) {
+  const scriptPath = join(cwd, GUARD_HOOK_PATH);
+  let scriptPresent = false;
+  try {
+    scriptPresent = statSync(scriptPath).isFile();
+  } catch {
+  }
+  const registration = guardHookRegistration(cwd);
+  if (scriptPresent && registration === "full") {
+    return { label: GUARD_HOOK_PATH, status: "pass", detail: "registered for Bash, Edit, Write and MultiEdit" };
+  }
+  const missingTools = GUARD_HOOK_TOOLS.filter((tool) => !readGuardHookToolsFromProject(cwd).has(tool));
+  const problems = [];
+  if (!scriptPresent) problems.push("script missing \u2014 run `canon upgrade` to restore it");
+  if (registration === "none") problems.push("not registered in `.claude/settings.json` or `.claude/settings.local.json`");
+  if (registration === "partial") problems.push(`registered, but its matcher misses ${missingTools.join(", ")} \u2014 use matcher Bash|Edit|Write|MultiEdit`);
+  return {
+    label: GUARD_HOOK_PATH,
+    status: "warn",
+    detail: `${problems.join("; ")} \u2014 merge this snippet into your Claude Code settings (see the canon-ai README "Guard hooks"):
+${JSON.stringify(RECOMMENDED_GUARD_HOOKS, null, 2)}`
+  };
+}
+function readGuardHookToolsFromProject(cwd) {
+  const tools = /* @__PURE__ */ new Set();
+  for (const settingsPath of [
+    join(cwd, ".claude", "settings.json"),
+    join(cwd, ".claude", "settings.local.json")
+  ]) {
+    readGuardHookTools(settingsPath).forEach((tool) => tools.add(tool));
+  }
+  return tools;
+}
 var RECOMMENDED_NUDGE = [
   "This project uses canon, a spec-first multi-agent pipeline.",
   "Route new features / fixes / refactors through the canon skills.",
@@ -2305,6 +2400,7 @@ function doctorCmd(args2) {
   const configChecks = [
     ...requiredAgents.has("codex") ? [checkCodexProjectTrust(cwd)] : [],
     checkRecommendedPermissions(cwd),
+    checkGuardHook(cwd),
     checkLocalSettingsGitignored(cwd),
     checkRuntimeFilesGitignored(cwd),
     checkDocsFreshness(cwd)
@@ -4617,7 +4713,7 @@ function taskList() {
     console.log(`${row.id.padEnd(25)} ${row.title.padEnd(40)} ${row.phase}`);
   }
   if (invalidCount > 0) {
-    throw new Error(`${invalidCount} task(s) had invalid status.json \u2014 see INVALID: rows above. Fix the malformed files or remove the task dir.`);
+    throw new Error(`${invalidCount} task(s) had invalid status.json \u2014 see INVALID: rows above. Ask the human to repair the malformed status.json files or remove the task dir.`);
   }
 }
 function taskStatus(id) {
@@ -5476,7 +5572,7 @@ function taskSet(args2) {
   const recordedBranch = (status.branch ?? "").trim();
   if (recordedBranch && (field === "worktree" || field === "base_branch")) {
     throw new Error(
-      `Error: ${field} is locked once branch '${recordedBranch}' is recorded. Topology changes are only allowed before branching; recreate the task or migrate status.json manually.`
+      `Error: ${field} is locked once branch '${recordedBranch}' is recorded. Topology changes are only allowed before branching; recreate the task or ask the human to migrate status.json.`
     );
   }
   if (SETTABLE_FIELD_SET.has(field)) {
@@ -6059,6 +6155,7 @@ var CANON_OWNED = [
   ".claude/skills/canon-spec-review/SKILL.md",
   ".claude/skills/canon-inline-review/SKILL.md",
   ".claude/skills/canon-sweep/SKILL.md",
+  ".claude/hooks/canon-guard.mjs",
   ".claude/agents/code-review-anchored.md",
   ".claude/agents/code-review-cold.md",
   ".claude/agents/spec-review-lens.md",
@@ -6088,6 +6185,10 @@ var UPGRADE_USAGE = [
   "  --no-stage           Skip the post-write git add"
 ].join("\n");
 var UPGRADE_ARGS = { command: "upgrade", usage: UPGRADE_USAGE, booleanFlags: ["--check", "--dry-run", "--force", "--no-stage"], valueFlags: [], rejectPositionals: true };
+function guardHookNotice(cwd) {
+  if (!existsSync5(join5(cwd, GUARD_HOOK_PATH)) || guardHookRegistration(cwd) === "full") return null;
+  return `Heads-up: ${GUARD_HOOK_PATH} is installed but not registered as a Claude Code hook \u2014 run \`canon doctor\` for the settings snippet.`;
+}
 var CANON_END = "<!-- canon:end -->";
 var CANON_START_RE = /<!-- canon:start[^>]* -->/;
 var HEADER_ONLY_SYNC = [
@@ -6532,6 +6633,9 @@ function upgradeCmd(args2) {
     }
     console.log("");
   }
+  const hookNotice = guardHookNotice(process.cwd());
+  if (hookNotice) console.log(`${hookNotice}
+`);
   if (upgraded.length === 0 && unchanged.length === 0 && skipped.length === 0 && malformed.length === 0) {
     console.log("No canon-managed files found. Run `canon init` to set up canon in this repo.\n");
   } else {

@@ -109,7 +109,7 @@ For the section-by-section breakdown of what goes in each doc — `docs/product-
 
 ---
 
-## Phase 5 — Set up Claude permissions (optional)
+## Phase 5 — Set up Claude permissions and guard hook (optional)
 
 By default, Claude Code prompts on every `git`, `gh`, `codex`, and `canon` subprocess. Canon ships with a recommended allowlist that eliminates the prompts.
 
@@ -146,8 +146,34 @@ By default, Claude Code prompts on every `git`, `gh`, `codex`, and `canon` subpr
      The shell-tool entries are for pipeline composition (e.g. `cat foo.json | jq '.bar'`), not raw file reads — built-in Read/Glob/Grep stay preferred.
    - Write back with 2-space indentation.
 4. If no, skip — canon works without it; every `canon run` will just prompt per subprocess.
+5. Read the `.claude/hooks/canon-guard.mjs` line in `canon doctor`. If the hook is not registered for Bash, Edit, Write and MultiEdit, ask the project owner: *"Want me to add canon's guard hook to `.claude/settings.json`? I'll preserve your existing hook entries."*
+6. If yes:
+   - Read `.claude/settings.json` if it exists (or start from `{}`).
+   - Merge this entry into `hooks.PreToolUse`, preserving existing entries and other hook keys such as `SessionStart`:
 
-This is purely ergonomics. The committed `.claude/settings.json` is project-level (shared with the team). Personal "full send" overrides belong in a gitignored `settings.local.json` beside it.
+     ```json
+     {
+       "hooks": {
+         "PreToolUse": [
+           {
+             "matcher": "Bash|Edit|Write|MultiEdit",
+             "hooks": [
+               {
+                 "type": "command",
+                 "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs\" && node \"$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs\" || true",
+                 "timeout": 10
+               }
+             ]
+           }
+         ]
+       }
+     }
+     ```
+
+   - Write back with 2-space indentation.
+7. If no, skip — registration is optional; canon still works without the guard hook.
+
+The allowlist is purely ergonomics: it reduces permission prompts. The guard hook makes canon refuse pipeline bypasses and points Claude at the command to use. The committed `.claude/settings.json` is project-level (shared with the team). Personal "full send" overrides belong in a gitignored `settings.local.json` beside it.
 
 ---
 

@@ -97,7 +97,7 @@ The pipeline supports two tiers:
 - **Fast tier** (XS tasks): spec + plan in one Claude session; skip the `spec_review` phase, and the human gate replaces it.
 - **Full tier** (S / M / L / XL / delicate tasks): every phase runs separately, and the spec reviewer checks specs before they reach the human.
 
-`delicate: true` (set in `status.json` at task creation) promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus moves spec review and implementation to their XL cells (in mixed mode, the full Codex model); QA and, in mixed mode, the cold-Codex review lens stay on their regular cells. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
+`delicate: true` promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus moves spec review and implementation to their XL cells (in mixed mode, the full Codex model); QA and, in mixed mode, the cold-Codex review lens stay on their regular cells. Set it with `canon task set <task-id> delicate true`. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
 
 A single command runs a task end-to-end:
 
@@ -268,6 +268,37 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short sh
 
 Claude Code creates `settings.json` on first use — check what's already there before pasting. For a personal "full send" allowlist that doesn't get committed, use your local Claude Code settings file (and make sure it is gitignored — `canon doctor` will warn you if it isn't).
 
+### Guard hooks (recommended)
+
+`canon init` installs `.claude/hooks/canon-guard.mjs`, and `canon upgrade` keeps it current. Canon never writes `.claude/settings.json` or `.claude/settings.local.json`, so registering the hook is optional. When registered, it redirects Claude away from three pipeline bypasses:
+
+- Direct edits to `tasks/<id>/status.json`: use the matching `canon task phase`, `canon task set`, `canon task accept`, or `canon task reset-*` command; if none covers the change, give the human the exact edit.
+- Piping `canon run` or `canon watch`, or polling `.canon-run.log`: run `canon run <id>` bare, then `canon watch <id>` without a pipe.
+- Squash or default `gh pr merge` on a `task/*` PR: use `canon run <id> --ship`. Rebase and merge-commit merges remain allowed; after one, run `canon run <id> --ship` for cleanup.
+
+To register it, merge this block into the existing `hooks` key in `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs\" && node \"$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`canon doctor` warns until the script is present and registered for all four tools. The shell rules apply only to Claude Code's Bash tool. Sessions using the PowerShell tool (the Windows default) get only the Edit/Write/MultiEdit `status.json` rule, and Codex sessions are not covered. This is a guardrail against habit, not a security boundary.
+
 ### Trust model
 
 Pipeline sessions are headless, so nobody is at the keyboard to answer a permission prompt. Know what that means before you run `canon run` on a repo you care about. Everything below describes the default headless runs; `--interactive` opens ordinary Claude Code sessions, plus Codex sessions for Codex-held roles in mixed mode, under your own permission settings instead.
@@ -303,7 +334,7 @@ Run canon on repositories where you would be comfortable running your test suite
 | Command | What it does |
 |---|---|
 | `canon init` | Install canon into the current repo. Refuses symlinks at destination files or parent directories; replace them with regular files/directories first. |
-| `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage in `.claude/settings.json`, and that any local settings file is gitignored. |
+| `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage, guard-hook registration, and that any local settings file is gitignored. |
 | `canon completion <shell>` | Print a completion script for bash, zsh, fish, or tcsh; see Shell completion. |
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
@@ -411,7 +442,7 @@ Drop this into any repo and you have:
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
 - Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`src/orchestrator/prompts/templates/`) and the `/canon-*` skills; adopters generate their own `AGENTS.md` / `CLAUDE.md` with the built-in `/init`
 - `docs/` — knowledge corpus templates with detailed scaffolding
-- `.claude/settings.json` — Claude Code permissions + SessionStart hook
+- `.claude/hooks/canon-guard.mjs` — Claude Code guard hook (registration is recommend-only; canon never writes `.claude/settings.json`)
 - Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects), `/canon-sweep` (triage the lessons-learned buffer)
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
 

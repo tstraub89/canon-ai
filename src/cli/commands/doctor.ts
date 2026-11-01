@@ -89,6 +89,108 @@ export const RECOMMENDED_ALLOW = [
     'Skill(canon-sweep:*)',
 ];
 
+export const GUARD_HOOK_PATH = '.claude/hooks/canon-guard.mjs';
+export const GUARD_HOOK_TOOLS = ['Bash', 'Edit', 'Write', 'MultiEdit'] as const;
+// Kept identical to the README "Guard hooks" JSON block; tests/cli.test.ts checks for drift.
+export const RECOMMENDED_GUARD_HOOKS = {
+    hooks: {
+        PreToolUse: [{
+            matcher: 'Bash|Edit|Write|MultiEdit',
+            hooks: [{
+                type: 'command',
+                command: 'test -f "$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs" && node "$CLAUDE_PROJECT_DIR/.claude/hooks/canon-guard.mjs" || true',
+                timeout: 10,
+            }],
+        }],
+    },
+} as const;
+
+export type GuardHookRegistration = 'full' | 'partial' | 'none';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readGuardHookTools(settingsPath: string): Set<string> {
+    if (!existsSync(settingsPath)) return new Set();
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as unknown;
+    } catch {
+        return new Set();
+    }
+
+    if (!isRecord(parsed) || !isRecord(parsed.hooks)) return new Set();
+    const preToolUse = parsed.hooks.PreToolUse;
+    const entries = Array.isArray(preToolUse) ? preToolUse : preToolUse === undefined ? [] : [preToolUse];
+    const tools = new Set<string>();
+
+    for (const rawEntry of entries) {
+        if (!isRecord(rawEntry)) continue;
+        const innerHooks = Array.isArray(rawEntry.hooks) ? rawEntry.hooks : [];
+        const runsGuard = innerHooks.some(hook =>
+            isRecord(hook) && typeof hook.command === 'string' && hook.command.includes('canon-guard.mjs'),
+        );
+        if (!runsGuard) continue;
+
+        const matcher = rawEntry.matcher;
+        if (typeof matcher !== 'string' || matcher.trim() === '' || matcher.trim() === '*') {
+            GUARD_HOOK_TOOLS.forEach(tool => tools.add(tool));
+            continue;
+        }
+        const names = matcher.replace(/[\^$()]/g, '').split('|').map(name => name.trim());
+        for (const tool of GUARD_HOOK_TOOLS) {
+            if (names.includes(tool)) tools.add(tool);
+        }
+    }
+    return tools;
+}
+
+export function guardHookRegistration(cwd: string): GuardHookRegistration {
+    const tools = new Set<string>();
+    for (const settingsPath of [
+        join(cwd, '.claude', 'settings.json'),
+        join(cwd, '.claude', 'settings.local.json'),
+    ]) {
+        readGuardHookTools(settingsPath).forEach(tool => tools.add(tool));
+    }
+    if (GUARD_HOOK_TOOLS.every(tool => tools.has(tool))) return 'full';
+    return tools.size > 0 ? 'partial' : 'none';
+}
+
+export function checkGuardHook(cwd: string): Check {
+    const scriptPath = join(cwd, GUARD_HOOK_PATH);
+    let scriptPresent = false;
+    try { scriptPresent = statSync(scriptPath).isFile(); }
+    catch { /* A missing or unreadable hook is a warning, not a doctor failure. */ }
+    const registration = guardHookRegistration(cwd);
+    if (scriptPresent && registration === 'full') {
+        return { label: GUARD_HOOK_PATH, status: 'pass', detail: 'registered for Bash, Edit, Write and MultiEdit' };
+    }
+
+    const missingTools = GUARD_HOOK_TOOLS.filter(tool => !readGuardHookToolsFromProject(cwd).has(tool));
+    const problems: string[] = [];
+    if (!scriptPresent) problems.push('script missing — run `canon upgrade` to restore it');
+    if (registration === 'none') problems.push('not registered in `.claude/settings.json` or `.claude/settings.local.json`');
+    if (registration === 'partial') problems.push(`registered, but its matcher misses ${missingTools.join(', ')} — use matcher Bash|Edit|Write|MultiEdit`);
+    return {
+        label: GUARD_HOOK_PATH,
+        status: 'warn',
+        detail: `${problems.join('; ')} — merge this snippet into your Claude Code settings (see the canon-ai README "Guard hooks"):\n${JSON.stringify(RECOMMENDED_GUARD_HOOKS, null, 2)}`,
+    };
+}
+
+function readGuardHookToolsFromProject(cwd: string): Set<string> {
+    const tools = new Set<string>();
+    for (const settingsPath of [
+        join(cwd, '.claude', 'settings.json'),
+        join(cwd, '.claude', 'settings.local.json'),
+    ]) {
+        readGuardHookTools(settingsPath).forEach(tool => tools.add(tool));
+    }
+    return tools;
+}
+
 // Canon's recommended discovery nudge for adopter CLAUDE.md files.
 // Kept in sync with README's "Discovery nudge" block — the
 // `README "Discovery nudge" text matches RECOMMENDED_NUDGE` test in
@@ -763,6 +865,7 @@ export function doctorCmd(args: string[]): void {
     const configChecks: Check[] = [
         ...(requiredAgents.has('codex') ? [checkCodexProjectTrust(cwd)] : []),
         checkRecommendedPermissions(cwd),
+        checkGuardHook(cwd),
         checkLocalSettingsGitignored(cwd),
         checkRuntimeFilesGitignored(cwd),
         checkDocsFreshness(cwd),
