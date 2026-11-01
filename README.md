@@ -274,7 +274,7 @@ Claude Code creates `settings.json` on first use — check what's already there 
 
 - Direct edits to `tasks/<id>/status.json`: use the matching `canon task phase`, `canon task set`, `canon task accept`, or `canon task reset-*` command; if none covers the change, give the human the exact edit.
 - Piping `canon run` or `canon watch`, or polling `.canon-run.log`: run `canon run <id>` bare, then `canon watch <id>` without a pipe.
-- Squash or default `gh pr merge` on a `task/*` PR: use `canon run <id> --ship`, naming every task of a bundle (the hook lists the tasks whose `status.json` records that branch). `--ship` uses the project's configured method (`ship.merge_method`, squash by default). The hook continues to allow direct rebase and merge-commit invocations.
+- Any `gh pr merge` on a `task/*` PR (squash, rebase, or merge commit): use `canon run <id> --ship`, naming every task of a bundle (the hook lists the tasks whose `status.json` records that branch). `--ship` uses the project's configured method (`ship.merge_method`, squash by default). To merge by rebase or merge commit, edit `.canon/config.json` to set `ship.merge_method` to `rebase` or `merge`; the hook's deny message says so.
 
 To register it, merge this block into the existing `hooks` key in `.claude/settings.json`:
 

@@ -2201,7 +2201,8 @@ function assertNoOpenPRForTask(branchName: string, baseBranch: string, taskIds: 
         splitCli.die(
             `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.\n` +
             `  This can happen during gh transient hiccups. Re-run \`canon run ${taskIds.map(splitState.shellQuoteArg).join(' ')} --ship\`; if it keeps failing,\n` +
-            `  merge PR #${prNum} outside canon (any method) and re-run --ship, or fix the cause. canon merges with \`ship.merge_method\` (currently ${mergeMethod}).`,
+            `  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks \`gh pr merge\` on task PRs) and re-run --ship, or fix the cause.\n` +
+            `  canon merges with \`ship.merge_method\` (currently ${mergeMethod}); set it to squash, rebase, or merge in .canon/config.json.`,
         );
     }
 }
