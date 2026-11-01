@@ -1,7 +1,7 @@
 {
   "id": "spec-manifest-lint",
   "title": "Reject malformed scope manifests before planning and implementation",
-  "status": "code_review",
+  "status": "human_review",
   "created": "2026-11-01",
   "updated": "2026-11-01",
   "branch": "task/spec-manifest-lint",
@@ -45,18 +45,18 @@
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
-      "iterations": 2,
-      "iterations_current_loop": 2,
-      "iterations_total": 2,
+      "verdict": "approved_with_nits",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 3,
       "changes_requested_total": 2,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
