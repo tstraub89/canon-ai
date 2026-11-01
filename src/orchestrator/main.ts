@@ -4037,13 +4037,16 @@ export async function main(): Promise<void> {
         }
     }
     try {
-        runProvider = splitPolicy.resolveBundleProvider(cliArgs.taskIds.map(id => {
+        const statuses = cliArgs.taskIds.map(id => {
             splitCli.validateTaskId(id);
             const mainFile = path.join(REPO_ROOT, 'tasks', id, 'status.json');
             const statusFile = cliArgs.ship && fs.existsSync(mainFile) ? mainFile : splitState.statusFileFor(id);
             if (!fs.existsSync(statusFile)) die(`No status.json at tasks/${id}/status.json — run canon task new ${id} first`);
             return splitState.readStatusFromPath(statusFile, id);
-        }));
+        });
+        // --ship spawns no agent, so a bad pin must not block merge/archive. --dry-run still resolves:
+        // buildPipelineState re-resolves outside this try and would throw with a stack.
+        if (!cliArgs.ship || cliArgs.dryRun) runProvider = splitPolicy.resolveBundleProvider(statuses);
     } catch (error) { die(error instanceof Error ? error.message : String(error)); }
     const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;
     checkDeps(cliArgs.taskIds, skipAgentDeps);

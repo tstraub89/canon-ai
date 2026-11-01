@@ -586,7 +586,7 @@ Provider selection and session safety are extended by "Per-task provider pins an
 
 ## Per-task provider pins and backend-tagged sessions (2026-10)
 
-**What**: `CANON_PROVIDER` selects `mixed` (default) or `claude` when creating tasks and checking environment dependencies. Task creation stamps `status.json.provider`; absent pins mean mixed. A run resolves its bundle's pin once before phases start and refuses different providers in one bundle. `canon task set <id> provider <mixed|claude>` changes the next run's assignment and reports cleared incompatible sessions.
+**What**: `CANON_PROVIDER` selects `mixed` (default) or `claude` when creating tasks and checking environment dependencies. Task creation stamps `status.json.provider`; absent pins mean mixed. A run resolves its bundle's pin once before phases start and refuses different providers in one bundle; `--ship` without `--dry-run` spawns no agent and skips this resolution. `canon task set <id> provider <mixed|claude>` changes the next run's assignment and reports cleared incompatible sessions.
 
 **Why**: A session id belongs to the backend that created it. A provider switch must not resume a Codex id through Claude, and an environment change must not silently reroute an existing task. This supersedes the foundation's constraint to pin a provider before changing role assignments.
 

@@ -4219,6 +4219,22 @@ void test('docs-freshness config stays adopter-owned during init and upgrade', (
     });
 });
 
+void test('doctor with an invalid provider setting skips Codex checks but keeps Claude', () => {
+    withTempDir(dir => {
+        const bins = path.join(dir, 'bin'); fs.mkdirSync(bins);
+        writeExecutable(bins, 'claude', ['echo "2.1.72 (Claude Code)"']);
+        writeExecutable(bins, 'codex', ['echo "codex-cli 1.0.0"']);
+        const env = { ...process.env, PATH: `${bins}:/usr/bin:/bin`, CANON_PROVIDER: 'claude', HOME: dir };
+        const init = runDistCli(['init'], { cwd: dir, env });
+        assert.equal(init.status, 0, init.stdout + init.stderr);
+        const doctor = runDistCli(['doctor'], { cwd: dir, env: { ...env, CANON_PROVIDER: 'bogus' } });
+        assert.equal(doctor.status, 1, doctor.stdout + doctor.stderr);
+        assert.match(doctor.stdout, /Provider \(CANON_PROVIDER setting\).*Accepted values: mixed, claude/);
+        assert.match(doctor.stdout, /^\s*\S+ claude\b/m);
+        assert.doesNotMatch(doctor.stdout, /^\s*\S+ codex\b/m);
+    });
+});
+
 void test('doctor and init resolve provider dependencies without Codex and report invalid settings cleanly', () => {
     withTempDir(dir => {
         const bins = path.join(dir, 'bin'); fs.mkdirSync(bins);

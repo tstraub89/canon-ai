@@ -1,4 +1,5 @@
 import { requiredAgentBackends, roleAssignmentFor, resolveProviderSetting, PROVIDER_SETTING_NAME, type Provider } from '../../orchestrator/policy.js';
+import { PROVIDERS } from '../../lib/pipeline-policy.js';
 import { loadDocsFreshnessConfig, resolveDocsFreshness, matchesDocsGlob, formatUnknownKeysWarning } from '../../orchestrator/docs-freshness.js';
 import { execSync, spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'fs';
@@ -722,6 +723,11 @@ export function checkDocsFreshness(cwd: string): Check {
     return { label, status: warnings.length ? 'warn' : 'pass', detail: [detail, ...warnings].join('; ') };
 }
 
+function agentBackendsEveryProviderNeeds(): Set<string> {
+    const perProvider = PROVIDERS.map(p => new Set<string>(requiredAgentBackends(roleAssignmentFor(p))));
+    return new Set([...perProvider[0]].filter(backend => perProvider.every(set => set.has(backend))));
+}
+
 export function doctorCmd(args: string[]): void {
     handlePreScan(DOCTOR_ARGS, args, { out: console.log, err: console.error, exit: code => process.exit(code) });
     const cwd = resolveProjectRoot();
@@ -731,7 +737,8 @@ export function doctorCmd(args: string[]): void {
     try { provider = resolveProviderSetting(); }
     catch (error) { providerError = error instanceof Error ? error.message : String(error); }
     const providerCheck: Check = { label: `Provider (${PROVIDER_SETTING_NAME} setting)`, status: providerError ? 'fail' : 'pass', detail: providerError ?? provider };
-    const requiredAgents = new Set(requiredAgentBackends(roleAssignmentFor(provider)));
+    // An unparseable setting names no provider, so require only what every supported provider needs.
+    const requiredAgents = providerError ? agentBackendsEveryProviderNeeds() : new Set(requiredAgentBackends(roleAssignmentFor(provider)));
     const envChecks: Check[] = [
         providerCheck,
         checkPlatform(),

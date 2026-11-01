@@ -10613,13 +10613,14 @@ async function main() {
     }
   }
   try {
-    runProvider = resolveBundleProvider(cliArgs.taskIds.map((id) => {
+    const statuses = cliArgs.taskIds.map((id) => {
       validateTaskId(id);
       const mainFile = path23.join(REPO_ROOT2, "tasks", id, "status.json");
       const statusFile = cliArgs.ship && fs25.existsSync(mainFile) ? mainFile : statusFileFor(id);
       if (!fs25.existsSync(statusFile)) die2(`No status.json at tasks/${id}/status.json \u2014 run canon task new ${id} first`);
       return readStatusFromPath(statusFile, id);
-    }));
+    });
+    if (!cliArgs.ship || cliArgs.dryRun) runProvider = resolveBundleProvider(statuses);
   } catch (error) {
     die2(error instanceof Error ? error.message : String(error));
   }

@@ -1,21 +1,20 @@
 # Implementation Handoff: provider-pin-agent-free-paths
 
 > Author: implementer | Spec: `tasks/provider-pin-agent-free-paths/spec.md` | Plan: `tasks/provider-pin-agent-free-paths/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/main.ts` | Startup block maps every task through the `status.json` read and validation, then resolves the bundle provider only when `!cliArgs.ship \|\| cliArgs.dryRun`. |
+| `src/cli/commands/doctor.ts` | Invalid `CANON_PROVIDER` now requires only the agent backends every provider needs (derived from `PROVIDERS`), so Codex checks drop and Claude checks stay. |
+| `tests/run-task-ship.test.ts` | `makeStatus` and `prepareShipFixture` gain a provider pin; AC-1, AC-2, AC-6 tests. |
+| `tests/run-task-safety.test.ts` | AC-4 and AC-5 dry-run invalid-pin tests. |
+| `tests/cli.test.ts` | AC-7 doctor invalid-setting test. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | AC-9 and AC-10 wording; synced mirror. |
+| `docs/architecture.md` | AC-11 `--ship` clause on the `provider` bullet. |
+| `docs/decisions.md` | AC-11 `--ship` clause in the provider-pins decision. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Rebuilt output. |
 
 ## Canon Governance
 
@@ -31,107 +30,63 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+`--ship` spawns no agent, so a bad pin should not block merge/archive. The gate is `cliArgs.ship && !cliArgs.dryRun`: `--ship --dry-run` takes the dry-run branch, and `buildPipelineState` re-resolves the provider outside the startup try block, so skipping there would produce a stack instead of the clean refusal. The `status.json` read and validation still run for every mode. I grepped `shipTasks()` and found no `providerForTasks`, `assignmentForTasks`, `roleName` or `buildPipelineState` call, so `runProvider` staying null on ship is safe today. Doctor derives the intersection of required backends over `PROVIDERS` rather than hard-coding `claude`.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| AC-6 fixture uses `branch: 'bad branch'` | `validateStatus` only checks `branch`, `base_branch` and numeric counters; a bad `task_size` is not rejected. | None |
+| Plan's temporary "widen gate to `cliArgs.ship`, confirm AC-5 red" check not run | Not required by the spec; AC-4/5 pass on the final gate. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | `--ship does not resolve an invalid provider pin` |
+| AC-2 | Met | `--ship does not refuse a bundle whose provider pins differ` |
+| AC-3 | Met | Existing test unchanged and passing in the full suite. |
+| AC-4 | Met | `--dry-run refuses an invalid provider pin cleanly without archiving` |
+| AC-5 | Met | `--ship --dry-run refuses ...`; task dir kept, not archived. |
+| AC-6 | Met | `--ship still refuses a malformed status.json cleanly` |
+| AC-7 | Met | `doctor with an invalid provider setting skips Codex checks but keeps Claude` |
+| AC-8 | Met | Existing test unchanged and passing. |
+| AC-9 | Met | `docs/pipeline-orchestrator.md` provider paragraph. |
+| AC-10 | Met | Same paragraph. |
+| AC-11 | Met | `docs/architecture.md` and `docs/decisions.md`. |
+| AC-12 | Met | `npm run sync-templates:check` passes. |
 
 ## Edge Cases Considered
 
-- ...
+- Empty `taskIds`: the map yields `[]`; skipping resolution is harmless.
+- Mixed bundle on `--ship`: ships; on `--dry-run` it still refuses.
+- Doctor with unset or valid setting: unchanged path.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- (none)
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-1 | `node --import tsx --test --test-name-pattern="provider pin" tests/run-task-ship.test.ts` | 4ddd790 | exit 1: `Invalid provider 'bogus'. Accepted values: mixed, claude.` | Pass |
+| AC-2 | `node --import tsx --test --test-name-pattern="pins differ" tests/run-task-ship.test.ts` | 4ddd790 | exit 1: `Cannot run a mixed-provider bundle: ship-pins-a: claude, ship-pins-b: mixed.` | Pass |
+| AC-7 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern="invalid provider setting skips" tests/cli.test.ts` | 4ddd790 (pre-fix dist) | `✓ codex` and `! codex project trust` lines present | Pass after rebuild |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `lint` (`npm run lint`) | Pass | |
+| `type-check` (`npm run type-check`) | Pass | |
+| `build` (`npm run build`) | Pass | dist rebuilt |
+| `test` (`npm test`) | Pass | 1868 tests; one timing flake (`shutdown waits for resistant descendant after leader exit before cleanup`) failed once in the full run and passed on rerun (37/37 in that pattern run). |
+| `sync-templates:check` (`npm run sync-templates:check`) | Pass | |
+| `docs-refs-check` (`npm run docs-refs-check`) | Pass | |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale

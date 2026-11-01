@@ -11276,6 +11276,26 @@ void test('provider validation refuses invalid pins and mixed bundles before tas
     });
 });
 
+for (const extraArgs of [['--dry-run'], ['--ship', '--dry-run']] as const) {
+    void test(`${extraArgs.join(' ')} refuses an invalid provider pin cleanly without archiving`, () => {
+        withTempDir('provider-dry-run-pin-', dir => {
+            const { localDir } = makeGitFixture(dir);
+            const tasksRoot = writeReviewLoopFixture(localDir, 'a', 'spec_review', 0, 0, true);
+            const bins = path.join(dir, 'bin'); fs.mkdirSync(bins); setupInvocationLoggingCliTools(bins);
+            const statusFile = path.join(tasksRoot, 'a', 'status.json');
+            const status = JSON.parse(fs.readFileSync(statusFile, 'utf8')) as Record<string, unknown>;
+            status.provider = 'bogus'; fs.writeFileSync(statusFile, JSON.stringify(status));
+            const result = runReviewLoopMain(localDir, tasksRoot, bins, 'a', 3, extraArgs, {}, false);
+            assert.equal(result.status, 1, combinedOutput(result));
+            assert.match(combinedOutput(result), /Invalid provider/);
+            assert.doesNotMatch(combinedOutput(result), /^\s+at /m);
+            assert.equal(fs.existsSync(statusFile), true);
+            assert.equal(fs.existsSync(path.join(tasksRoot, '_archive', 'a')), false);
+            assert.equal(fs.existsSync(path.join(localDir, 'agent-invocations.log')), false);
+        });
+    });
+}
+
 for (const provider of ['claude', 'mixed'] as const) {
     void test(`main routes full-tier ${provider} spec review through implementation using a single pinned provider`, () => {
         withTempDir('provider-routing-', dir => {

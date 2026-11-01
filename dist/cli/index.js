@@ -20,6 +20,7 @@ function roleBackendId(role, assignment) {
 function requiredAgentBackends(assignment) {
   return [...new Set(AGENT_ROLES.map((role) => roleBackendId(role, assignment)))];
 }
+var PROVIDERS = ["mixed", "claude"];
 var CLAUDE_ROLE_ASSIGNMENT = {
   author: "claude",
   spec_reviewer: "claude",
@@ -2154,6 +2155,10 @@ function checkDocsFreshness(cwd) {
   const detail = `${source}: ${sets.protected.length} protected, ${globs.length} mappings, ${sets.flagOnly.length} flag-only`;
   return { label, status: warnings.length ? "warn" : "pass", detail: [detail, ...warnings].join("; ") };
 }
+function agentBackendsEveryProviderNeeds() {
+  const perProvider = PROVIDERS.map((p) => new Set(requiredAgentBackends(roleAssignmentFor(p))));
+  return new Set([...perProvider[0]].filter((backend) => perProvider.every((set) => set.has(backend))));
+}
 function doctorCmd(args2) {
   handlePreScan(DOCTOR_ARGS, args2, { out: console.log, err: console.error, exit: (code) => process.exit(code) });
   const cwd = resolveProjectRoot();
@@ -2165,7 +2170,7 @@ function doctorCmd(args2) {
     providerError = error instanceof Error ? error.message : String(error);
   }
   const providerCheck = { label: `Provider (${PROVIDER_SETTING_NAME} setting)`, status: providerError ? "fail" : "pass", detail: providerError ?? provider };
-  const requiredAgents = new Set(requiredAgentBackends(roleAssignmentFor(provider)));
+  const requiredAgents = providerError ? agentBackendsEveryProviderNeeds() : new Set(requiredAgentBackends(roleAssignmentFor(provider)));
   const envChecks = [
     providerCheck,
     checkPlatform(),
