@@ -6,8 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 const WRAPPERS = new Set(['env', 'command', 'exec', 'time', 'nohup', 'npx', 'sudo']);
-const GH_VALUE_FLAGS = new Set(['-t', '--subject', '-b', '--body', '-F', '--body-file', '-A', '--author-email', '--match-head-commit', '-R', '--repo']);
-const PERL_VALUE_FLAGS = new Set(['M', 'm', 'I', 'e', 'E', 'x', 'l', '0', 'C', 'd', 'D', 'V']);
+const GH_VALUE_FLAGS = new Set(['-t', '--subject', '-b', '--body', '-F', '--body-file', '-A', '--author-email', '--match-head-commit']);
+const PERL_VALUE_FLAGS = new Set(['M', 'm', 'I', 'e', 'E', 'F', 'x', 'V']);
+const PERL_UNICODE_FLAGS = new Set(['I', 'O', 'E', 'S', 'i', 'o', 'D', 'A', 'L', 'a']);
+const PERL_DEBUG_FLAGS = new Set(['p', 's', 'l', 't', 'o', 'c', 'P', 'm', 'f', 'r', 'x', 'u', 'U', 'X', 'D', 'S', 'T', 'R', 'J', 'v', 'C', 'A', 'q', 'M', 'B', 'L', 'i', 'y']);
 const GH_TIMEOUT_MS = Number(process.env.CANON_GUARD_GH_TIMEOUT_MS) || 3000;
 
 function main() {
@@ -386,12 +388,60 @@ function isSedInPlace(arg) {
 
 function isPerlInPlace(arg) {
     if (!/^-(?!-)[a-zA-Z0-9]/.test(arg)) return false;
-    for (const flag of arg.slice(1)) {
+    for (let index = 1; index < arg.length; index += 1) {
+        const flag = arg[index];
         if (flag === 'i') return true;
         if (PERL_VALUE_FLAGS.has(flag)) return false;
+
+        if (flag === '0') {
+            index = skipPerlZeroValue(arg, index);
+            continue;
+        }
         if (!/[a-zA-Z]/.test(flag)) return false;
+
+        if (flag === 'l') {
+            index = skipPerlDigits(arg, index, /[0-7]/);
+            continue;
+        }
+        if (flag === 'C') {
+            if (/[0-9]/.test(arg[index + 1] ?? '')) {
+                index = skipPerlDigits(arg, index, /[0-9]/);
+            } else {
+                while (PERL_UNICODE_FLAGS.has(arg[index + 1] ?? '')) index += 1;
+            }
+            continue;
+        }
+        if (flag === 'd') {
+            if (arg[index + 1] === 't') index += 1;
+            if (arg[index + 1] === ':' || arg[index + 1] === '=') return false;
+            continue;
+        }
+        if (flag === 'D') {
+            if (arg[index + 1] === ':' || arg[index + 1] === '=') return false;
+            if (/[0-9]/.test(arg[index + 1] ?? '')) {
+                index = skipPerlDigits(arg, index, /[0-9]/);
+            } else {
+                while (PERL_DEBUG_FLAGS.has(arg[index + 1] ?? '')) index += 1;
+            }
+        }
     }
     return false;
+}
+
+function skipPerlDigits(arg, optionIndex, digitPattern) {
+    let index = optionIndex;
+    while (digitPattern.test(arg[index + 1] ?? '')) index += 1;
+    return index;
+}
+
+function skipPerlZeroValue(arg, optionIndex) {
+    let index = optionIndex;
+    if (/[xX]/.test(arg[index + 1] ?? '')) {
+        index += 1;
+        while (/[0-9a-fA-F]/.test(arg[index + 1] ?? '')) index += 1;
+        return index;
+    }
+    return skipPerlDigits(arg, index, /[0-7]/);
 }
 
 function monitorRule(commands) {
@@ -462,29 +512,39 @@ function mergeRule(commands, cwd) {
 }
 
 function parseGhMergeArgs(args) {
-    let index = 0;
-    let repo = null;
+    let { index, repo } = consumeGhRepoOptions(args, 0, null);
+    if (args[index] !== 'pr') return null;
+    ({ index, repo } = consumeGhRepoOptions(args, index + 1, repo));
+    if (args[index] !== 'merge') return null;
+    return { args: args.slice(index + 1), repo };
+}
+
+function consumeGhRepoOptions(args, startIndex, initialRepo) {
+    let index = startIndex;
+    let repo = initialRepo;
     while (index < args.length) {
-        const arg = args[index];
-        if (arg === '-R' || arg === '--repo') {
-            if (typeof args[index + 1] !== 'string') return null;
-            repo = args[index + 1];
-            index += 2;
-            continue;
-        }
-        if (arg.startsWith('--repo=')) {
-            repo = arg.slice('--repo='.length);
-            index += 1;
-            continue;
-        }
-        break;
+        const parsed = parseGhRepoOption(args, index);
+        if (!parsed) break;
+        index = parsed.nextIndex;
+        repo = parsed.repo;
     }
-    if (args[index] !== 'pr' || args[index + 1] !== 'merge') return null;
-    return { args: args.slice(index + 2), repo };
+    return { index, repo };
+}
+
+function parseGhRepoOption(args, index) {
+    const arg = args[index];
+    if (arg === '-R' || arg === '--repo') {
+        const repo = args[index + 1];
+        return typeof repo === 'string' ? { nextIndex: index + 2, repo } : null;
+    }
+    if (arg.startsWith('--repo=')) return { nextIndex: index + 1, repo: arg.slice('--repo='.length) };
+    if (arg.startsWith('-R=')) return { nextIndex: index + 1, repo: arg.slice(3) };
+    if (arg.startsWith('-R') && arg.length > 2) return { nextIndex: index + 1, repo: arg.slice(2) };
+    return null;
 }
 
 function isMergeFlagCluster(arg) {
-    return /^-[^-]+$/.test(arg) && arg.length > 2 && /[rm]/.test(arg.slice(1));
+    return /^-[rm]{2,}$/.test(arg);
 }
 
 function findPRReference(args, initialRepo = null) {
@@ -492,19 +552,18 @@ function findPRReference(args, initialRepo = null) {
     let repo = initialRepo;
     for (let index = 0; index < args.length; index += 1) {
         const arg = args[index];
+        const repoOption = parseGhRepoOption(args, index);
+        if (repoOption) {
+            repo = repoOption.repo;
+            index = repoOption.nextIndex - 1;
+            continue;
+        }
         if (GH_VALUE_FLAGS.has(arg)) {
-            const value = args[index + 1];
-            if (arg === '-R' || arg === '--repo') repo = value ?? null;
             index += 1;
             continue;
         }
-        if (arg.startsWith('--repo=')) {
-            repo = arg.slice('--repo='.length);
-            continue;
-        }
         if (arg.startsWith('--') || arg.startsWith('-')) continue;
-        ref = arg;
-        break;
+        if (ref === null) ref = arg;
     }
     return { ref, repo };
 }
