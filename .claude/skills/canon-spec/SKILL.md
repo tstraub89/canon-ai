@@ -139,7 +139,7 @@ After scope is approved:
 
 Self-check before presenting:
 - [ ] Every AC states exactly how to verify it (not just "it works")
-- [ ] Affected Files uses exactly one `### Affected Files` heading per `## Design` or `## Amendment…` section and one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Marking the spec done enforces this format, and canon re-checks it before planning and implementation. Each row has a specific change description.
+- [ ] Affected Files uses exactly one `### Affected Files` heading under `## Design` and at most one per `## Amendment…` section (a behavior-only amendment needs none), with one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Marking the spec done enforces this format, and canon re-checks it before planning and implementation. Each row has a specific change description.
 - [ ] If this spec replaces existing behavior: frame it as one replacement ("replace X with Y; X must not exist after") and add a structural/grep AC when practical; use paired add/remove bullets only when true replacement framing doesn't fit
 - [ ] Known Risks covers failure modes for the trickiest ACs
 - [ ] Human Test Plan uses product language only — no code, no file paths

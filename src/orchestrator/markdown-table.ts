@@ -186,21 +186,23 @@ function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: bool
     const hidden: boolean[] = [];
     let unclosed: UnclosedBlock | null = null;
     let comment = false;
-    let fence: { char: string; length: number } | null = null;
+    let fence: { char: string; length: number; indent: number } | null = null;
     const lines = markdown.split('\n').map((line, index) => {
         if (fence) {
             hidden.push(true);
-            const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
-            if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+            // A fence nested in a list item may close at its own indent plus up
+            // to three spaces, measured from the list item's content column.
+            const close = /^([ \t]*)(`{3,}|~{3,})\s*$/.exec(line);
+            if (close && close[1].length <= Math.max(3, fence.indent + 3) && close[2][0] === fence.char && close[2].length >= fence.length) {
                 fence = null;
                 unclosed = null;
             }
             return line;
         }
-        const opener = !comment && /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+        const opener = !comment && /^([ \t]{0,3})(`{3,}|~{3,})/.exec(line);
         // Backticks in a backtick fence's info string make this inline text.
-        if (opener && (opener[1][0] !== '`' || !line.slice(opener[0].length).includes('`'))) {
-            fence = { char: opener[1][0], length: opener[1].length };
+        if (opener && (opener[2][0] !== '`' || !line.slice(opener[0].length).includes('`'))) {
+            fence = { char: opener[2][0], length: opener[2].length, indent: opener[1].length };
             unclosed = { kind: 'fence', line: index + 1 };
             hidden.push(true);
             return line;

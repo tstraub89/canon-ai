@@ -4436,7 +4436,7 @@ void test('manifest lint rejects duplicate headings only within the same H2', ()
 });
 
 void test('manifest lint empty first cells gate on backticked tokens', () => {
-    const issues = lintSpecManifest(manifestTable(['| | |', '| | a note |', '| | `lost.ts` |']));
+    const issues = lintSpecManifest(manifestTable(['| | |', '| | a note |', '| | `lost.ts` |', '| `ok.ts` | live |']));
     assert.equal(issues.length, 1);
     assert.equal(issues[0].kind, 'empty-first-cell');
     assert.equal(issues[0].row, 3);
@@ -4640,6 +4640,8 @@ void test('amendment AC-A1: Design must contain a nonempty exact manifest', () =
         '# Spec\n## Design\n### Affected Files',
         '# Spec\n## Design\n### Affected Files\n| File | Change |\n|---|---|',
         manifestTable(['| `a.ts` | amend |'], '### Affected Files', '## Amendment'),
+        manifestTable(['| | note only |']),
+        manifestTable(['|  |  |']),
     ]) {
         assert.deepEqual(lintSpecManifest(markdown).map(issue => issue.kind), ['missing-manifest']);
     }
@@ -4650,6 +4652,16 @@ void test('amendment AC-A1: Design must contain a nonempty exact manifest', () =
         assert.equal(result.ok, false);
         assert.match(result.reason ?? '', /No ### Affected Files table under ## Design/);
     });
+});
+
+void test('list-nested fence may close indented past three spaces', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        const markdown = '# Spec\n1. Run it:\n   ```sh\n   canon run x\n    ```\n\n' + manifestTable(['| `a.ts` | live |']);
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), markdown);
+        assert.deepEqual(lintSpecManifest(markdown), []);
+        assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['a.ts']);
+    });
+    assert.deepEqual(lintSpecManifest('```sh\nx\n       ```\n' + manifestTable(['| `a.ts` | live |'])).map(issue => issue.kind), ['unclosed-block', 'missing-manifest']);
 });
 
 void test('amendment AC-A2: trailing tilde fence is diagnosed; closed examples pass', () => {

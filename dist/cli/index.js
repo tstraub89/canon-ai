@@ -1019,16 +1019,16 @@ function visibleMarkdownLines(markdown) {
   const lines = markdown.split("\n").map((line, index) => {
     if (fence) {
       hidden.push(true);
-      const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
-      if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+      const close = /^([ \t]*)(`{3,}|~{3,})\s*$/.exec(line);
+      if (close && close[1].length <= Math.max(3, fence.indent + 3) && close[2][0] === fence.char && close[2].length >= fence.length) {
         fence = null;
         unclosed = null;
       }
       return line;
     }
-    const opener = !comment && /^\s{0,3}(`{3,}|~{3,})/.exec(line);
-    if (opener && (opener[1][0] !== "`" || !line.slice(opener[0].length).includes("`"))) {
-      fence = { char: opener[1][0], length: opener[1].length };
+    const opener = !comment && /^([ \t]{0,3})(`{3,}|~{3,})/.exec(line);
+    if (opener && (opener[2][0] !== "`" || !line.slice(opener[0].length).includes("`"))) {
+      fence = { char: opener[2][0], length: opener[2].length, indent: opener[1].length };
       unclosed = { kind: "fence", line: index + 1 };
       hidden.push(true);
       return line;
@@ -4253,8 +4253,9 @@ function lintSpecManifest(markdown) {
     issues.push({ section, line, kind: "unclosed-block", message: `An unclosed ${construct} opened at line ${line} hides everything after it, including any Affected Files table. ${fix}` });
   }
   const designs = scan.sections.filter((section) => section.kind === "design");
-  if (!designs.some((section) => section.affectedFiles[0]?.blocks.some((block) => block.rows.length > 0))) {
-    issues.push({ section: designs[0]?.h2.text ?? "(no ## Design section)", kind: "missing-manifest", message: "No ### Affected Files table under ## Design, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one file per row." });
+  const hasPathRow = (section) => section.affectedFiles[0]?.blocks.some((block) => block.rows.some((raw) => Boolean(raw.cells[0]?.trim()))) ?? false;
+  if (!designs.some(hasPathRow)) {
+    issues.push({ section: designs[0]?.h2.text ?? "(no ## Design section)", kind: "missing-manifest", message: "No ### Affected Files table under ## Design has a row with a file in column 1, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one backticked file path per row in column 1." });
   }
   return issues;
 }

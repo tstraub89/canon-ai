@@ -136,7 +136,7 @@ function roleView(state: PipelineState): object {
     };
 }
 
-export const SPEC_MANIFEST_CONTRACT = 'Affected Files uses exactly one `### Affected Files` heading per `## Design` or `## Amendment…` section and one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine).';
+export const SPEC_MANIFEST_CONTRACT = 'Affected Files uses exactly one `### Affected Files` heading under `## Design` and at most one per `## Amendment…` section (a behavior-only amendment needs none), with one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine).';
 
 export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<string, readonly string[]>>): string {
     const { tasks, tier, isBundle } = state;

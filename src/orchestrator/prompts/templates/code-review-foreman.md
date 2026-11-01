@@ -88,7 +88,7 @@ Judge each file against the owning task's ACs and record its outcome and reason 
 2. **Spec miss:** If the spec should have listed the file, append the same `## Amendment (full-send scope)` section and exact `### Affected Files` table row, with a one-line reason that calls it a spec miss.
 3. **Should not have been changed:** Do not amend the spec. Write a finding requiring the file to be reverted or removed, and set the verdict to `changes_requested`.
 
-The Affected Files rows you append under items 1 and 2 must follow the scope manifest contract: Affected Files uses exactly one `### Affected Files` heading per `## Design` or `## Amendment…` section and one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Canon does not lint a table you append here, so a malformed row leaves its file outside Affected Files.
+The Affected Files rows you append under items 1 and 2 must follow the scope manifest contract: Affected Files uses exactly one `### Affected Files` heading under `## Design` and at most one per `## Amendment…` section (a behavior-only amendment needs none), with one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Canon does not lint a table you append here, so a malformed row leaves its file outside Affected Files.
 
 Example row (path in the first column, reason in the Change column):
 

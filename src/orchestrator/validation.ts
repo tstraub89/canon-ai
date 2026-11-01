@@ -1975,8 +1975,10 @@ export function lintSpecManifest(markdown: string): ManifestLintIssue[] {
         issues.push({ section, line, kind: 'unclosed-block', message: `An unclosed ${construct} opened at line ${line} hides everything after it, including any Affected Files table. ${fix}` });
     }
     const designs = scan.sections.filter(section => section.kind === 'design');
-    if (!designs.some(section => section.affectedFiles[0]?.blocks.some(block => block.rows.length > 0))) {
-        issues.push({ section: designs[0]?.h2.text ?? '(no ## Design section)', kind: 'missing-manifest', message: 'No ### Affected Files table under ## Design, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one file per row.' });
+    const hasPathRow = (section: typeof designs[number]) => section.affectedFiles[0]?.blocks.some(block =>
+        block.rows.some(raw => Boolean(raw.cells[0]?.trim()))) ?? false;
+    if (!designs.some(hasPathRow)) {
+        issues.push({ section: designs[0]?.h2.text ?? '(no ## Design section)', kind: 'missing-manifest', message: 'No ### Affected Files table under ## Design has a row with a file in column 1, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one backticked file path per row in column 1.' });
     }
     return issues;
 }
