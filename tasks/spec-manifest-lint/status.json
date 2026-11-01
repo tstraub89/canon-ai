@@ -8,8 +8,8 @@
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "326111d2df944c99cef8f7f83f3a7bee6fa1dad7",
-    "orchestrator_commit": "326111d2df944c99cef8f7f83f3a7bee6fa1dad7",
+    "upstream_commit": "a4b4174ecb96123db1756311c7c97a79db1a6d51",
+    "orchestrator_commit": "a4b4174ecb96123db1756311c7c97a79db1a6d51",
     "canon_version": "3.16.0",
     "codex_cli": "codex-cli 0.165.0",
     "claude_code": "2.1.312 (Claude Code)"
