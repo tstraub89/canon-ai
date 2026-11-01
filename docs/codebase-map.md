@@ -37,7 +37,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | State I/O and session storage | `src/orchestrator/state.ts` | `status.json`, backend-tagged session writes/clears and use-time compatibility, derived status, task/worktree path helpers; exports `validateStatus`, `readStatusFromPath`, and the `--reroute` admission predicate `isRerouteAdmitted` |
 | Shared run-context resolver | `src/orchestrator/run-context.ts` | Orphan-tolerant task-dir lookup, EPERM-tolerant PID probe, `gatherRunContext()` — consumed by `watch`, `doctor`, `stop`; injectable seams for tests |
 | Git plumbing and porcelain parsing | `src/orchestrator/git.ts` | Branch helpers, commits, porcelain parsers |
-| Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator, pure set resolver, dot-aware glob matcher |
+| Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator (also the `ship.merge_method` setting), pure set resolver, dot-aware glob matcher |
 | Worktree management | `src/orchestrator/worktree.ts` | Worktree lifecycle, cleanup/detect helpers, `findExistingWorktreeForBranch`, and pipeline file registries |
 | Validation gates and diff checks | `src/orchestrator/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
 | `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |

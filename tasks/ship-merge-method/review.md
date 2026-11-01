@@ -1,133 +1,83 @@
 # Code Review: ship-merge-method
 
-> Reviewer: Claude | Spec: `tasks/ship-merge-method/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
+> Reviewer: Claude (foreman synthesis) | Spec: `tasks/ship-merge-method/spec.md`
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
+Synthesized from the anchored Claude lens, the cold-Claude lens, and the pre-obtained cold-Codex findings (no actionable defects).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence recorded for each red-first AC (AC-5 row, pre-fix commit `7c8e694`, failure excerpt)
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | `ship` validated before the no-`docs_freshness` early return; `shipMergeMethod` is a separate result field; unknown `ship.*` keys use the warning path; no CLI flag. |
+| AC-2 | Pass | `MERGE_FLAG[mergeMethod]` passed to `gh pr merge`; per-method tests assert anchored lines. |
+| AC-3 | Pass | Pre-flight precedes dirt preservation and branch switch; test seeds telemetry, branch, FETCH_HEAD, task state. |
+| AC-4 | Pass | Tri-state `lookupPRNumberExact`; unreadable fails closed; confirmed-empty skips settings query; `ghAvailable` guard kept. |
+| AC-5 | Pass | `failed` result restores dirt then dies; message states no cleanup ran, re-run guidance, earlier-merged PRs. |
+| AC-6 | Pass | Remaining `squash` hits in the three source files are the flag mapping, field name, default, and help text. |
+| AC-7 | Pass | Docs, order list, dirt paragraph, decisions, patterns, skills, README, mirrors updated. |
+| AC-8 | Pass | Both fake-gh scripts extended; suite reported clean. |
+| AC-9 | Pass | Hook deny reason reworded, behavior unchanged. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
 
 ## Stage 2 — Code Quality (only if Stage 1 passed)
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+Clean, well-scoped implementation. The pre-flight ordering, tri-state lookup, and restore-on-failure follow the spec and are tested with no-mutation assertions. Only minor wording/cleanup nits survive; reviewers did not run the test suite themselves (handoff reports 2,068 passed, cold-Codex reports tests, type-check and template sync passing).
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- `src/orchestrator/main.ts:2199-2204` (anchored lens; code-bug-free nit) — the `assertNoOpenPRForTask` hint says to "merge PR #n outside canon (any method)", but `canon-guard` denies squash/default `gh pr merge` on `task/*` PRs. Consider wording that points to re-running `--ship` and names `--rebase`/`--merge` as the hook-permitted manual path.
+- `src/orchestrator/main.ts:4214` (anchored lens) — `docsConfig.ok ? … : 'squash'` fallback is dead because the run already dies on `!docsConfig.ok`; defensive only.
+- `tests/run-task-ship.test.ts:~1450` (anchored lens) — the FETCH_HEAD no-fetch sentinel is asserted only for the disallowed-method scenario, not the AC-4 failure scenarios.
 
 #### Spec Gaps
 
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): pre-flight treats empty/errored `gh pr list` as unreadable while sibling lookups return null - the divergence is the spec's explicit requirement (AC-4); sibling helpers deliberately keep their `number | null` contract.
+- Dismissed (cold-Claude): `mergeReason` no longer mentions manual `--rebase`/`--merge` while the hook still allows them - AC-9 and Non-Goals fix the hook's behavior as unchanged and require the wording to stop saying other methods need a manual merge; the guard's allow behavior is intentionally untouched.
+- Dismissed (cold-Claude): invalid `ship` fails the config load for every command - spec Interaction Dependencies states this is intended (shared parser, "malformed config stops every consumer").
+- Dismissed (cold-Claude): restore after a failed merge runs on whichever branch is checked out, in bundles - the failure path returns before any later-step state change and the spec scopes restore to the failed-merge exit; the lens itself did not verify a problem (low confidence).
+- Dismissed (cold-Claude): pre-flight only runs when `ghAvailable` - the lens found no defect; AC-4 specifies exactly this.
+- Cold-Codex: no findings to dismiss.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
