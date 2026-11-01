@@ -1451,3 +1451,10 @@
 | 2026-10-31T15:36:18.295Z | provider-neutral-vendor-wording | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 102.0s | 2473883 | ok |
 | 2026-10-31T15:36:18.300Z | provider-neutral-vendor-wording | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 143.6s | 2465621 | ok |
 | 2026-10-31T15:37:22.374Z | provider-neutral-vendor-wording | qa | claude | claude-haiku-5-5 | 0 | 64.1s | 912629 | ok |
+| 2026-10-31T19:11:28.423Z | provider-pin-agent-free-paths | spec_review | claude | sonnet | 0 | 30.7s | 567061 | ok |
+| 2026-11-01T01:54:12.266Z | provider-pin-agent-free-paths | plan | claude | sonnet | 0 | 65.9s | 963873 | ok |
+| 2026-11-01T02:01:47.437Z | provider-pin-agent-free-paths | implement | claude | sonnet | 0 | 454.4s | 2716467 | ok |
+| 2026-11-01T02:02:47.590Z | provider-pin-agent-free-paths | code_review | claude | sonnet | 0 | 59.1s | 383446 | ok |
+| 2026-11-01T02:02:47.593Z | provider-pin-agent-free-paths | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 20.6s | 295674 | ok |
+| 2026-11-01T02:02:47.595Z | provider-pin-agent-free-paths | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 22.4s | 584533 | ok |
+| 2026-11-01T02:03:31.783Z | provider-pin-agent-free-paths | qa | claude | claude-haiku-5-5 | 0 | 44.2s | 770989 | ok |

@@ -1,7 +1,7 @@
 {
   "id": "provider-pin-agent-free-paths",
   "title": "Don't let an invalid provider pin block agent-free paths",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-10-31",
   "updated": "2026-11-01",
   "branch": "task/provider-pin-agent-free-paths",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
