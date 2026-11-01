@@ -1,133 +1,78 @@
 # Code Review: provider-pin-agent-free-paths
 
 > Reviewer: Claude | Spec: `tasks/provider-pin-agent-free-paths/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
+Synthesized by the foreman from the anchored Claude lens and the cold-Claude lens (both returned valid charter-format results; neither missing).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
+- [x] Validation Outcomes table has no `Fail` results (one timing flake in an unrelated shutdown test passed on rerun, documented in handoff)
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence recorded for each red-first AC (AC-1, AC-2, AC-7 rows against pre-fix code)
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | Ship test with `bogus` pin: exit 0, no `Invalid provider`, archived and branch deleted. Red-first row present. |
+| AC-2 | Pass | Two-task bundle (`claude` + absent): exit 0, no mixed-bundle refusal, both archived. Red-first row present. |
+| AC-3 | Pass | Existing safety test untouched in the diff. |
+| AC-4 | Pass | `--dry-run` loop case: exit 1, `Invalid provider`, no stack, not archived, no agent log. |
+| AC-5 | Pass | `--ship --dry-run` loop case: same assertions. Gate `!ship \|\| dryRun` keeps the clean refusal. |
+| AC-6 | Pass | Malformed `status.json` on `--ship`: exit 1, no stack, task and branch kept. Fixture deviation (`bad branch`) documented. |
+| AC-7 | Pass | Doctor with `bogus`: exit 1, `Accepted values` on provider line, `claude` line present, no `codex` line. |
+| AC-8 | Pass | Existing doctor/init test untouched. |
+| AC-9 | Pass | `docs/pipeline-orchestrator.md` provider paragraph. |
+| AC-10 | Pass | Same paragraph. |
+| AC-11 | Pass | `docs/architecture.md` and `docs/decisions.md` each gain the clause. |
+| AC-12 | Pass | Template mirror matches root edit. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no change to `--dry-run`, parser, `init`/`task` commands, or new doctor status)
+- [x] Known Risks addressed (gate excludes dry-run; startup read/validate retained; doctor keeps `claude`; ship-path provider consumers confirmed absent by both lenses)
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+A small, well-scoped change. `main.ts` keeps the per-task `status.json` read/validation for every mode and skips only provider resolution for `--ship` without `--dry-run`; doctor derives the all-provider backend intersection from `PROVIDERS` instead of hard-coding. Tests cover each AC, including the stack-trace guards. No correctness defects found.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+(none)
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
+- **Implicit ship-path guard** (flagged by 2 lenses; low severity): with `runProvider` null on `--ship`, a future provider consumer reachable from `shipTasks()` would re-resolve and throw with a stack. Both lenses traced `shipTasks`/`checkDeps` and found none today; spec Known Risks already records this and the code comment documents the dry-run side. Accepted, no action. Altitude: n/a (no defect).
 
-(none / list items)
+#### Nits / Cleanup (non-blocking)
 
-#### Optional Cleanup / Nit
-
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
-
-#### Spec Gaps
-
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+- `src/orchestrator/main.ts:4049` — `!cliArgs.ship || cliArgs.dryRun` is the negation of `skipAgentDeps` (`ship || dryRun`)... not identical (`ship && !dryRun` vs `ship || dryRun`), so the predicates mean different things; cold lens's drift concern is mild. Optional: name the condition.
+- `tests/run-task-ship.test.ts` (AC-6 test) — `assert.match(result.stderr, /branch/)` is loose; matching the validation message would pin it better.
+- `tests/cli.test.ts:4222` — the codex `doesNotMatch` regex depends on the `checkBinary` line format; the positive `claude` assertion partly guards against vacuous passing.
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): `doctor.ts:726-729` empty `PROVIDERS` / future provider without claude would misbehave — `PROVIDERS` is a non-empty constant and the intersection is the correct semantics for any future provider set; theoretical only.
+- Dismissed (cold-Claude): `--ship` carries an invalid pin into `_archive` — spec Decision explicitly says ship proceeds with no pin validation or notice; Non-Goals exclude a warning. Cold lens itself notes this is the stated intent.
 
 ## Final Verdict
 
-- [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
 - [ ] Approved
-- [ ] Approved with nits
+- [x] Approved with nits
 - [ ] Changes requested
 - [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
