@@ -1,15 +1,15 @@
 {
   "id": "adopter-bypass-guards",
   "title": "Ship a Claude Code hook that redirects agents away from pipeline bypasses",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-01",
   "updated": "2026-11-01",
-  "branch": "",
+  "branch": "task/adopter-bypass-guards",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "3aad11c4a0b3a55d8ed088d8ad0896ed9b444a3d",
-    "orchestrator_commit": "3aad11c4a0b3a55d8ed088d8ad0896ed9b444a3d",
+    "upstream_commit": "2e6850eab15c7506ea556be72a8cd99fb5f0c31c",
+    "orchestrator_commit": "2e6850eab15c7506ea556be72a8cd99fb5f0c31c",
     "canon_version": "3.16.0",
     "codex_cli": "codex-cli 0.165.0",
     "claude_code": "2.1.312 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 4,
+      "changes_requested_total": 3,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -75,11 +76,19 @@
       "phase": "spec_review",
       "iteration_count": 4,
       "reason": "Spec review hit 4 changes_requested iterations in a row (limit: 4). Pipeline auto-blocked before the next spec revision. Read the latest spec-review.md: if review is still converging (each round narrows on distinct, legitimate findings), raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run adopter-bypass-guards. Only rescope if prior iterations no longer apply — run canon task reset-spec-review adopter-bypass-guards to archive the prior review, clear the loop counters, and drop the stored Claude session. Resetting accepts the current spec as-is, so the next run enters `spec_review` without another spec revision. Raise the cap instead if you want the deferred spec revision to run before review. Resuming after raising the cap runs `spec` first — the deferred revision — then `spec_review` again."
+    },
+    {
+      "date": "2026-11-01",
+      "phase": "code_review",
+      "iteration_count": 3,
+      "reason": "Code review hit 3 attempts in a row for task adopter-bypass-guards (3 reviewer rounds + 0 pre-flight rejections; limit: 3). Pipeline auto-blocked before the next re-implementation. Read tasks/<id>/review.md — if the same finding keeps recurring, the spec or approach may need revisiting rather than another implementation pass. If the spec itself needs to change, add the next Amendment section to each task's tasks/<id>/spec.md (the task worktree's copy when the task has one) and run canon run adopter-bypass-guards --reroute instead (the reroute pre-flight names the exact heading it expects). If review is still converging, raise the cap and continue — MAX_REVIEW_LOOPS=<n> canon run adopter-bypass-guards. If repeated failures were all pre-flight, the handoff format itself may be wrong (e.g., Validation Outcomes rows using prose labels instead of backticked check keys). To rescope instead, run canon task reset-code-review adopter-bypass-guards to archive the prior review and clear the loop-local counters. Resetting accepts the current implementation as-is, so the next run enters `code_review` without another implementation pass. Raise the cap instead if you want the deferred implementation pass to run before review. Resuming after raising the cap runs `implement` first — the deferred revision — then `code_review` again."
     }
   ],
   "sessions": {
     "spec_reviewer": "01a19561-7468-71d3-b5a1-c3ce0ce9b00f",
-    "author": "2ebe924c-9c52-4ebe-b0bb-d6336ed87950"
+    "author": "2ebe924c-9c52-4ebe-b0bb-d6336ed87950",
+    "implementer": "01a1981e-326d-7471-91c1-7dac5f517fcf",
+    "reviewer": "6d86b4c0-1471-4f4d-b05c-3822a96c7dc6"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
@@ -87,6 +96,8 @@
   "provider": "mixed",
   "session_backends": {
     "spec_reviewer": "codex",
-    "author": "claude"
+    "author": "claude",
+    "implementer": "codex",
+    "reviewer": "claude"
   }
 }

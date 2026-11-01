@@ -1,0 +1,1 @@
+The guard changes correctly recognize mixed short-option clusters containing merge-strategy flags and avoid treating Perl’s `-C` value as subsequent short options. The targeted canon-guard tests pass.
