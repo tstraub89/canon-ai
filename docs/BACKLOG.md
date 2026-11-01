@@ -178,6 +178,12 @@
   - **Restatements**: `docs/pipeline-orchestrator.md` (+ mirror), `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, the `/canon-pipeline` recovery notes.
   - **Effort**: `M`, delicate (`--ship` and validation gates).
 
+- [~] **Scaffold without a base-branch commit, for protected-base adopters** *(parked 2026-10-31; prior attempt `no-base-scaffold-commit` retired at code_review to `tasks/_archive/no-base-scaffold-commit/`, implementation on branch `task/no-base-scaffold-commit`. **Pick up when an adopter whose base only accepts PR merges reports it.**)*
+  - **Today**: implement commits `tasks/<id>/` to local base, and `--pr`/`--push` pushes those vetted commits automatically. If origin rejects the push, `--pr` stops and tells the operator to push or merge the scaffold commits by hand.
+  - **Why the prior attempt was retired**: it delivered the scaffold to the worktree as untracked files, which forced resumable-copy logic and ship-time clearing of stale copies that block the pull. The scope was too big for a hypothetical adopter, and parked specs already put `tasks/<id>/` on base on purpose.
+  - **Candidate shape**: make the scaffold the first commit on `task/<id>` instead of on base. A spec already tracked on base needs no commit, and re-attaching a worktree just checks out the branch. Ship still has to clear the main checkout's stale untracked copy before pulling, because the resolver reads that copy's `status.json` for bundle secondaries. Cold lenses would see `spec.md` in the diff unless they exclude `tasks/`. The prior attempt's collision-set helper (keyed on the incoming tree, never on task ids) and its git finding (git refuses the pull even when the untracked file is byte-identical) carry over.
+  - **Effort**: `M`–`L`, delicate (bootstrap and `--ship`).
+
 ### Wave 3 cluster — follow-ups from TokenAnxiety dogfood discussion #27
 
 *Originally GH issues #31–34 on the pre-launch tracker, promoted to BACKLOG per the original [BACKLOG-vs-issues decision](decisions.md). The 2026-05-10 five-sub-bundle cluster plan (parser, counters, gates, enum, snapshot stamping) has fully shipped except the QA-telemetry verification half of sub-bundle 1b — the entry below. `verdict_source` is now public issue #21.*

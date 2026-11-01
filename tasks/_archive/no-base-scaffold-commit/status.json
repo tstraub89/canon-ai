@@ -1,10 +1,10 @@
 {
   "id": "no-base-scaffold-commit",
   "title": "Keep canon's pre-merge commits off the base branch",
-  "status": "implement",
+  "status": "code_review",
   "created": "2026-10-24",
   "updated": "2026-10-24",
-  "branch": "",
+  "branch": "task/no-base-scaffold-commit",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,18 +41,19 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
       "status": "pending",
       "agent": "claude",
       "verdict": "",
-      "iterations": 0,
-      "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations": 2,
+      "iterations_current_loop": 2,
+      "iterations_total": 2,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
       "status": "pending",
@@ -65,7 +66,9 @@
   },
   "escalations": [],
   "sessions": {
-    "codex_spec_review": "01a16c40-cdbe-7f70-8a8e-559d45d5495a"
+    "codex_spec_review": "01a16c40-cdbe-7f70-8a8e-559d45d5495a",
+    "codex": "01a16c51-e686-7472-954c-9cadb1829c14",
+    "claude_review": "b848a532-bf91-4b8a-b22b-0d37cbbec82b"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
