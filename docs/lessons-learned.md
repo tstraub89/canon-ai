@@ -185,14 +185,6 @@ Chaining `extract(a) ?? extract(b)` does nothing when `extract` returns `''` on 
 
 ---
 
-### Put one Affected Files entry per table row; the scope parser drops a fused second entry silently
-
-*(2026-10-28, source: agent-backend-role-routing)*
-
-A spec whose Affected Files table had two file entries on one row (the second one after a `||`) lost the second file with no malformed-cell diagnostic. The scope check then halted code review with a pre-flight rejection for a file the spec appeared to list. The planner found it only by running the parser. Prevention: after writing an Affected Files table, run `parseAffectedFilesFromSpec` (in `src/orchestrator/validation.ts`) and confirm every intended path comes back, and keep exactly one file per table row. This applies to any spec that changes a generated file the pipeline must also rebuild, such as a committed `dist/` bundle.
-
----
-
 ### A request flag one backend honors is a silent no-op on the other backend
 
 *(2026-10-30, source: claude-provider-mode)*

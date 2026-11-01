@@ -100,7 +100,7 @@ Multiple IDs = bundle mode (see below).
 | `--allow-divergent-base` | — | At `--push`, `--pr`, and `--ship`, bypass only the commit-divergence block when local `<base>` has commits not yet on `origin/<base>`. At `--pr`/`--push`, a rejected scaffold push warns and continues; the flag does not apply when origin has no `<base>` branch. It does not bypass the base-drift gate (merge conflicts and out-of-scope task files); use `--force` for that. |
 | `--dry-run` | — | Print the planned phases, agents, model, and effort without spawning an LLM. |
 | `--full-send` | — | Pre-clear the human spec gate and auto-open the draft PR at `human_review` — no interrupts. Uses the same scaffold base push as `--pr`/`--push` (see the remote-boundary gates below). On a `delicate` task, requires `--force`. Mutually exclusive with `--reroute` in one invocation. |
-| `--force` | — | Bypass operator-confirmation gates after you've verified the situation: reroute amendment-heading pre-flight, base-drift gate (merge conflicts and out-of-scope task files), the dirty-REPO_ROOT guard before first worktree creation, and `--full-send` on delicate. It does **not** bypass the forge-proof merge gate, diff-computation failures, or merge-conflict probe failures. |
+| `--force` | — | Bypass operator-confirmation gates after you've verified the situation: reroute amendment-heading pre-flight, spec manifest pre-flight before plan/implement, base-drift gate (merge conflicts and out-of-scope task files), the dirty-REPO_ROOT guard before first worktree creation, and `--full-send` on delicate. It does **not** bypass the forge-proof merge gate, diff-computation failures, or merge-conflict probe failures. |
 
 **Default is full auto** — without `--step`, the pipeline runs all phases to completion (or to the next human gate).
 
@@ -410,6 +410,12 @@ So when you inspect `status.json` mid-pipeline and see `human_spec_gate: false`,
 **Bundle rule**: the gate skip is all-or-nothing. One task in the bundle with the latch still armed re-engages the halt for the whole invocation; `--full-send` must apply to every task in the bundle to skip it.
 
 ## Phase Routing + Auto-Block
+
+**Spec manifest lint:** Marking the spec done rejects fused path cells, header-less table blocks, malformed first-column paths, ignored Affected Files headings, duplicate exact headings within one Design or Amendment section, and empty first columns hiding a backticked token. Directory entries and comma-joined paths remain valid; a ### Affected Files table under ## Design that lists at least one file path is required; optional ## Amendment sections may omit one. Unclosed code fences and HTML comments are rejected with their opening line, since they would hide the rest of the spec. Fenced code examples and HTML-commented content are excluded from both lint and scope consumers.
+
+`canon task phase <id> spec done` prints every issue and refuses to advance; `CANON_SKIP_PHASE_GATE=1` bypasses this artifact gate. Spec evidence recovery returns “not advanced” with the issues instead of throwing, so the one-shot agent retry sees what to fix. Before any plan or implement agent starts, a second pre-flight checks every bundle member's active-checkout spec. It auto-blocks the current phase and exits 2 on issues: fix the Affected Files table in the active checkout's spec.md and rerun `canon run <id>`. No phase reset is required. `--force` bypasses this pre-flight with a warning listing the issues; it does not bypass the spec-done gate.
+
+The backstops cover edits after spec review or at the human spec gate, `canon task reset-spec-review`, reroute amendments (including spec-gap reroutes and exempt bundle siblings), revision loops, and resumes after a block. Fast tier writes spec and plan together, so its implement pre-flight is the backstop. Full-send on a delicate task requires `--force`, which also bypasses these pre-flights; the spec-done gate still applies unless `CANON_SKIP_PHASE_GATE` is set.
 
 After `spec_review` or `code_review`, the orchestrator checks the verdict.
 

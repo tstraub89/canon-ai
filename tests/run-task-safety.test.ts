@@ -5656,7 +5656,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
             },
         };
         writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
-        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'spec.md'), '# Spec\n\n## Acceptance Criteria\n\n- [ ] AC-1: Fixture\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'spec.md'), '# Spec\n\n## Acceptance Criteria\n\n- [ ] AC-1: Fixture\n\n## Design\n### Affected Files\n| File | Change |\n|---|---|\n| `initial-fixture.txt` | update |\n', 'utf8');
         fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'plan.md'), '# Plan\n', 'utf8');
         fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), 'root scaffold\n', 'utf8');
 
@@ -11007,6 +11007,7 @@ void test(`implement hallucination clears only implementer pair on every bundle 
         status.provider = provider;
         status.session_backends = { implementer: provider === 'claude' ? 'claude' : 'codex' };
         for (const id of ['leader', 'secondary']) writeTaskStatus(fixture.tasksRoot, id, { ...status, id });
+        fs.copyFileSync(path.join(fixture.tasksRoot, 'leader', 'spec.md'), path.join(fixture.tasksRoot, 'secondary', 'spec.md'));
         gitIn(fixture.worktreeDir, 'add', 'tasks');
         gitIn(fixture.worktreeDir, 'commit', '-m', 'clean revision fixture');
         const result = runNodeInline(String.raw`
@@ -11674,3 +11675,156 @@ await withAgentSessionPark('implement',['${id}'],()=>checkAndRoute('implement',[
         assert.doesNotMatch(args[1], /already complete/);
     });
 });
+
+void test('manifest evidence recovery parks with issues without marking spec done', () => {
+    withTempDir('manifest-evidence-', dir => {
+        const id = 'manifest-evidence';
+        const fixture = prepareReviewEntryMainFixture(dir, id, true, false);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        status.phases.spec!.status = 'in_progress';
+        writeTaskStatus(fixture.tasksRoot, id, status);
+        fs.writeFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), '# Spec: evidence\n## Design\n### Affected Files\n| File | Change |\n|---|---|\n| `a.ts` | x || `b.ts` | y |\n');
+        const env: NodeJS.ProcessEnv = { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot };
+        delete env.CANON_SKIP_PHASE_GATE;
+        const result = runNodeInline(`
+import assert from 'node:assert/strict';
+import { tryEvidenceAdvance } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+const result = tryEvidenceAdvance('${id}', 'spec');
+assert.equal(result.advanced, false);
+assert.match(result.note, /row 1/);
+console.log(result.note);
+`, env, fixture.localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.equal((JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson).phases.spec?.status, 'in_progress');
+    });
+});
+
+for (const phase of ['plan', 'implement'] as const) {
+    for (const mode of ['blocked', 'forced', 'clean', 'missing'] as const) {
+        void test(`manifest pre-flight ${phase}: ${mode} before any agent runs`, () => {
+            withTempDir('manifest-entry-', dir => {
+                const id = 'manifest-entry';
+                const fixture = prepareReviewEntryMainFixture(dir, id, true, false);
+                const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+                status.task_size = 'L';
+                status.delicate = false;
+                status.human_spec_gate = true;
+                status.phases.spec!.status = 'done';
+                status.phases.spec_review!.status = 'done';
+                status.phases.spec_review!.verdict = 'approved';
+                status.phases.plan!.status = phase === 'plan' ? 'pending' : 'done';
+                status.phases.implement!.status = 'pending';
+                status.phases.code_review!.status = 'pending';
+                if (phase === 'implement') status.phases.implement!.rerouted = true;
+                writeTaskStatus(fixture.tasksRoot, id, status);
+                const row = mode === 'clean' ? '| `initial-fixture.txt` | x |' : '| `a.ts` | x || `b.ts` | y |';
+                const design = '# Spec: entry\n## Design\n### Affected Files\n| File | Change |\n|---|---|\n| `initial-fixture.txt` | update |\n';
+                const manifest = (phase === 'implement' ? design : '') + `# Spec: entry\n## ${phase === 'implement' ? 'Amendment' : 'Design'}\n### Affected Files\n| File | Change |\n|---|---|\n${row}\n`;
+                fs.writeFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), mode === 'missing' ? '# Spec: missing manifest\n## Design\nProse only.\n' : manifest);
+                // The main checkout remains clean; the gate must read the active copy.
+                const mainStatus = path.join(fixture.localDir, 'tasks', id, 'status.json');
+                const beforeMain = fs.readFileSync(mainStatus, 'utf8');
+                setupInvocationLoggingCliTools(fixture.fakeBins);
+                const agentLog = path.join(dir, 'agents.log');
+                const env: NodeJS.ProcessEnv = { ...process.env,
+                    CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
+                    PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+                    FAKE_AGENT_LOG: agentLog,
+                    CANON_METRICS_FILE_OVERRIDE: path.join(dir, 'metrics.md'),
+                };
+                delete env.CANON_TASKS_DIR_OVERRIDE;
+                delete env.CANON_SKIP_PHASE_GATE;
+                delete env.CANON_PROVIDER;
+                const handler = phase === 'plan' ? 'runPlanPhase' : 'runImplementPhase';
+                const args = phase === 'plan' ? `${mode === 'forced'}` : `null, ${mode === 'forced'}`;
+                const result = runNodeInline(`
+import assert from 'node:assert/strict';
+import { buildPipelineState } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+import { ${handler} } from '${pathToFileURL(path.join(WORKTREE_ROOT, `src/orchestrator/phases/${phase}.ts`)).href}';
+const state = buildPipelineState(['${id}']);
+assert.equal(state.tasks[0].status.phases.${phase}.status, 'pending');
+await ${handler}(state, false, ${args});
+`, env, fixture.localDir);
+                assert.equal(result.status, mode === 'blocked' || mode === 'missing' ? 2 : 0, combinedOutput(result));
+                const output = combinedOutput(result);
+                const after = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+                assert.equal(fs.readFileSync(mainStatus, 'utf8'), beforeMain);
+                if (mode === 'blocked' || mode === 'missing') {
+                    assert.match(output, mode === 'missing' ? /No ### Affected Files table under ## Design/ : /row 1/);
+                    assert.match(output, /Fix the ### Affected Files table.*canon run manifest-entry/);
+                    assert.equal(after.phases[phase]?.status, 'blocked');
+                    assert.equal(after.escalations?.at(-1)?.phase, phase);
+                    assert.equal(fs.existsSync(agentLog), false);
+                    // Fix and resume the same blocked phase without resetting it.
+                    fs.writeFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), design);
+                    const resumed = runNodeInline(`
+import { buildPipelineState } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+import { ${handler} } from '${pathToFileURL(path.join(WORKTREE_ROOT, `src/orchestrator/phases/${phase}.ts`)).href}';
+await ${handler}(buildPipelineState(['${id}']), false${phase === 'implement' ? ', null' : ''});
+`, env, fixture.localDir);
+                    assert.equal(resumed.status, 0, combinedOutput(resumed));
+                    assert.ok(fs.readFileSync(agentLog, 'utf8').trim());
+                } else {
+                    assert.ok(fs.readFileSync(agentLog, 'utf8').trim());
+                    if (mode === 'forced') assert.match(output, /--force bypass:[\s\S]*row 1/);
+                    else assert.doesNotMatch(output, /Spec manifest pre-flight/);
+                }
+            });
+        });
+    }
+}
+
+void test('manifest pre-flight checks every bundle member including exempt reroute siblings', () => {
+    withTempDir('manifest-bundle-', dir => {
+        const fixture = prepareReviewEntryMainFixture(dir, 'leader', true, false);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        status.phases.implement!.rerouted = true;
+        for (const id of ['leader', 'secondary']) writeTaskStatus(fixture.tasksRoot, id, {
+            ...status, id, phases: { ...status.phases, implement: { ...status.phases.implement!, status: 'pending', reroute_exempt: id === 'secondary' } },
+        });
+        fs.writeFileSync(path.join(fixture.tasksRoot, 'leader/spec.md'), '# Spec: clean\n## Design\n### Affected Files\n| File | Change |\n|---|---|\n| `initial-fixture.txt` | update |\n');
+        fs.writeFileSync(path.join(fixture.tasksRoot, 'secondary/spec.md'), '# Spec: bad\n## Amendment\n### Affected files\n| File | Change |\n|---|---|\n| `lost.ts` | x |\n');
+        const log = path.join(dir, 'agents.log');
+        const result = runNodeInline(`
+import { buildPipelineState } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
+import { runImplementPhase } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/implement.ts')).href}';
+await runImplementPhase(buildPipelineState(['leader','secondary']), false, null);
+`, { ...process.env, CANON_TASKS_DIR_OVERRIDE: fixture.tasksRoot, FAKE_AGENT_LOG: log,
+            PATH: `${fixture.fakeBins}${path.delimiter}${process.env.PATH ?? ''}` }, fixture.localDir);
+        assert.equal(result.status, 2, combinedOutput(result));
+        assert.match(combinedOutput(result), /\[secondary\].*Affected Files/);
+        assert.equal(fs.existsSync(log), false);
+        for (const id of ['leader', 'secondary']) {
+            assert.equal((JSON.parse(fs.readFileSync(path.join(fixture.tasksRoot, id, 'status.json'), 'utf8')) as StatusJson).phases.implement?.status, 'blocked');
+        }
+    });
+});
+
+for (const phase of ['plan', 'implement'] as const) {
+    void test(`manifest --force reaches ${phase} through main dispatch`, () => {
+        withTempDir('manifest-force-main-', dir => {
+            const id = 'manifest-force';
+            const fixture = prepareReviewEntryMainFixture(dir, id, true, false);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            status.task_size = 'L'; status.delicate = false;
+            status.phases.spec!.status = 'done';
+            status.phases.spec_review!.status = 'done';
+            status.phases.spec_review!.verdict = 'approved';
+            status.phases.plan!.status = phase === 'plan' ? 'pending' : 'done';
+            status.phases.implement!.status = 'pending';
+            status.phases.code_review!.status = 'pending';
+            writeTaskStatus(fixture.tasksRoot, id, status);
+            fs.writeFileSync(path.join(fixture.tasksRoot, id, 'plan.md'), '# Plan: completed\n\n## Steps\n1. Update the module.\n');
+            fs.writeFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), '# Spec: edited after review\n## Design\n### Affected Files\n| File | Change |\n|---|---|\n| `a.ts` | x || `b.ts` | y |\n\n## Validation Required\n\n- [x] `npm test`\n');
+            setupInvocationLoggingCliTools(fixture.fakeBins);
+            const result = runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, id, 3,
+                ['--force', '--expect', phase], {
+                    CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon/worktrees'),
+                    FAKE_AGENT_COMPLETE_PHASE: phase,
+                });
+            assert.equal(result.status, 0, combinedOutput(result));
+            assert.match(combinedOutput(result), new RegExp(`--force bypass: Spec manifest pre-flight before ${phase}`));
+            assert.ok(readAgentInvocations(path.join(fixture.localDir, 'agent-invocations.log')).length > 0);
+        });
+    });
+}

@@ -138,7 +138,8 @@ var RUN_USAGE = [
   "  --force             Acknowledge high-commitment combinations and bypass",
   "                      explicit safety gates where documented (currently:",
   "                      --full-send on delicate tasks, reroute amendment gate,",
-  "                      base-drift gate, and dirty REPO_ROOT worktree-start gate).",
+  "                      base-drift gate, dirty REPO_ROOT worktree-start gate,",
+  "                      and spec manifest pre-flight before plan/implement).",
   "  --allow-divergent-base",
   "                      At --push, --pr, and --ship: bypass only the commit-divergence",
   "                      block when local <base> has commits not yet on origin/<base>.",
@@ -1009,6 +1010,117 @@ function parseTableH3(markdown, sectionHeading) {
     rows.push(row);
   }
   return rows;
+}
+function listContentColumn(lines, index, indent) {
+  if (indent === 0) return 0;
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (line.trim() === "") continue;
+    const marker = /^( *)([-*+]|\d{1,9}[.)])( +)\S/.exec(line);
+    if (marker) {
+      const column = marker[1].length + marker[2].length + marker[3].length;
+      if (column <= indent) return column;
+    }
+    if (line.length - line.trimStart().length < indent) return 0;
+  }
+  return 0;
+}
+function visibleMarkdownLines(markdown) {
+  const hidden = [];
+  let unclosed = null;
+  let comment = false;
+  let fence = null;
+  const source = markdown.split("\n");
+  const lines = source.map((line, index) => {
+    if (fence) {
+      hidden.push(true);
+      const close = /^([ \t]*)(`{3,}|~{3,})\s*$/.exec(line);
+      if (close && close[1].length <= fence.container + 3 && close[2][0] === fence.char && close[2].length >= fence.length) {
+        fence = null;
+        unclosed = null;
+      }
+      return line;
+    }
+    const opener = !comment && /^([ \t]{0,3})(`{3,}|~{3,})/.exec(line);
+    if (opener && (opener[2][0] !== "`" || !line.slice(opener[0].length).includes("`"))) {
+      fence = { char: opener[2][0], length: opener[2].length, container: listContentColumn(source, index, opener[1].length) };
+      unclosed = { kind: "fence", line: index + 1 };
+      hidden.push(true);
+      return line;
+    }
+    let visible = "";
+    let i = 0;
+    while (i < line.length) {
+      if (comment) {
+        const close = line.indexOf("-->", i);
+        if (close === -1) break;
+        comment = false;
+        unclosed = null;
+        i = close + 3;
+      } else if (line.startsWith("<!-->", i) || line.startsWith("<!--->", i)) {
+        i += line[i + 4] === ">" ? 5 : 6;
+      } else if (line.startsWith("<!--", i) && (/^ {0,3}$/.test(line.slice(0, i)) || line.indexOf("-->", i + 4) !== -1)) {
+        comment = true;
+        unclosed = { kind: "comment", line: index + 1 };
+        i += 4;
+      } else if (line[i] === "`") {
+        const run = /^`+/.exec(line.slice(i))[0];
+        const rest = line.slice(i + run.length);
+        const close = [...rest.matchAll(/`+/g)].find((match) => match[0].length === run.length);
+        const end = close ? i + run.length + close.index + run.length : i + run.length;
+        visible += line.slice(i, end);
+        i = end;
+      } else {
+        visible += line[i];
+        i += 1;
+      }
+    }
+    hidden.push(visible.trim() === "");
+    return visible;
+  });
+  return { lines, hidden, unclosed };
+}
+function scanTableBlocks(lines, hidden, start, end) {
+  const blocks = [];
+  let i = start;
+  while (i < end) {
+    if (hidden[i] || !lines[i].trimStart().startsWith("|")) {
+      i += 1;
+      continue;
+    }
+    const header = { line: i + 1, cells: normalizeCells(lines[i]) };
+    i += 1;
+    if (header.cells.length === 0) continue;
+    const hasSeparator = i < end && !hidden[i] && isSeparatorRow(normalizeCells(lines[i]));
+    if (hasSeparator) i += 1;
+    const rows = [];
+    while (i < end && !hidden[i] && lines[i].trimStart().startsWith("|")) {
+      const cells = normalizeCells(lines[i]);
+      if (!isSeparatorRow(cells)) rows.push({ line: i + 1, cells });
+      i += 1;
+    }
+    blocks.push({ header, hasSeparator, rows });
+  }
+  return blocks;
+}
+function scanSpecManifest(markdown) {
+  const { lines, hidden, unclosed } = visibleMarkdownLines(markdown);
+  const headings = [];
+  lines.forEach((line, index) => {
+    const match = !hidden[index] && /^(#{1,6})\s/.exec(line);
+    if (match) headings.push({ index, line: index + 1, level: match[1].length, text: line.trimEnd(), sectionEnd: lines.length });
+  });
+  headings.forEach((heading, i) => {
+    heading.sectionEnd = headings.slice(i + 1).find((next) => next.level <= Math.max(3, heading.level))?.index ?? lines.length;
+  });
+  const sections = [];
+  headings.forEach((h2, i) => {
+    if (h2.level !== 2 || !/^## (?:Design|Amendment)\b/.test(h2.text)) return;
+    const end = headings.slice(i + 1).find((next) => next.level <= 2)?.index ?? lines.length;
+    const affectedFiles = headings.filter((h) => h.index > h2.index && h.index < end && h.text === "### Affected Files").map((heading) => ({ heading, blocks: scanTableBlocks(lines, hidden, heading.index + 1, Math.min(end, heading.sectionEnd)) }));
+    sections.push({ h2, kind: /^## Design\b/.test(h2.text) ? "design" : "amendment", affectedFiles });
+  });
+  return { lines, hidden, headings, sections, unclosed };
 }
 function parseTable(markdown, sectionHeading) {
   const lines = markdown.split("\n");
@@ -3738,6 +3850,11 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     if (isTemplate) {
       return { ok: false, reason: `${config3.artifactName} is still the unfilled template for phase '${phase}'` };
     }
+    if (phase === "spec") {
+      const issues = lintSpecManifest(content);
+      if (issues.length > 0) return { ok: false, reason: `${formatManifestLintIssues(issues)}
+Fix the \`### Affected Files\` table in spec.md, then rerun \`canon task phase ${taskId} spec done\`.` };
+    }
     let rerouteEv = { reroute: false };
     if (phase === "spec_review" || phase === "plan") {
       let statusRaw;
@@ -4105,6 +4222,63 @@ function parseDiffNameStatus(stdout) {
     }
   }
   return { diffFiles, renamePairs };
+}
+function lintSpecManifest(markdown) {
+  const scan = scanSpecManifest(markdown);
+  const issues = [];
+  const hasToken = (cell) => /`[^`]+`/.test(cell);
+  for (const section of scan.sections) {
+    const label = section.h2.text;
+    for (const duplicate of section.affectedFiles.slice(1)) {
+      issues.push({ section: label, line: duplicate.heading.line, kind: "duplicate-heading", message: "A second ### Affected Files heading is not read; merge its rows into the first table in this section." });
+    }
+    let row = 0;
+    for (const block of section.affectedFiles[0]?.blocks ?? []) {
+      if (!block.hasSeparator) issues.push({ section: label, line: block.header.line, kind: "header-less-block", message: "This line is being read as a header, so its path is not in scope. Keep each table contiguous and start it with a header followed by a |---|---| separator row." });
+      for (const raw of block.rows) {
+        row += 1;
+        const { cells, line } = raw;
+        const at = { section: label, row, line };
+        if (cells.length > block.header.cells.length && cells.slice(block.header.cells.length).some(hasToken)) {
+          issues.push({ ...at, kind: "fused-cells", message: `Row has ${cells.length} cells but its header has ${block.header.cells.length}; extra backticked content is not read. Put one file per row, or comma-join paths in column 1. For a literal pipe in a cell, write \\|.` });
+        }
+        if (!cells[0] && cells.slice(1).some(hasToken)) {
+          issues.push({ ...at, kind: "empty-first-cell", message: "The first column is empty, so a path in another cell is not read. Put the path in column 1." });
+        } else if (cells[0]) {
+          for (const malformed of parseHandoffPathCell(cells[0]).malformed) {
+            issues.push({ ...at, kind: "malformed-path", message: `First-column cell ${cells[0]}: ${malformed.reason}. Start with backticked paths, comma-join multiple paths, and move notes to the Change column.` });
+          }
+        }
+      }
+    }
+  }
+  const exact = scan.sections.flatMap((s) => s.affectedFiles);
+  for (const heading of scan.headings) {
+    if (!/(?<![a-z])affected files(?![a-z])/i.test(heading.text)) continue;
+    if (exact.some((entry) => entry.heading.index === heading.index || heading.level >= 4 && heading.index > entry.heading.index && heading.index < entry.heading.sectionEnd)) continue;
+    if (scanTableBlocks(scan.lines, scan.hidden, heading.index + 1, heading.sectionEnd).length === 0) continue;
+    const section = scan.headings.filter((h) => h.level === 2 && h.index <= heading.index).at(-1)?.text ?? "(before any ## section)";
+    issues.push({ section, line: heading.line, kind: "ignored-heading", message: `Heading ${heading.text} is not read as scope. Use exactly ### Affected Files directly under ## Design or an ## Amendment\u2026 section.` });
+  }
+  if (scan.unclosed) {
+    const { kind, line } = scan.unclosed;
+    const section = scan.headings.filter((h) => h.level === 2 && h.line <= line).at(-1)?.text ?? "(before any ## section)";
+    const construct = kind === "fence" ? "code fence" : "HTML comment";
+    const fix = kind === "fence" ? "Close it with a matching fence line." : "Close it with -->.";
+    issues.push({ section, line, kind: "unclosed-block", message: `An unclosed ${construct} opened at line ${line} hides everything after it, including any Affected Files table. ${fix}` });
+  }
+  const designs = scan.sections.filter((section) => section.kind === "design");
+  const hasPathRow = (section) => section.affectedFiles[0]?.blocks.some((block) => block.rows.some((raw) => Boolean(raw.cells[0]?.trim()))) ?? false;
+  if (!designs.some(hasPathRow)) {
+    issues.push({ section: designs[0]?.h2.text ?? "(no ## Design section)", kind: "missing-manifest", message: "No ### Affected Files table under ## Design has a row with a file in column 1, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one backticked file path per row in column 1." });
+  }
+  return issues;
+}
+function formatManifestLintIssues(issues) {
+  return `spec.md's Affected Files table has ${issues.length} problem(s):
+` + issues.map(
+    (issue) => `  - ${issue.section}${issue.row === void 0 ? "" : `, row ${issue.row}`}${issue.line === void 0 ? "" : ` (line ${issue.line})`}: ${issue.message}`
+  ).join("\n");
 }
 
 // src/orchestrator/review-archive.ts

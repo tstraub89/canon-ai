@@ -1,10 +1,11 @@
+import { lintSpecManifestForTasks, manifestPreflightMessage } from '../validation.js';
 import { roleAssignmentFor } from '../policy.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { info, warn } from '../cli.js';
 import { agentBackendFor } from '../agents/backend.js';
-import { taskDirFor } from '../state.js';
+import { autoBlockPhase, taskDirFor } from '../state.js';
 import { getActiveCwd } from '../worktree.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptPlan } from '../prompts/index.js';
@@ -14,9 +15,20 @@ import { taskPhase } from '../../task/index.js';
 export async function runPlanPhase(
     state: PipelineState,
     interactive: boolean,
+    force = false,
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
+    const manifestFailures = lintSpecManifestForTasks(taskIds);
+    if (manifestFailures.length > 0) {
+        const message = manifestPreflightMessage(manifestFailures, 'plan', force, taskIds);
+        warn(message);
+        if (!force) {
+            autoBlockPhase(taskIds, 'plan', 0, message);
+            process.exit(2);
+        }
+    }
+
 
     info(`Phase: plan (Claude writes plan${state.isBundle ? 's' : ''})`);
     for (const t of tasks) taskPhase(t.taskId, 'plan', 'in_progress');

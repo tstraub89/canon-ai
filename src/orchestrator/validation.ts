@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { parseTable, parseTableH3, parseAllTablesH3, extractSectionBodies, scanAllTables } from './markdown-table.js';
+import { parseTable, parseTableH3, blocksToRecords, scanSpecManifest, scanTableBlocks, extractSectionBodies, scanAllTables } from './markdown-table.js';
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
 import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, getLocalOnlyBaseCommits, probeOriginBranch, type SafeToPushVerdict, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries, probeMergeConflicts, type MergeConflictProbe } from './git.js';
@@ -959,6 +959,11 @@ export function checkPhaseGate(
             return { ok: false, reason: `${config.artifactName} is still the unfilled template for phase '${phase}'` };
         }
 
+        if (phase === 'spec') {
+            const issues = lintSpecManifest(content);
+            if (issues.length > 0) return { ok: false, reason: `${formatManifestLintIssues(issues)}\nFix the \`### Affected Files\` table in spec.md, then rerun \`canon task phase ${taskId} spec done\`.` };
+        }
+
         // Reroute evidence (spec_review + plan), shared with tryEvidenceAdvance via
         // checkRerouteEvidence so the two gates can never disagree. Only reroute-
         // capable phases read status; for them a missing/unreadable/malformed
@@ -1123,16 +1128,12 @@ export function parseAffectedFilesFromSpec(taskId: string): {
     // both bare `## Amendment` (round 1) and `## Amendment Round N` (round 2+) and
     // rejects `## Amendments` etc. Mirrors the reroute heading gate's matching
     // strategy at L184.
-    const sectionBodies = [
-        ...extractSectionBodies(content, /^## Design\b/),
-        ...extractSectionBodies(content, /^## Amendment\b/),
-    ];
-    if (sectionBodies.length === 0) return { files: [], malformed: [] };
-
+    const scan = scanSpecManifest(content);
+    const sections = [...scan.sections.filter(s => s.kind === 'design'), ...scan.sections.filter(s => s.kind === 'amendment')];
     const files = new Set<string>();
     const malformed: Array<{ cell: string; reason: string }> = [];
-    for (const body of sectionBodies) {
-        const rows = parseAllTablesH3(body, 'Affected Files');
+    for (const section of sections) {
+        const rows = blocksToRecords(section.affectedFiles[0]?.blocks ?? []);
         for (const row of rows) {
             const firstColumn = Object.values(row)[0] ?? '';
             if (!firstColumn.trim()) continue;
@@ -1923,4 +1924,87 @@ export function buildSharedDocAbortMessage(abortedFiles: readonly { relPath: str
         'Recovery: commit or stash your edits, then re-run --ship.',
         '--force does not bypass this gate.',
     ].join('\n');
+}
+
+export type ManifestLintKind = 'fused-cells' | 'header-less-block' | 'malformed-path' | 'empty-first-cell' | 'ignored-heading' | 'duplicate-heading' | 'missing-manifest' | 'unclosed-block';
+export type ManifestLintIssue = { section: string; row?: number; line?: number; kind: ManifestLintKind; message: string };
+
+export function lintSpecManifest(markdown: string): ManifestLintIssue[] {
+    const scan = scanSpecManifest(markdown);
+    const issues: ManifestLintIssue[] = [];
+    const hasToken = (cell: string): boolean => /`[^`]+`/.test(cell);
+    for (const section of scan.sections) {
+        const label = section.h2.text;
+        for (const duplicate of section.affectedFiles.slice(1)) {
+            issues.push({ section: label, line: duplicate.heading.line, kind: 'duplicate-heading', message: 'A second ### Affected Files heading is not read; merge its rows into the first table in this section.' });
+        }
+        let row = 0;
+        for (const block of section.affectedFiles[0]?.blocks ?? []) {
+            if (!block.hasSeparator) issues.push({ section: label, line: block.header.line, kind: 'header-less-block', message: 'This line is being read as a header, so its path is not in scope. Keep each table contiguous and start it with a header followed by a |---|---| separator row.' });
+            for (const raw of block.rows) {
+                row += 1;
+                const { cells, line } = raw;
+                const at = { section: label, row, line };
+                if (cells.length > block.header.cells.length && cells.slice(block.header.cells.length).some(hasToken)) {
+                    issues.push({ ...at, kind: 'fused-cells', message: `Row has ${cells.length} cells but its header has ${block.header.cells.length}; extra backticked content is not read. Put one file per row, or comma-join paths in column 1. For a literal pipe in a cell, write \\|.` });
+                }
+                if (!cells[0] && cells.slice(1).some(hasToken)) {
+                    issues.push({ ...at, kind: 'empty-first-cell', message: 'The first column is empty, so a path in another cell is not read. Put the path in column 1.' });
+                } else if (cells[0]) {
+                    for (const malformed of parseHandoffPathCell(cells[0]).malformed) {
+                        issues.push({ ...at, kind: 'malformed-path', message: `First-column cell ${cells[0]}: ${malformed.reason}. Start with backticked paths, comma-join multiple paths, and move notes to the Change column.` });
+                    }
+                }
+            }
+        }
+    }
+    const exact = scan.sections.flatMap(s => s.affectedFiles);
+    for (const heading of scan.headings) {
+        if (!/(?<![a-z])affected files(?![a-z])/i.test(heading.text)) continue;
+        if (exact.some(entry => entry.heading.index === heading.index ||
+            (heading.level >= 4 && heading.index > entry.heading.index && heading.index < entry.heading.sectionEnd))) continue;
+        if (scanTableBlocks(scan.lines, scan.hidden, heading.index + 1, heading.sectionEnd).length === 0) continue;
+        const section = scan.headings.filter(h => h.level === 2 && h.index <= heading.index).at(-1)?.text ?? '(before any ## section)';
+        issues.push({ section, line: heading.line, kind: 'ignored-heading', message: `Heading ${heading.text} is not read as scope. Use exactly ### Affected Files directly under ## Design or an ## Amendment… section.` });
+    }
+    if (scan.unclosed) {
+        const { kind, line } = scan.unclosed;
+        const section = scan.headings.filter(h => h.level === 2 && h.line <= line).at(-1)?.text ?? '(before any ## section)';
+        const construct = kind === 'fence' ? 'code fence' : 'HTML comment';
+        const fix = kind === 'fence' ? 'Close it with a matching fence line.' : 'Close it with -->.';
+        issues.push({ section, line, kind: 'unclosed-block', message: `An unclosed ${construct} opened at line ${line} hides everything after it, including any Affected Files table. ${fix}` });
+    }
+    const designs = scan.sections.filter(section => section.kind === 'design');
+    const hasPathRow = (section: typeof designs[number]) => section.affectedFiles[0]?.blocks.some(block =>
+        block.rows.some(raw => Boolean(raw.cells[0]?.trim()))) ?? false;
+    if (!designs.some(hasPathRow)) {
+        issues.push({ section: designs[0]?.h2.text ?? '(no ## Design section)', kind: 'missing-manifest', message: 'No ### Affected Files table under ## Design has a row with a file in column 1, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one backticked file path per row in column 1.' });
+    }
+    return issues;
+}
+
+export function formatManifestLintIssues(issues: readonly ManifestLintIssue[]): string {
+    return `spec.md's Affected Files table has ${issues.length} problem(s):\n` + issues.map(issue =>
+        `  - ${issue.section}${issue.row === undefined ? '' : `, row ${issue.row}`}${issue.line === undefined ? '' : ` (line ${issue.line})`}: ${issue.message}`,
+    ).join('\n');
+}
+
+export type TaskManifestLint = { taskId: string; issues: ManifestLintIssue[] };
+
+export function lintSpecManifestForTasks(taskIds: readonly string[]): TaskManifestLint[] {
+    return taskIds.flatMap(taskId => {
+        const specPath = path.join(taskDirFor(taskId), 'spec.md');
+        if (!fs.existsSync(specPath)) {
+            return [{ taskId, issues: [{ section: '(no spec.md)', kind: 'missing-manifest' as const, message: 'spec.md is missing from the active checkout, so no scope can be checked. Restore it before rerunning.' }] }];
+        }
+        const issues = lintSpecManifest(fs.readFileSync(specPath, 'utf8'));
+        return issues.length > 0 ? [{ taskId, issues }] : [];
+    });
+}
+
+export function manifestPreflightMessage(failures: readonly TaskManifestLint[], phase: 'plan' | 'implement', force: boolean, taskIds: readonly string[] = failures.map(f => f.taskId)): string {
+    const detail = failures.map(({ taskId, issues }) => `[${taskId}] ${formatManifestLintIssues(issues)}`).join('\n');
+    return `${force ? '--force bypass: ' : ''}Spec manifest pre-flight before ${phase}:\n${detail}\n` +
+        (force ? 'Proceeding with manifest issues at user request.' :
+            `Fix the ### Affected Files table in each task's active-checkout spec.md, then rerun canon run ${taskIds.join(' ')}.`);
 }

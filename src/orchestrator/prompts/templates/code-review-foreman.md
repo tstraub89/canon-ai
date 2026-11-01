@@ -88,6 +88,14 @@ Judge each file against the owning task's ACs and record its outcome and reason 
 2. **Spec miss:** If the spec should have listed the file, append the same `## Amendment (full-send scope)` section and exact `### Affected Files` table row, with a one-line reason that calls it a spec miss.
 3. **Should not have been changed:** Do not amend the spec. Write a finding requiring the file to be reverted or removed, and set the verdict to `changes_requested`.
 
+The Affected Files rows you append under items 1 and 2 must follow the scope manifest contract: Affected Files uses exactly one `### Affected Files` heading under `## Design` and at most one per `## Amendment…` section (a behavior-only amendment needs none), with one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Canon does not lint a table you append here, so a malformed row leaves its file outside Affected Files.
+
+Example row (path in the first column, reason in the Change column):
+
+| File | Change |
+|---|---|
+| `path/to/changed-file.ts` | Full-send scope expansion: needed to meet AC-2. |
+
 For a bundle, amend the member spec whose ACs the file serves. The orchestrator checks after code review completes: every listed file must be in a member's Affected Files or a `changes_requested` verdict must route it back to implement. The legacy `needs_re_review` verdict routes the same way. A `spec_gap` verdict blocks for human triage and names any files still outside Affected Files; blessing that verdict does not amend the spec. An approved review with unjudged files auto-blocks.
 
 {{/hasOutOfScopeFiles}}

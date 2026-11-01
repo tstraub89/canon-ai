@@ -378,3 +378,116 @@ Run in the task worktree, after `npm ci`:
 - **Order and parity of `parseAffectedFilesFromSpec` output.** Design sections come before Amendment sections, and only the first exact H3 per section is read. Any drift here changes allowlists silently, which is why AC-8 includes a literal-array parity test.
 - **Don't touch `extractSectionBodies`** or `parseTableH3`/`parseTable`. Their callers are outside this task.
 - **Worktree reads.** Pre-flights use `taskDirFor` (active checkout). Tests that read this task's own spec use `process.cwd()`.
+
+## Reroute Plan
+
+### Round Scope
+
+**Feasibility (checked against the worktree at `2f7889c`, round-1 implementation complete and approved with nits):**
+- **Exists:** `visibleMarkdownLines` (private) and `scanSpecManifest` in `src/orchestrator/markdown-table.ts`; `ManifestLintKind`, `lintSpecManifest`, `formatManifestLintIssues`, `lintSpecManifestForTasks`, `manifestPreflightMessage` in `src/orchestrator/validation.ts` (~l.1929–1995); `SPEC_MANIFEST_CONTRACT` in `src/orchestrator/prompts/index.ts:139`; the `{{#hasOutOfScopeFiles}}` block with the two amendment bullets in `src/orchestrator/prompts/templates/code-review-foreman.md`; the "scope manifest contract agrees across authoring surfaces" test in `tests/run-task-prompts.test.ts`; the "Spec manifest lint" paragraph at `docs/pipeline-orchestrator.md:414`. All found by grep. The round-1 plan's `computeHiddenLines`/`unclosed` field was **not** implemented (handoff "Deviations"; notes `[implement]`), so open state is still discarded at return.
+- **Real path:** every gate reaches the new kinds through `lintSpecManifest` alone — `checkPhaseGate(…,'spec')` (`validation.ts:963`), `tryEvidenceAdvance('spec')` (`main.ts:3481`), and `lintSpecManifestForTasks` in `runPlanPhase`/`runImplementPhase`. No caller wiring changes. The foreman text is static template text inside `{{#hasOutOfScopeFiles}}`, rendered by `promptCodeReview(…, outOfScopeFiles)`.
+- **Callers:** `scanSpecManifest`'s return type gains a field: callers are `lintSpecManifest` and `parseAffectedFilesFromSpec` (`validation.ts`, ~l.1131) and scanner tests — additive, no behavior change for consumers. `lintSpecManifest`'s contract widens (two new kinds): its callers are the four gate sites above, all of which treat any issue as failure — intended (AC-A1/A2). `parseAllTablesH3` also calls `visibleMarkdownLines`; destructuring keeps it unchanged.
+- **Tests that can fail:** AC-A1 — a `## Design` with prose and no table, and a spec with no `## Design`, return `[]` today. AC-A2 red-first — an unclosed fence on line 1 followed by a canonical manifest, and a canonical manifest followed by an unclosed `<!--`, both return `[]` today (amendment reviewer probes). AC-A3 — the rendered foreman prompt with out-of-scope files does not contain `SPEC_MANIFEST_CONTRACT` today. AC-A4 — the grep hits `docs/pipeline-orchestrator.md:414` and its mirror today.
+- **Predicates:** `missing-manifest` fires when no `design`-kind section has a first exact `### Affected Files` whose blocks hold ≥1 data row (boundaries: no `## Design` at all; `## Design` without the heading; heading with no table; header+separator with zero rows; a header-less single line, which yields zero rows and so is *also* `missing-manifest` in addition to `header-less-block`; a table only under `## Amendment` → still missing). `## Design Notes` counts as design (same `\b` regex the consumers use). `unclosed-block` fires when the scan ends with `fence !== null` or `comment === true` — regardless of what the hidden region contains (the amendment's rule, superseding the round-1 plan's "only if it hides an Affected Files heading" idea). An inline `<!--` that the scanner already treats as literal text (not at line start, no closer on the line) never sets `comment`, so it cannot trigger.
+- **Scope:** all source/doc/test files below are in the Affected Files union, **except `tests/task-cli.test.ts`** (see Step 6 and the contradiction note). `src/orchestrator/prompts/index.ts` needs no change (the contract is copied verbatim into the template, matching how `spec-revision.md` carries it); it stays declared but untouched.
+- **Async/stateful:** N/A — pure functions and static template text; the gates' blocking/resume behavior is unchanged from round 1.
+
+**Archived review (`review-prior-1.md`):** final round 3 verdict was `approved_with_nits` with no unresolved correctness bugs or spec gaps; nothing from it is binding beyond what the amendment absorbs. The amendment absorbs two of its human follow-ups: the unterminated fence (round 1 R3) → item 2 / AC-A2, and the foreman full-send prompt (round 1 R4) → item 3 / AC-A3. The other follow-ups (AC-4 predicate breadth, `docs/patterns.md:209` wording) are out of this round's scope. One consequence: the round-3 dismissal of the "resume test rewrites spec.md to `# Spec: fixed`" finding no longer holds — that fixture has no table, so after AC-A1 the resumed phase blocks again (Step 6).
+
+**Already implemented (round 1, not re-planned):** Steps 1–11 of the original plan as adjusted in the handoff's "Deviations from Plan" — shared visibility scan, AC-1…AC-15, gates, pre-flights, `--force`, guidance carriers, docs, lessons/backlog, archive calibration.
+
+**Contradiction recorded (also in `notes.md` as `[plan]`):** AC-A1 makes a table-less spec fail `spec done`, but `tests/task-cli.test.ts` (outside both Affected Files tables) marks a `# Filled spec` table-less spec done and asserts exit 0 (~l.442–453). Fixing it is required for `npm test` (a Validation Required item) and cannot be done inside the declared scope. Not resolved by changing the spec. See Step 6 for the handling.
+
+### Step R1: Report open fence/comment state from the shared scan
+
+Files: `src/orchestrator/markdown-table.ts`
+
+- In `visibleMarkdownLines`, track where the open construct started: set `fenceStart = index` when a fence opener is accepted, and `commentStart = index` when the `comment = true` branch fires (only when transitioning from not-in-comment; a line that closes and reopens updates it). Use the `map` callback's index argument.
+- Return `unclosed: { kind: 'fence' | 'comment'; line: number } | null` (1-based line) alongside `lines`/`hidden`: `fence` wins if both somehow apply (a fence can't open inside a comment, so at most one is set).
+- Export the type, e.g. `export type UnclosedBlock = { kind: 'fence' | 'comment'; line: number }`, and add `unclosed` to `scanSpecManifest`'s return. `parseAllTablesH3` ignores it.
+- Do not change hiding: content after an unclosed opener stays hidden (amendment item 2: "Hiding the content stays").
+
+### Step R2: `missing-manifest` and `unclosed-block` lint kinds
+
+Files: `src/orchestrator/validation.ts`
+
+- Extend `ManifestLintKind` with `'missing-manifest' | 'unclosed-block'`.
+- At the end of `lintSpecManifest`:
+  - **unclosed-block:** if `scan.unclosed`, push `{ section: <nearest visible H2 at or before the opener, else '(before any ## section)'>, line: unclosed.line, kind: 'unclosed-block', message }`. Messages (adopter-safe, name the construct and line): fence — "An unclosed code fence opened at line N hides everything after it, including any Affected Files table. Close it with a matching fence line."; comment — "An unclosed HTML comment (<!--) opened at line N hides everything after it, including any Affected Files table. Close it with -->." Because `section`/`line` already print via `formatManifestLintIssues`, the line number appearing in both the prefix and message is acceptable; keep it in the message so the issue reads alone.
+  - **missing-manifest:** if no `scan.sections` entry with `kind === 'design'` has `affectedFiles[0]?.blocks.some(b => b.rows.length > 0)`, push `{ section: <first design section's h2.text, else '(no ## Design section)'>, kind: 'missing-manifest', message: 'No `### Affected Files` table under ## Design, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one file per row.' }` (match the existing messages' style; they print headings without backticks).
+  - Order: emit `unclosed-block` before `missing-manifest`, so when an unclosed construct before `## Design` causes both, the root cause prints first.
+- `## Amendment…` sections stay optional: nothing here inspects amendment sections for absence.
+
+### Step R3: Foreman full-send amendment contract (AC-A3)
+
+Files: `src/orchestrator/prompts/templates/code-review-foreman.md`
+
+Inside `{{#hasOutOfScopeFiles}}`, after bullet 2 (before bullet 3 or as an indented sub-paragraph shared by bullets 1–2), add:
+
+```
+   Table rows must follow the scope manifest contract: <SPEC_MANIFEST_CONTRACT verbatim>
+   Example row (path in the first column, reason in the Change column):
+
+   | File | Change |
+   |---|---|
+   | `path/to/changed-file.ts` | Full-send scope expansion: needed to meet AC-2. |
+```
+
+- Copy the constant's text verbatim (same pattern as `spec-revision.md:30`); do not template it, so `prompts/index.ts` stays untouched.
+- Use a neutral example path (`path/to/changed-file.ts`): no `src/`, no `<…>` placeholder (that is a `malformed-path`), no glob.
+- Check the render engine does not alter backticks in literal template text (it shouldn't — only `{{…}}` is substituted); the AC-A3 test confirms.
+
+### Step R4: Docs (AC-A4)
+
+Files: `docs/pipeline-orchestrator.md` (then `npm run sync-templates` for `templates/docs/pipeline-orchestrator.md`)
+
+At l.414, replace "a spec with no scope table is valid" with: a `### Affected Files` table under `## Design` is required (an `## Amendment…` section may omit one); and add the two new rejections to the list — a missing Design manifest, and an unclosed code fence or HTML comment (which would otherwise hide the rest of the spec). Keep the paragraph's existing wording otherwise. Then `grep -rn "a spec with no scope table is valid" docs templates src` must return nothing.
+
+### Step R5: Tests
+
+Files: `tests/markdown-table.test.ts`, `tests/run-task-validation.test.ts`, `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json`
+
+- **AC-A2 red-first, written first** (`tests/run-task-validation.test.ts`), run against current HEAD before Steps R1–R2 and recorded in `handoff.md` with the received value (`[]`):
+  1. unclosed ```` ``` ```` on line 1, then a canonical `## Design` / `### Affected Files` table → post-fix kinds include `unclosed-block` with `line: 1` (and `missing-manifest`, since the Design is hidden — assert the `unclosed-block` entry specifically, not just non-empty).
+  2. canonical manifest, then a trailing unclosed `<!--` at line N → post-fix issues are **exactly** one `unclosed-block` naming the comment and line N (this is the case the amendment reviewer required so `missing-manifest` can't satisfy the test).
+  Also: canonical manifest then an unclosed `~~~` fence → exactly one `unclosed-block` (fence); well-formed fence and comment around a canonical manifest → `[]`.
+- **AC-A1** (`tests/run-task-validation.test.ts`): `## Design` with prose only → one `missing-manifest`; no `## Design` → one `missing-manifest`; `## Design` with the exact heading but no table → `missing-manifest`; valid Design table plus an `## Amendment` with prose and no table → `[]`. Replace the AC-8 "no Affected Files table" passing case with the AC-A1 failing case (amendment item 1 supersedes it).
+- **AC-A1 gate coverage:** add one `checkPhaseGate(id,'spec')` case on a table-less spec → `ok:false` with `missing-manifest` text; the pre-flights need no new test (same `lintSpecManifest` call), but Step R6 fixture updates must keep their existing assertions meaningful.
+- **AC-12:** extend the "one issue of each kind" message test to include `missing-manifest` and `unclosed-block` (both fence and comment variants).
+- **Scanner** (`tests/markdown-table.test.ts`): `scanSpecManifest` reports `unclosed` `{kind:'fence', line}` / `{kind:'comment', line}` at EOF and `null` for closed constructs, an inline literal `<!--` mid-cell, and the `<!-->` short forms.
+- **AC-A3** (`tests/run-task-prompts.test.ts`): render `promptCodeReview(baseState, 'main', null, null, null, ['src/extra-helper.ts'])` (the existing call shape at `tests/run-task-prompts.test.ts:661` and `:796`; the latter feeds the golden) and assert it `includes(SPEC_MANIFEST_CONTRACT)`. Extract the example row from the rendered text (the line starting `` | `path/to/changed-file.ts` ``), embed it in a spec `## Design` canonical table + `## Amendment (full-send scope)` / `### Affected Files` header/separator/that row, and assert `lintSpecManifest` returns `[]` and `parseAffectedFilesFromSpec`-equivalent scan includes `path/to/changed-file.ts`. Also add the foreman template to the raw-file carriers in "scope manifest contract agrees across authoring surfaces".
+- **Golden:** regenerate with `UPDATE_GOLDENS=1` on the prompts test; only the full-send foreman render should change.
+
+### Step R6: Update fixtures that relied on a table-less spec passing
+
+Files: `tests/run-task-safety.test.ts` (in scope), `tests/run-task-validation.test.ts`, `tests/run-task-reroute-preflight.test.ts`, `tests/recovery-hints.test.ts` (round-1 scope), and `tests/task-cli.test.ts` (**out of scope — see below**).
+
+**Measured, not guessed.** During planning a stub `missing-manifest` check (no `design` section with an exact heading) was patched into a scratch copy of HEAD, and nine fixture-heavy test files were run in both that copy and an unpatched copy. Baseline: 1,050 tests, 0 failures. Probe: 16 failures (15 tests + the summary line), all listed here. Re-run the full suite after Step R2, since the final predicate (≥1 data row) is slightly stricter than the stub.
+
+For each, prefer adding a minimal canonical Design manifest (`## Design\n\n### Affected Files\n\n| File | Change |\n|---|---|\n| \`a.ts\` | x |\n`) to the fixture so the test keeps asserting what it was written to assert. Change an expected issue list to include `missing-manifest` only where the fixture is *about* a Design section that lacks the exact heading (the ignored-heading cases), and then assert both kinds explicitly.
+
+`tests/run-task-validation.test.ts`:
+- `checkPhaseGate: spec phase accepts a filled spec.md` (~l.3019): fixture is `# Spec: real task…## Problem` → add a Design manifest.
+- `manifest lint accepts the valid grammar, hidden content and this task spec` (~l.4445): drop/replace the no-table passing case per AC-A1 (Step R5); keep the rest.
+- `manifest lint detects ignored heading …` ×5 (~l.4421): `## Design / ### Affected files`, `## Design / #### Affected Files`, `## Design / ### Amendment Affected Files` now also yield `missing-manifest` (correct — the Design section has no readable table); `## Scope` and `## Amendments` cases have no Design → also `missing-manifest`. Assert `ignored-heading` and `missing-manifest` both, or add a separate valid `## Design` table so the case isolates `ignored-heading`. Pick one and apply it uniformly.
+- `revision R2: unaffected heading is prose…` (~l.4591) and `round 2 N1: emphasized affected-files heading is rejected` ×2 (~l.4598): same treatment.
+- `manifest diagnostics and pre-flight messages are adopter safe for every issue kind` (~l.4535): extend to the two new kinds (Step R5) and fix its fixtures.
+
+`tests/run-task-safety.test.ts`:
+- `manifest pre-flight plan: blocked`, `implement: blocked`, `implement: clean` (~l.11720–11770): the implement fixture puts its table under `## Amendment` only; add a canonical Design table above it. The resume step rewrites spec.md to `# Spec: fixed` — change it to a spec with a clean Design table, so the resumed run proceeds (this is the round-3 dismissed finding, now load-bearing).
+- `runImplementPhase writes metrics and task artifacts only in the worktree after scaffold commit` (~l.5622; fixture at ~l.5659 is `# Spec\n\n## Acceptance Criteria…`) → add a Design manifest.
+- Also check the bundle test at ~l.11782 (`leader/spec.md` = `# Spec: clean\n`): it passed the probe only because the secondary already fails; give `leader` a clean Design table so its assertion that only `[secondary]` is reported stays true under the final predicate.
+
+`tests/task-cli.test.ts` (**outside both Affected Files tables**):
+- `task mutations and phase gate from a managed worktree use only its task copy without overrides` (~l.422): writes `# Filled spec\n` to the worktree copy and asserts `spec done` exits 0. Under AC-A1 it must fail. The minimal fix is to make that fixture a filled spec with a canonical Design manifest (the later `# Filled spec on main` write is the main-copy decoy and can stay table-less — it is never gated).
+- This is a required change to keep `npm test` green but is not in scope. Make the one-fixture edit, and record it in `handoff.md` under Deviations **and** Blockers as "out-of-scope test-fixture change required by AC-A1; needs an Affected Files amendment or operator acceptance". Do not touch anything else in that file. The `code_review` scope pre-flight will then surface it for the operator rather than leaving `npm test` red. (Recorded in `notes.md` as `[plan]`.)
+
+No probe failures appeared in `tests/recovery-hints.test.ts`, `tests/run-task-reroute-preflight.test.ts`, `tests/run-task-cli.test.ts`, `tests/run-task-code-review.test.ts`, `tests/run-task-harness.test.ts` or `tests/run-task-ship.test.ts`.
+
+### Step R7: Archive recalibration (AC-A5)
+
+Re-run the round-1 scratch calibration (not committed) over every `tasks/_archive/*/spec.md` with the new kinds. In `handoff.md`, add per-kind counts for `missing-manifest` and `unclosed-block` with a classification of **each** hit (AC-A5 says each, not sampled). The amendment predicts 3 `missing-manifest` hits (pre-convention `## Affected Files` H2 specs) — classify those as real (no table the consumers read). Any `unclosed-block` hit: open the spec and classify (real stray fence vs. scanner false positive); fix a scanner false positive before handoff. Archived specs are not edited. Also confirm the earlier per-kind counts are unchanged.
+
+### Step R8: Sync, build, validate
+
+`npm run sync-templates` (pipeline-orchestrator mirror), `npm run build` (both `dist/` bundles), then the Validation command from the original plan in the worktree. Record a "prove it can fail" check per new test: drop the `missing-manifest` push → AC-A1 tests red; drop the `unclosed` return → AC-A2 tests red; remove the contract from the foreman template → AC-A3 red.

@@ -1,15 +1,15 @@
 {
   "id": "spec-manifest-lint",
   "title": "Reject malformed scope manifests before planning and implementation",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-01",
   "updated": "2026-11-01",
-  "branch": "",
+  "branch": "task/spec-manifest-lint",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
-    "upstream_commit": "326111d2df944c99cef8f7f83f3a7bee6fa1dad7",
-    "orchestrator_commit": "326111d2df944c99cef8f7f83f3a7bee6fa1dad7",
+    "upstream_commit": "a4b4174ecb96123db1756311c7c97a79db1a6d51",
+    "orchestrator_commit": "a4b4174ecb96123db1756311c7c97a79db1a6d51",
     "canon_version": "3.16.0",
     "codex_cli": "codex-cli 0.165.0",
     "claude_code": "2.1.312 (Claude Code)"
@@ -31,8 +31,8 @@
       "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 2,
-      "changes_requested_total": 1,
+      "iterations_total": 4,
+      "changes_requested_total": 2,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
     },
@@ -41,21 +41,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 4,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,14 +68,18 @@
   },
   "escalations": [],
   "sessions": {
-    "spec_reviewer": "01a19534-0412-7503-83c7-f130a8d23a66",
-    "author": "34958e28-8ca3-48f4-9dfc-3cf51c52a02a"
+    "author": "34958e28-8ca3-48f4-9dfc-3cf51c52a02a",
+    "implementer": "01a19541-c020-7d92-a7dd-7361c8557330",
+    "spec_reviewer": "01a1959d-1611-7bf2-bc2d-09d4eed719b4",
+    "reviewer": "896db717-526f-4cf7-a8f7-19fd4cb49b0f"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
   "session_backends": {
+    "author": "claude",
+    "implementer": "codex",
     "spec_reviewer": "codex",
-    "author": "claude"
+    "reviewer": "claude"
   }
 }

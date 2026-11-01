@@ -27,6 +27,10 @@ import { _VERDICT_VALUES } from '../src/orchestrator/types.js';
 import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
 import { TASK_SUBCOMMAND_ARGS } from '../src/task/index.js';
 import {
+    lintSpecManifest,
+    lintSpecManifestForTasks,
+    formatManifestLintIssues,
+    manifestPreflightMessage,
     checkAcCoveragePlaceholders,
     checkRerouteEvidence,
     buildSharedDocAbortMessage,
@@ -64,7 +68,7 @@ import {
     determinePreflightRoute,
     writePreflightReviewArtifacts,
 } from '../src/orchestrator/phases/code-review.js';
-import { taskPhasePreflightRejected, VALID_VERDICTS } from '../src/task/index.js';
+import { taskPhase, taskPhasePreflightRejected, VALID_VERDICTS } from '../src/task/index.js';
 
 function withTempPair(
     specContent: string,
@@ -3015,7 +3019,7 @@ function withTempTaskDir(
 
 void test('checkPhaseGate: spec phase accepts a filled spec.md', () => {
     withTempTaskDir((taskId, taskDir) => {
-        fs.writeFileSync(path.join(taskDir, 'spec.md'), '# Spec: real task — Real Title\n\n## Problem\n\nReal problem.\n');
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), manifestTable(['| `a.ts` | update |']));
         const result = checkPhaseGate(taskId, 'spec');
         assert.deepEqual(result, { ok: true });
     });
@@ -4357,4 +4361,328 @@ void test('status template agent defaults agree with primary role assignment', a
         const role = phasePrimaryRole(phase);
         assert.equal(template.phases[phase].agent, role ? roleBackendId(role, MIXED_ROLE_ASSIGNMENT) : 'human', phase);
     }
+});
+
+for (const [name, hidden] of [
+    ['fenced displacement', ['```markdown', '### Affected Files', '| File | Change |', '|---|---|', '| `example.ts` | example |', '```'].join('\n')],
+    ['commented table', ['<!--', '| File | Change |', '|---|---|', '| `old.ts` | retired |', '-->'].join('\n')],
+] as const) {
+    void test(`AC-6 manifest excludes ${name}`, () => {
+        withTempTaskDir((taskId, taskDir) => {
+            const real = ['### Affected Files', '| File | Change |', '|---|---|', '| `real.ts` | live |'].join('\n');
+            const body = name === 'fenced displacement' ? `${hidden}\n${real}` : `${real}\n${hidden}`;
+            fs.writeFileSync(path.join(taskDir, 'spec.md'), `# Spec\n## Design\n${body}\n`);
+            assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['real.ts']);
+        });
+    });
+}
+
+function manifestTable(rows: string[], heading = '### Affected Files', section = '## Design'): string {
+    return ['# Spec: manifest', section, heading, '| File | Change |', '|---|---|', ...rows].join('\n');
+}
+
+void test('manifest lint rejects fused paths but allows prose and escaped pipes', () => {
+    const issues = lintSpecManifest(manifestTable(['| `ok.ts` | good |', '| `a.ts` | x || `b.ts` | y |']));
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].kind, 'fused-cells');
+    assert.equal(issues[0].section, '## Design');
+    assert.equal(issues[0].row, 2);
+    assert.match(issues[0].message, /one file per row/);
+    assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | prose | more prose |', String.raw`| ` + '`b.ts`' + String.raw` | escaped \| pipe |`])), []);
+});
+
+void test('manifest lint rejects each header-less block, including a single swallowed row', () => {
+    for (const separator of ['', '\n\n', '\nA note.\n']) {
+        const md = separator === '' ? '# Spec\n## Design\n### Affected Files\n| `a.ts` | x |\n| `b.ts` | y |'
+            : manifestTable(['| `a.ts` | x |']) + separator + '| `b.ts` | y |';
+        const issues = lintSpecManifest(md);
+        assert.ok(issues.some(i => i.kind === 'header-less-block' && /read as a header/.test(i.message)), md);
+    }
+});
+
+for (const cell of ['prose `a.ts`', '`old.ts` → `new.ts`', '`dist/` (rebuilt by `npm run build`)', '`a.ts` (also `b.ts`)', '`<path>`', '`/abs.ts`', '`src/*.ts`', '`a.ts`, `<path>`']) {
+    void test(`manifest lint uses path-cell rejection reason: ${cell}`, () => {
+        const issues = lintSpecManifest(manifestTable([`| ${cell} | change |`]));
+        const malformed = parseHandoffPathCell(cell).malformed;
+        assert.ok(malformed.length > 0);
+        assert.equal(issues.length, malformed.length);
+        for (const [i, entry] of malformed.entries()) {
+            assert.equal(issues[i].kind, 'malformed-path');
+            assert.ok(issues[i].message.includes(entry.reason));
+            assert.equal(issues[i].row, 1);
+        }
+    });
+}
+
+for (const [heading, section] of [
+    ['### Affected files', '## Design'], ['#### Affected Files', '## Design'],
+    ['### Amendment Affected Files', '## Design'], ['### Affected Files', '## Scope'],
+    ['### Affected Files', '## Amendments'],
+]) {
+    void test(`manifest lint detects ignored heading ${section} / ${heading}`, () => {
+        const issues = lintSpecManifest(manifestTable(['| `a.ts` | x |'], heading, section) + '\n' + manifestTable(['| `base.ts` | base |']));
+        assert.equal(issues.length, 1);
+        assert.equal(issues[0].kind, 'ignored-heading');
+        assert.ok(issues[0].message.includes(heading));
+        assert.match(issues[0].message, /exactly ### Affected Files/);
+    });
+}
+
+void test('manifest lint rejects duplicate headings only within the same H2', () => {
+    const table = manifestTable(['| `b.ts` | x |']).split('\n').slice(2).join('\n');
+    const md = manifestTable(['| `a.ts` | x |']);
+    assert.equal(lintSpecManifest(`${md}\n${table}`)[0].kind, 'duplicate-heading');
+    assert.equal(lintSpecManifest(`${md}\n### Affected Files`)[0].kind, 'duplicate-heading');
+    assert.deepEqual(lintSpecManifest(`${md}\n## Amendment Round 2\n${table}`), []);
+});
+
+void test('manifest lint empty first cells gate on backticked tokens', () => {
+    const issues = lintSpecManifest(manifestTable(['| | |', '| | a note |', '| | `lost.ts` |', '| `ok.ts` | live |']));
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].kind, 'empty-first-cell');
+    assert.equal(issues[0].row, 3);
+});
+
+void test('manifest lint accepts the valid grammar, hidden content and this task spec', () => {
+    // Snapshot of this task's manifest: independent of task archiving and runtime artifacts.
+    const taskScopeFixture = [
+        "## Design",
+        "",
+        "### Affected Files",
+        "",
+        "| File | Change |",
+        "|---|---|",
+        "| `src/orchestrator/markdown-table.ts` | Shared raw scan (sections, headings, blocks, raw rows) that skips fences and HTML comments; `parseAllTablesH3`/`extractSectionBodies` consume it. |",
+        "| `src/orchestrator/validation.ts` | Manifest lint and issue formatting; spec-phase gate integration; export or share the per-path validator. |",
+        "| `src/orchestrator/main.ts` | `tryEvidenceAdvance('spec')` lint pre-check; plan/implement pre-flight wiring and `--force` handling if routed here. |",
+        "| `src/orchestrator/phases/plan.ts` | Plan-entry lint pre-flight (auto-block, exit non-zero). |",
+        "| `src/orchestrator/phases/implement.ts` | Implement-entry lint pre-flight (auto-block, exit non-zero). |",
+        "| `src/orchestrator/cli.ts` | `--force` help text lists the manifest pre-flight. |",
+        "| `src/orchestrator/prompts/index.ts` | Spec prompt `selfCheck`: replace the \"not directories\" line with the manifest contract. |",
+        "| `src/orchestrator/prompts/templates/spec-revision.md` | State the manifest contract for revisers. |",
+        "| `tests/markdown-table.test.ts` | Shared-scan tests, fence/comment exclusion (AC-6). |",
+        "| `tests/run-task-validation.test.ts` | Lint unit tests (AC-1–AC-8, AC-12), spec-gate tests (AC-9). |",
+        "| `tests/run-task-safety.test.ts` | Evidence-recovery (AC-10) and plan/implement pre-flight tests (AC-11). |",
+        "| `tests/run-task-reroute-preflight.test.ts` | Reroute-to-implement pre-flight case (AC-11). |",
+        "| `tests/run-task-prompts.test.ts` | Keep the canon-spec-review item (3) token pins passing; add a pin for the new contract line if useful. |",
+        "| `tests/run-task-prompts.golden.json` | Regenerated for prompt wording changes. |",
+        "| `tests/recovery-hints.test.ts` | Register any new `src/` message naming `--reroute` or other registry-pattern commands. |",
+        "| `.canon/templates/spec.md` | Affected Files guidance and checklist line restate the contract. |",
+        "| `templates/.canon/templates/spec.md` | Generated mirror. |",
+        "| `.claude/skills/canon-spec/SKILL.md` | Self-check line restates the contract and the gate. |",
+        "| `templates/.claude/skills/canon-spec/SKILL.md` | Generated mirror. |",
+        "| `.claude/skills/canon-spec-review/SKILL.md` | Structural item (3) narrows to completeness; keeps pinned tokens. |",
+        "| `templates/.claude/skills/canon-spec-review/SKILL.md` | Generated mirror. |",
+        "| `docs/pipeline-orchestrator.md` | Document the gate, evidence recovery, pre-flights, `--force` row. |",
+        "| `templates/docs/pipeline-orchestrator.md` | Generated mirror. |",
+        "| `docs/codebase-map.md` | Update the \"Spec Affected Files parser\" entry for the shared scan and lint. |",
+        "| `docs/lessons-learned.md` | Remove the fused-row entry (AC-14). |",
+        "| `docs/BACKLOG.md` | Record shift-left item (b)'s Affected Files half as done (AC-14). |",
+        "| `dist/cli/index.js` | Rebuilt bundle. |",
+        "| `dist/orchestrator/run-task.js` | Rebuilt bundle. |",
+    ].join('\n');
+    for (const md of [
+        '# Affected Files\n' + manifestTable(['| `a.ts` | x |']),
+        manifestTable(['| `a.ts`, `b.ts` | x |', '| `dist/` rebuilt by build | x |', '| [old.ts](old.ts) | deleted |']),
+        manifestTable(['| `a.ts` | x |'], '### Affected Files\n#### Affected Files'),
+        '## Design\n```md\n### Affected Files\n| `bad.ts` | x |\n```\n<!--\n### Affected files\n| `bad.ts` | x |\n-->\n' + manifestTable(['| `live.ts` | live |']),
+        taskScopeFixture,
+    ]) assert.deepEqual(lintSpecManifest(md), [], md);
+});
+
+void test('manifest parser preserves existing visible ordering and directory/comma grammar', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'spec.md'),
+            manifestTable(['| `extra.ts` | amend |'], '### Affected Files', '## Amendment Round 2') + '\n' +
+            manifestTable(['| `a.ts`, `b.ts` | x |', '| `dist/` rebuilt | x |']));
+        assert.deepEqual(parseAffectedFilesFromSpec(taskId), { files: ['a.ts', 'b.ts', 'dist/', 'extra.ts'], malformed: [] });
+    });
+});
+
+void test('spec manifest gate lists all issues, honors override and retains the env bypass', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        const bad = manifestTable(['| `a.ts` | x || `b.ts` | y |', '| | `lost.ts` |']);
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), bad);
+        const blocked = checkPhaseGate(taskId, 'spec');
+        assert.equal(blocked.ok, false);
+        assert.match(blocked.reason ?? '', /row 1[\s\S]*row 2/);
+        assert.ok(blocked.reason?.includes(`canon task phase ${taskId} spec done`));
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), manifestTable(['| `ok.ts` | x |']));
+        assert.deepEqual(checkPhaseGate(taskId, 'spec'), { ok: true });
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-override-'));
+        try {
+            fs.mkdirSync(path.join(root, taskId));
+            fs.writeFileSync(path.join(root, taskId, 'spec.md'), bad);
+            assert.equal(checkPhaseGate(taskId, 'spec', undefined, root).ok, false);
+        } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        const status = JSON.parse(fs.readFileSync(path.join(process.cwd(), '.canon/templates/status.json'), 'utf8')) as StatusJson;
+        status.id = taskId;
+        status.phases.spec!.status = 'in_progress';
+        writeStatusToFile(path.join(taskDir, 'status.json'), status);
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), bad);
+        const prev = process.env.CANON_SKIP_PHASE_GATE;
+        process.env.CANON_SKIP_PHASE_GATE = '1';
+        try {
+            taskPhase(taskId, 'spec', 'done');
+            assert.equal(readStatus(taskId).phases.spec?.status, 'done');
+        } finally {
+            if (prev === undefined) delete process.env.CANON_SKIP_PHASE_GATE;
+            else process.env.CANON_SKIP_PHASE_GATE = prev;
+        }
+    });
+});
+
+void test('manifest diagnostics and pre-flight messages are adopter safe for every issue kind', () => {
+    const issues = [
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x || `b.ts` | y |', '| | `lost.ts` |', '| prose `a.ts` | x |'])),
+        ...lintSpecManifest('# Spec\n## Design\n### Affected Files\n| `a.ts` | x |'),
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x |'], '### Affected files')),
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x |']) + '\n### Affected Files'),
+        ...lintSpecManifest('# Spec: no manifest'),
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x |']) + '\n<!--'),
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x |']) + '\n~~~'),
+    ];
+    assert.equal(new Set(issues.map(i => i.kind)).size, 8);
+    const messages = [formatManifestLintIssues(issues)];
+    for (const phase of ['plan', 'implement'] as const) for (const force of [true, false]) {
+        messages.push(manifestPreflightMessage([{ taskId: 'example-task', issues }], phase, force));
+    }
+    for (const message of messages) assert.doesNotMatch(message, /src\/|markdown-table|validation\.ts|parseHandoffPathCell|parseAllTablesH3|extractSectionBodies|parseAffectedFilesFromSpec|scanSpecManifest|lintSpecManifest/);
+});
+
+for (const inline of ['```foo``` is inline', '   ```foo``` is inline', '```info `literal`']) {
+    void test(`revision C2: inline backtick run does not hide the manifest: ${inline}`, () => {
+        withTempTaskDir((taskId, taskDir) => {
+            const markdown = '# Spec\n## Problem\n' + inline + '\n' + manifestTable(['| `a.ts` | live |']);
+            fs.writeFileSync(path.join(taskDir, 'spec.md'), markdown);
+            assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['a.ts']);
+            assert.deepEqual(lintSpecManifest(markdown), []);
+        });
+    });
+}
+
+void test('revision C3: unclosed mid-cell comment marker retains later rows and amendments', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        const markdown = manifestTable(['| `a.ts` | strip the <!-- marker |', '| `b.ts` | live |']) + '\n' +
+            manifestTable(['| `c.ts` | amend |'], '### Affected Files', '## Amendment');
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), markdown);
+        assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['a.ts', 'b.ts', 'c.ts']);
+        assert.deepEqual(lintSpecManifest(markdown), []);
+    });
+});
+
+void test('revision C3: real block and closed inline comments still exclude their content', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        const markdown = ['# Spec', '   <!--', '## Design', '### Affected Files',
+            '| File | Change |', '|---|---|', '| `hidden.ts` | ignored |', '-->',
+            manifestTable(['| `a.ts` | live <!-- `x` | `y` --> note |', '| `b.ts` | live |']),
+            '<!--', '| File | Change |', '|---|---|', '| `old.ts` | retired |', '-->',
+        ].join('\n');
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), markdown);
+        assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['a.ts', 'b.ts']);
+        assert.deepEqual(lintSpecManifest(markdown), []);
+    });
+});
+
+void test('revision R1: fused-cell issue explains how to escape a literal pipe', () => {
+    const issues = lintSpecManifest(manifestTable(['| `a.ts` | evaluate left || right then `next` |']));
+    assert.equal(issues[0]?.kind, 'fused-cells');
+    assert.ok(issues[0].message.includes(String.raw`\|`));
+    assert.match(issues[0].message, /literal pipe/);
+});
+
+void test('revision R2: unaffected heading is prose while affected files remains gated', () => {
+    assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | unchanged |'], '### Unaffected Files') + '\n' + manifestTable(['| `base.ts` | base |'])), []);
+    const issues = lintSpecManifest(manifestTable(['| `a.ts` | test |'], '### Tests for affected files') + '\n' + manifestTable(['| `base.ts` | base |']));
+    assert.equal(issues[0]?.kind, 'ignored-heading');
+});
+
+for (const heading of ['### _Affected Files_', '### __Affected Files__']) {
+    void test(`round 2 N1: emphasized affected-files heading is rejected: ${heading}`, () => {
+        const issues = lintSpecManifest(manifestTable(['| `a.ts` | live |'], heading) + '\n' + manifestTable(['| `base.ts` | base |']));
+        assert.equal(issues.length, 1);
+        assert.equal(issues[0].kind, 'ignored-heading');
+        assert.ok(issues[0].message.includes(heading));
+        assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | unchanged |'], '### Unaffected Files') + '\n' + manifestTable(['| `base.ts` | base |'])), []);
+    });
+}
+
+for (const comment of ['<!-->', '<!--->']) {
+    void test(`round 2 N2: complete short comment preserves the following manifest: ${comment}`, () => {
+        withTempTaskDir((taskId, taskDir) => {
+            const markdown = '# Spec\n' + comment + '\n' + manifestTable(['| `a.ts` | live |']);
+            fs.writeFileSync(path.join(taskDir, 'spec.md'), markdown);
+            assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['a.ts']);
+            assert.deepEqual(lintSpecManifest(markdown), []);
+        });
+    });
+}
+
+void test('amendment AC-A2 red-first: unclosed fence before Design is diagnosed', () => {
+    const issues = lintSpecManifest('```markdown\n' + manifestTable(['| `a.ts` | live |']));
+    assert.deepEqual(issues.map(issue => issue.kind), ['unclosed-block', 'missing-manifest']);
+    assert.equal(issues[0].line, 1);
+    assert.match(issues[0].message, /fence.*line 1/);
+});
+
+void test('amendment AC-A2 red-first: unclosed comment after live manifest is diagnosed', () => {
+    const markdown = manifestTable(['| `a.ts` | live |']) + '\n<!--';
+    const line = markdown.split('\n').length;
+    const issues = lintSpecManifest(markdown);
+    assert.deepEqual(issues.map(issue => issue.kind), ['unclosed-block']);
+    assert.equal(issues[0].line, line);
+    assert.match(issues[0].message, /comment/);
+    assert.ok(issues[0].message.includes(`line ${line}`));
+});
+
+void test('amendment AC-A1: Design must contain a nonempty exact manifest', () => {
+    for (const markdown of [
+        '# Spec: no Design', '# Spec\n## Design\nOnly prose.',
+        '# Spec\n## Design\n### Affected Files',
+        '# Spec\n## Design\n### Affected Files\n| File | Change |\n|---|---|',
+        manifestTable(['| `a.ts` | amend |'], '### Affected Files', '## Amendment'),
+        manifestTable(['| | note only |']),
+        manifestTable(['|  |  |']),
+    ]) {
+        assert.deepEqual(lintSpecManifest(markdown).map(issue => issue.kind), ['missing-manifest']);
+    }
+    assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | live |']) + '\n## Amendment\nBehavior only.'), []);
+    withTempTaskDir((id, dir) => {
+        fs.writeFileSync(path.join(dir, 'spec.md'), '# Spec\n## Design\nOnly prose.');
+        const result = checkPhaseGate(id, 'spec');
+        assert.equal(result.ok, false);
+        assert.match(result.reason ?? '', /No ### Affected Files table under ## Design/);
+    });
+});
+
+void test('list-nested fence may close indented past three spaces', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        const markdown = '# Spec\n1. Run it:\n   ```sh\n   canon run x\n    ```\n\n' + manifestTable(['| `a.ts` | live |']);
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), markdown);
+        assert.deepEqual(lintSpecManifest(markdown), []);
+        assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['a.ts']);
+    });
+    assert.deepEqual(lintSpecManifest('```sh\nx\n       ```\n' + manifestTable(['| `a.ts` | live |'])).map(issue => issue.kind), ['unclosed-block', 'missing-manifest']);
+    for (const opener of [' ```sh', 'Intro:\n   ```sh']) {
+        const markdown = opener + '\nx\n     ```\n' + manifestTable(['| `a.ts` | live |']);
+        assert.deepEqual(lintSpecManifest(markdown).map(issue => issue.kind), ['unclosed-block', 'missing-manifest'], opener);
+    }
+});
+
+void test('manifest pre-flight fails a task whose spec.md is missing', () => {
+    withTempTaskDir((taskId) => {
+        const failures = lintSpecManifestForTasks([taskId]);
+        assert.equal(failures.length, 1);
+        assert.equal(failures[0].issues[0].kind, 'missing-manifest');
+        assert.match(failures[0].issues[0].message, /spec\.md is missing/);
+    });
+});
+
+void test('amendment AC-A2: trailing tilde fence is diagnosed; closed examples pass', () => {
+    const manifest = manifestTable(['| `a.ts` | live |']);
+    const issues = lintSpecManifest(manifest + '\n~~~');
+    assert.deepEqual(issues.map(issue => issue.kind), ['unclosed-block']);
+    assert.equal(issues[0].line, manifest.split('\n').length + 1);
+    assert.match(issues[0].message, /fence/);
+    assert.deepEqual(lintSpecManifest('```md\nexample\n```\n<!--\nexample\n-->\n' + manifest), []);
 });

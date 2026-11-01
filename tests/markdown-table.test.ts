@@ -317,3 +317,61 @@ void test('scanAllTables skips tables inside HTML comment blocks and blockquotes
     assert.equal(tables[0].heading, '## Guide');
     assert.deepEqual(tables[0].rows, [{ File: '`src/real.ts`', 'What Changed': 'visible' }]);
 });
+
+void test('parseAllTablesH3 excludes fenced and commented headings and rows', () => {
+    const table = (file: string) => ['| File | Change |', '|---|---|', `| \`${file}\` | change |`].join('\n');
+    for (const fence of ['```', '~~~~']) {
+        for (const commentedFirst of [false, true]) {
+            const comment = `<!--\n${table('old.ts')}\n-->`;
+            const live = table('real.ts');
+            const md = [fence, '### Affected Files', table('example.ts'), fence,
+                '### Affected Files', commentedFirst ? comment : live, commentedFirst ? live : comment,
+                '<!-- ### Affected Files -->', '<!-- | `inline.ts` | change | -->',
+            ].join('\n');
+            assert.deepEqual(parseAllTablesH3(md, 'Affected Files'), [{ File: '`real.ts`', Change: 'change' }]);
+        }
+    }
+});
+
+void test('manifest scanner preserves section boundaries and raw extra cells', async () => {
+    const { scanSpecManifest } = await import('../src/orchestrator/markdown-table.js');
+    const scan = scanSpecManifest([
+        '```', '## Design', '### Affected Files', '```',
+        '## Design Notes', '### Affected Files', '| File | Change |', '|---|---|', '| `a.ts` | x || `b.ts` | y |',
+        '### Affected Files', '| File | Change |', '|---|---|', '| `c.ts` | z |',
+        '## Amendments', '### Affected Files', '| File | Change |', '|---|---|', '| `ignored.ts` | z |',
+    ].join('\n'));
+    assert.equal(scan.sections.length, 1);
+    assert.equal(scan.sections[0].h2.text, '## Design Notes');
+    assert.equal(scan.sections[0].affectedFiles.length, 2);
+    assert.deepEqual(scan.sections[0].affectedFiles[0].blocks[0].rows[0].cells, ['`a.ts`', 'x', '', '`b.ts`', 'y']);
+});
+
+void test('manifest visibility distinguishes comment examples from actual comments', () => {
+    const md = [
+        '```html', '<!--', '### Affected Files', '```',
+        '### Affected Files', '| File | Change |', '|---|---|',
+        '| `a.ts` | Literal `<!-- canon:start -->...<!-- canon:end -->` markers |',
+        '| `b.ts` | Literal `<!--` opener |',
+        '| `c.ts` <!-- retired note --> | visible |',
+        '<!-- | `hidden.ts` | invisible | -->',
+        '| `d.ts` | live |',
+    ].join('\n');
+    const rows = parseAllTablesH3(md, 'Affected Files');
+    // A comment-only line splits blocks, so the final singleton is a header.
+    assert.deepEqual(rows.map(row => row.File), ['`a.ts`', '`b.ts`', '`c.ts`']);
+    assert.match(rows[0].Change, /<!-- canon:start -->/);
+});
+
+void test('manifest scanner reports the opening line of unclosed constructs', async () => {
+    const { scanSpecManifest } = await import('../src/orchestrator/markdown-table.js');
+    for (const [markdown, expected] of [
+        ['intro\n```md\nexample', { kind: 'fence', line: 2 }],
+        ['intro\n~~~\nexample', { kind: 'fence', line: 2 }],
+        ['intro\n<!--\nexample', { kind: 'comment', line: 2 }],
+        ['<!-- closed -->\n<!--', { kind: 'comment', line: 2 }],
+        ['<!--\nclosed --> <!--', null],
+        ['```md\nexample\n```', null], ['<!--\nexample\n-->', null],
+        ['| `a.ts` | literal <!-- marker |', null], ['<!-->\n<!--->', null],
+    ] as const) assert.deepEqual(scanSpecManifest(markdown).unclosed, expected, markdown);
+});
