@@ -8,7 +8,6 @@ import path from 'node:path';
 const WRAPPERS = new Set(['env', 'command', 'exec', 'time', 'nohup', 'npx', 'sudo']);
 const GH_VALUE_FLAGS = new Set(['-t', '--subject', '-b', '--body', '-F', '--body-file', '-A', '--author-email', '--match-head-commit']);
 const PERL_VALUE_FLAGS = new Set(['M', 'm', 'I', 'e', 'E', 'F', 'x', 'V']);
-const PERL_UNICODE_FLAGS = new Set(['I', 'O', 'E', 'S', 'i', 'o', 'D', 'A', 'L', 'a']);
 const PERL_DEBUG_FLAGS = new Set(['p', 's', 'l', 't', 'o', 'c', 'P', 'm', 'f', 'r', 'x', 'u', 'U', 'X', 'D', 'S', 'T', 'R', 'J', 'v', 'C', 'A', 'q', 'M', 'B', 'L', 'i', 'y']);
 const GH_TIMEOUT_MS = Number(process.env.CANON_GUARD_GH_TIMEOUT_MS) || 3000;
 
@@ -404,12 +403,8 @@ function isPerlInPlace(arg) {
             continue;
         }
         if (flag === 'C') {
-            if (/[0-9]/.test(arg[index + 1] ?? '')) {
-                index = skipPerlDigits(arg, index, /[0-9]/);
-            } else {
-                while (PERL_UNICODE_FLAGS.has(arg[index + 1] ?? '')) index += 1;
-            }
-            continue;
+            // Perl consumes the rest of this short-option word as the -C value.
+            return false;
         }
         if (flag === 'd') {
             if (arg[index + 1] === 't') index += 1;
@@ -544,7 +539,7 @@ function parseGhRepoOption(args, index) {
 }
 
 function isMergeFlagCluster(arg) {
-    return /^-[rm]{2,}$/.test(arg);
+    return /^-[dsrm]*[rm][dsrm]*$/.test(arg);
 }
 
 function findPRReference(args, initialRepo = null) {

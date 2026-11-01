@@ -176,7 +176,7 @@ void test('status.json rule denies task-state writes and allows read and neighbo
             ['perl in-place with backup extension', "perl -pi.bak -e 's/a/b/' tasks/foo/status.json", fixture.repo],
             ['perl line-processing in-place cluster', "perl -lpi -e 's/a/b/' tasks/foo/status.json", fixture.repo],
             ['perl octal-record in-place cluster', "perl -0777pi -e 's/a/b/' tasks/foo/status.json", fixture.repo],
-            ['perl unicode-setting in-place cluster', "perl -C16pi -e 's/a/b/' tasks/foo/status.json", fixture.repo],
+            ['perl unicode-setting followed by in-place option', "perl -C16 -pi -e 's/a/b/' tasks/foo/status.json", fixture.repo],
             ['jq output redirect task status write', "jq '.phases' tasks/foo/status.json > tasks/foo/status.json", fixture.repo],
             ['append redirect task status write', 'echo x >> tasks/foo/status.json', fixture.repo],
             ['attached redirect target task status write', 'echo x >tasks/foo/status.json', fixture.repo],
@@ -281,6 +281,7 @@ void test('task PR merge rule denies squash/default and allows other strategies 
         for (const [name, command] of [
             ['explicit squash', 'gh pr merge 12 --squash'],
             ['default merge', 'gh pr merge 12'],
+            ['non-strategy short-option cluster', 'gh pr merge 12 -ds'],
         ] as const) {
             await t.test(name, () => {
                 const result = run(command);
@@ -323,6 +324,8 @@ void test('task PR merge rule denies squash/default and allows other strategies 
         for (const [name, command] of [
             ['rebase merge', 'gh pr merge 12 --rebase'],
             ['merge commit', 'gh pr merge 12 --merge'],
+            ['delete branch plus rebase short cluster', 'gh pr merge 12 -dr'],
+            ['delete branch plus merge-commit short cluster', 'gh pr merge 12 -dm'],
             ['non-task PR', 'gh pr merge 13 --squash'],
             ['create PR', 'gh pr create --head task/foo --title x'],
             ['edit PR', 'gh pr edit 12 --body x'],
