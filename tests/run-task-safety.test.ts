@@ -11007,6 +11007,7 @@ void test(`implement hallucination clears only implementer pair on every bundle 
         status.provider = provider;
         status.session_backends = { implementer: provider === 'claude' ? 'claude' : 'codex' };
         for (const id of ['leader', 'secondary']) writeTaskStatus(fixture.tasksRoot, id, { ...status, id });
+        fs.copyFileSync(path.join(fixture.tasksRoot, 'leader', 'spec.md'), path.join(fixture.tasksRoot, 'secondary', 'spec.md'));
         gitIn(fixture.worktreeDir, 'add', 'tasks');
         gitIn(fixture.worktreeDir, 'commit', '-m', 'clean revision fixture');
         const result = runNodeInline(String.raw`

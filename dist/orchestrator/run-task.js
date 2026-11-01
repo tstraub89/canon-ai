@@ -3433,16 +3433,31 @@ function parseTableH3(markdown, sectionHeading) {
   }
   return rows;
 }
+function listContentColumn(lines, index, indent) {
+  if (indent === 0) return 0;
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (line.trim() === "") continue;
+    const marker = /^( *)([-*+]|\d{1,9}[.)])( +)\S/.exec(line);
+    if (marker) {
+      const column = marker[1].length + marker[2].length + marker[3].length;
+      if (column <= indent) return column;
+    }
+    if (line.length - line.trimStart().length < indent) return 0;
+  }
+  return 0;
+}
 function visibleMarkdownLines(markdown) {
   const hidden = [];
   let unclosed = null;
   let comment = false;
   let fence = null;
-  const lines = markdown.split("\n").map((line, index) => {
+  const source = markdown.split("\n");
+  const lines = source.map((line, index) => {
     if (fence) {
       hidden.push(true);
       const close = /^([ \t]*)(`{3,}|~{3,})\s*$/.exec(line);
-      if (close && close[1].length <= Math.max(3, fence.indent + 3) && close[2][0] === fence.char && close[2].length >= fence.length) {
+      if (close && close[1].length <= fence.container + 3 && close[2][0] === fence.char && close[2].length >= fence.length) {
         fence = null;
         unclosed = null;
       }
@@ -3450,7 +3465,7 @@ function visibleMarkdownLines(markdown) {
     }
     const opener = !comment && /^([ \t]{0,3})(`{3,}|~{3,})/.exec(line);
     if (opener && (opener[2][0] !== "`" || !line.slice(opener[0].length).includes("`"))) {
-      fence = { char: opener[2][0], length: opener[2].length, indent: opener[1].length };
+      fence = { char: opener[2][0], length: opener[2].length, container: listContentColumn(source, index, opener[1].length) };
       unclosed = { kind: "fence", line: index + 1 };
       hidden.push(true);
       return line;
@@ -4838,7 +4853,9 @@ function formatManifestLintIssues(issues) {
 function lintSpecManifestForTasks(taskIds) {
   return taskIds.flatMap((taskId) => {
     const specPath = path9.join(taskDirFor(taskId), "spec.md");
-    if (!fs11.existsSync(specPath)) return [];
+    if (!fs11.existsSync(specPath)) {
+      return [{ taskId, issues: [{ section: "(no spec.md)", kind: "missing-manifest", message: "spec.md is missing from the active checkout, so no scope can be checked. Restore it before rerunning." }] }];
+    }
     const issues = lintSpecManifest(fs11.readFileSync(specPath, "utf8"));
     return issues.length > 0 ? [{ taskId, issues }] : [];
   });

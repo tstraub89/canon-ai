@@ -182,18 +182,37 @@ export function parseAllTablesH3(markdown: string, sectionHeading: string): Arra
 // Keep extractSectionBodies unchanged: its other callers read review/handoff bodies.
 export type UnclosedBlock = { kind: 'fence' | 'comment'; line: number };
 
+// Content column of the list item an indented line belongs to, or 0 at top
+// level. Walks back over the item's continuation lines (indented at least as
+// far as the line) to its marker; a less-indented non-marker line ends the walk.
+function listContentColumn(lines: readonly string[], index: number, indent: number): number {
+    if (indent === 0) return 0;
+    for (let i = index - 1; i >= 0; i -= 1) {
+        const line = lines[i];
+        if (line.trim() === '') continue;
+        const marker = /^( *)([-*+]|\d{1,9}[.)])( +)\S/.exec(line);
+        if (marker) {
+            const column = marker[1].length + marker[2].length + marker[3].length;
+            if (column <= indent) return column;
+        }
+        if (line.length - line.trimStart().length < indent) return 0;
+    }
+    return 0;
+}
+
 function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: boolean[]; unclosed: UnclosedBlock | null } {
     const hidden: boolean[] = [];
     let unclosed: UnclosedBlock | null = null;
     let comment = false;
-    let fence: { char: string; length: number; indent: number } | null = null;
-    const lines = markdown.split('\n').map((line, index) => {
+    let fence: { char: string; length: number; container: number } | null = null;
+    const source = markdown.split('\n');
+    const lines = source.map((line, index) => {
         if (fence) {
             hidden.push(true);
-            // A fence nested in a list item may close at its own indent plus up
-            // to three spaces, measured from the list item's content column.
+            // Closer indent is measured from the enclosing list item's content
+            // column, so a list-nested fence may close up to three spaces past it.
             const close = /^([ \t]*)(`{3,}|~{3,})\s*$/.exec(line);
-            if (close && close[1].length <= Math.max(3, fence.indent + 3) && close[2][0] === fence.char && close[2].length >= fence.length) {
+            if (close && close[1].length <= fence.container + 3 && close[2][0] === fence.char && close[2].length >= fence.length) {
                 fence = null;
                 unclosed = null;
             }
@@ -202,7 +221,7 @@ function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: bool
         const opener = !comment && /^([ \t]{0,3})(`{3,}|~{3,})/.exec(line);
         // Backticks in a backtick fence's info string make this inline text.
         if (opener && (opener[2][0] !== '`' || !line.slice(opener[0].length).includes('`'))) {
-            fence = { char: opener[2][0], length: opener[2].length, indent: opener[1].length };
+            fence = { char: opener[2][0], length: opener[2].length, container: listContentColumn(source, index, opener[1].length) };
             unclosed = { kind: 'fence', line: index + 1 };
             hidden.push(true);
             return line;

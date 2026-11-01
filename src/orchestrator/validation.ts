@@ -1994,7 +1994,9 @@ export type TaskManifestLint = { taskId: string; issues: ManifestLintIssue[] };
 export function lintSpecManifestForTasks(taskIds: readonly string[]): TaskManifestLint[] {
     return taskIds.flatMap(taskId => {
         const specPath = path.join(taskDirFor(taskId), 'spec.md');
-        if (!fs.existsSync(specPath)) return [];
+        if (!fs.existsSync(specPath)) {
+            return [{ taskId, issues: [{ section: '(no spec.md)', kind: 'missing-manifest' as const, message: 'spec.md is missing from the active checkout, so no scope can be checked. Restore it before rerunning.' }] }];
+        }
         const issues = lintSpecManifest(fs.readFileSync(specPath, 'utf8'));
         return issues.length > 0 ? [{ taskId, issues }] : [];
     });

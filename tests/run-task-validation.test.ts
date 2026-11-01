@@ -28,6 +28,7 @@ import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
 import { TASK_SUBCOMMAND_ARGS } from '../src/task/index.js';
 import {
     lintSpecManifest,
+    lintSpecManifestForTasks,
     formatManifestLintIssues,
     manifestPreflightMessage,
     checkAcCoveragePlaceholders,
@@ -4662,6 +4663,19 @@ void test('list-nested fence may close indented past three spaces', () => {
         assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['a.ts']);
     });
     assert.deepEqual(lintSpecManifest('```sh\nx\n       ```\n' + manifestTable(['| `a.ts` | live |'])).map(issue => issue.kind), ['unclosed-block', 'missing-manifest']);
+    for (const opener of [' ```sh', 'Intro:\n   ```sh']) {
+        const markdown = opener + '\nx\n     ```\n' + manifestTable(['| `a.ts` | live |']);
+        assert.deepEqual(lintSpecManifest(markdown).map(issue => issue.kind), ['unclosed-block', 'missing-manifest'], opener);
+    }
+});
+
+void test('manifest pre-flight fails a task whose spec.md is missing', () => {
+    withTempTaskDir((taskId) => {
+        const failures = lintSpecManifestForTasks([taskId]);
+        assert.equal(failures.length, 1);
+        assert.equal(failures[0].issues[0].kind, 'missing-manifest');
+        assert.match(failures[0].issues[0].message, /spec\.md is missing/);
+    });
 });
 
 void test('amendment AC-A2: trailing tilde fence is diagnosed; closed examples pass', () => {
