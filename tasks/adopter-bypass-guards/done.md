@@ -92,7 +92,7 @@ Scope check: the guard is user-facing (new managed file, new doctor and upgrade 
 
 ## Open Questions
 
-- Open review nits, left in place as non-blocking (`tasks/adopter-bypass-guards/review.md`, round 4): the merge-strategy scan also reads flag values (for example `-t -dr`), so that title is allowed. Mixed clusters such as `-sr` rely on `gh` to refuse them. A cluster that ends in a value flag (`-rt subject`) is a rare false deny; the reason says how to retry. Say if you want any of these fixed before merge.
+- Round-4 review nits were fixed inline at human_review (Codex-reviewed): the merge-strategy scan now skips flag values (`-t -dr`), treats a squash-mixed cluster (`-sr`) as squash, allows a strategy cluster ending in a value flag (`-rt subject`), and accepts `--rebase=true` / `--merge=true`.
 - Windows adopters on the PowerShell tool have no shell-rule coverage. Adding it is a follow-up if they ask.
 - The maintainer's user-level guards overlap with this hook. Retiring them is a separate local step, not part of this change.
 - Follow-up audit candidates from the spec's Non-Goals (a `--ship` dirty-worktree guard, post-implement spec-edit detection, and others) are not yet filed.
