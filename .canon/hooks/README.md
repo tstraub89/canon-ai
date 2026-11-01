@@ -1,6 +1,8 @@
 # Project hooks
 
-Drop project-specific scripts here. The orchestrator (`src/orchestrator/main.ts`) checks for these files at well-defined points in the pipeline and runs them when present. Absence is the default — canon-ai itself ships no hooks.
+Drop project-specific scripts here. These are orchestrator shell hooks: the orchestrator checks for them at defined points in the pipeline and runs them when present. Absence is the default — canon ships no orchestrator hooks in this directory.
+
+This directory's shell hooks are separate from canon's Claude Code guard hook, installed at `.claude/hooks/canon-guard.mjs`. The guard hook registers through a recommend-only entry in Claude Code settings; it does not add a script to this orchestrator hook directory.
 
 ## Available hooks
 

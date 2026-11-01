@@ -10,6 +10,7 @@ export const CANON_OWNED = [
     '.claude/skills/canon-spec-review/SKILL.md',
     '.claude/skills/canon-inline-review/SKILL.md',
     '.claude/skills/canon-sweep/SKILL.md',
+    '.claude/hooks/canon-guard.mjs',
     '.claude/agents/code-review-anchored.md',
     '.claude/agents/code-review-cold.md',
     '.claude/agents/spec-review-lens.md',

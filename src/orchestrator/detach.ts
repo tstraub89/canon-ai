@@ -20,7 +20,8 @@
 //   - canon doctor            ("Active orchestrators" already reports
 //                              heartbeat freshness; PID comes from heartbeat)
 //   - canon watch <id>        (blocking observer for the detached run)
-//   - tail -f tasks/<id>/.canon-run.log  (live output of the detached run)
+//   - canon watch <id>     (streams the run and reports how it ended)
+//   - tail -n <count> tasks/<id>/.canon-run.log  (single read if needed)
 //
 // Opt-out: CANON_NO_DETACH=1 in env forces foreground mode regardless of
 // TTY state. Useful in CI that prefers the harness to manage the lifecycle

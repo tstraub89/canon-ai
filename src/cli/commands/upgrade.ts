@@ -6,6 +6,7 @@ import { CANON_OWNED, DELIMITED } from '../../lib/canon-owned.js';
 import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
 import { assertNoSymlinkDestinations } from '../../lib/scaffold-paths.js';
 import { handlePreScan, type ArgDeclaration, unknownOptionMessage, unexpectedArgumentMessage } from '../../lib/cli-args.js';
+import { GUARD_HOOK_PATH, guardHookRegistration } from './doctor.js';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -27,6 +28,16 @@ export const UPGRADE_USAGE = [
     '  --no-stage           Skip the post-write git add',
 ].join('\n');
 export const UPGRADE_ARGS: ArgDeclaration = { command: 'upgrade', usage: UPGRADE_USAGE, booleanFlags: ['--check', '--dry-run', '--force', '--no-stage'], valueFlags: [], rejectPositionals: true };
+
+export function guardHookNotice(cwd: string): string | null {
+    if (!existsSync(join(cwd, GUARD_HOOK_PATH))) return null;
+    const registration = guardHookRegistration(cwd);
+    if (registration === 'full') return null;
+    if (registration === 'partial') {
+        return `Heads-up: ${GUARD_HOOK_PATH} is registered as a Claude Code hook, but its matcher does not cover every guarded tool (Bash, Edit, Write, MultiEdit) — run \`canon doctor\` to see which are missing and the settings snippet.`;
+    }
+    return `Heads-up: ${GUARD_HOOK_PATH} is installed but not registered as a Claude Code hook — run \`canon doctor\` for the settings snippet.`;
+}
 
 export const CANON_END = '<!-- canon:end -->';
 export const CANON_START_RE = /<!-- canon:start[^>]* -->/;
@@ -666,6 +677,9 @@ export function upgradeCmd(args: string[]): void {
         }
         console.log('');
     }
+
+    const hookNotice = guardHookNotice(process.cwd());
+    if (hookNotice) console.log(`${hookNotice}\n`);
 
     if (upgraded.length === 0 && unchanged.length === 0 && skipped.length === 0 && malformed.length === 0) {
         console.log('No canon-managed files found. Run `canon init` to set up canon in this repo.\n');

@@ -192,7 +192,7 @@ export function getBaseBranch(taskIds?: string[]): string {
         if (bases.size > 1) {
             die(
                 `Bundle base_branch mismatch: tasks have different base branches (${[...bases].join(', ')}). ` +
-                `All tasks in a bundle must target the same base. Edit status.json to align before invoking.`,
+                `All tasks in a bundle must target the same base. Align them with \`canon task set <id> base_branch <branch>\` before the tasks branch; once branched, ask the human to fix status.json.`,
             );
         }
         return [...bases][0];

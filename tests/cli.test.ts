@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, printStaleOverrideNudge, printUpgradeRefusals, runUpgrade } from '../src/cli/commands/upgrade.js';
+import { guardHookNotice, mergeDelimited, mergeHeaderOnly, parseUpgradeArgs, printStaleOverrideNudge, printUpgradeRefusals, runUpgrade } from '../src/cli/commands/upgrade.js';
 import {
     detectInstallType,
     layoutGate,
@@ -38,12 +38,17 @@ import {
     checkLocalSettingsGitignored,
     checkRuntimeFilesGitignored,
     checkRecommendedPermissions,
+    checkGuardHook,
+    guardHookRegistration,
+    GUARD_HOOK_PATH,
+    GUARD_HOOK_TOOLS,
     checkClaudeVersion,
     formatAge,
     parseClaudeVersion,
     parseCodexProjectTrust,
     MIN_CLAUDE_VERSION,
     RECOMMENDED_ALLOW,
+    RECOMMENDED_GUARD_HOOKS,
     RECOMMENDED_NUDGE,
 } from '../src/cli/commands/doctor.js';
 import { CANON_OWNED } from '../src/lib/canon-owned.js';
@@ -1617,6 +1622,17 @@ function writeSettings(dir: string, obj: unknown): void {
     fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify(obj));
 }
 
+function writeLocalSettings(dir: string, obj: unknown): void {
+    fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify(obj));
+}
+
+function writeGuardScript(dir: string): void {
+    const scriptPath = path.join(dir, GUARD_HOOK_PATH);
+    fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+    fs.writeFileSync(scriptPath, '#!/usr/bin/env node\n');
+}
+
 void test('checkRecommendedPermissions: settings.json absent → warn pointing to README', () => {
     withTempDir(dir => {
         const check = checkRecommendedPermissions(dir);
@@ -1698,6 +1714,83 @@ void test('checkRecommendedPermissions: malformed settings.local.json → warn p
         assert.equal(check.status, 'warn');
         assert.equal(check.label, '.claude/settings.local.json');
         assert.match(check.detail ?? '', /not valid JSON/i);
+    });
+});
+
+// ── checkGuardHook ──────────────────────────────────────────────────────────
+
+void test('checkGuardHook: no registration → warn with the recommended snippet', () => {
+    withTempDir(dir => {
+        writeGuardScript(dir);
+        const check = checkGuardHook(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /not registered/);
+        assert.ok((check.detail ?? '').includes(JSON.stringify(RECOMMENDED_GUARD_HOOKS, null, 2)));
+        assert.equal(guardHookRegistration(dir), 'none');
+    });
+});
+
+void test('checkGuardHook: partial matcher → warn with missing tools and snippet', () => {
+    withTempDir(dir => {
+        writeGuardScript(dir);
+        const command = RECOMMENDED_GUARD_HOOKS.hooks.PreToolUse[0].hooks[0].command;
+        writeSettings(dir, {
+            hooks: { PreToolUse: [{ matcher: 'Bash|Edit', hooks: [{ type: 'command', command }] }] },
+        });
+        const check = checkGuardHook(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /misses Write, MultiEdit/);
+        assert.ok((check.detail ?? '').includes(JSON.stringify(RECOMMENDED_GUARD_HOOKS, null, 2)));
+        assert.equal(guardHookRegistration(dir), 'partial');
+    });
+});
+
+void test('checkGuardHook: full registration and script present → pass', () => {
+    withTempDir(dir => {
+        writeGuardScript(dir);
+        writeSettings(dir, RECOMMENDED_GUARD_HOOKS);
+        assert.equal(guardHookRegistration(dir), 'full');
+        assert.equal(checkGuardHook(dir).status, 'pass');
+    });
+});
+
+void test('checkGuardHook: full registration with missing script → warn', () => {
+    withTempDir(dir => {
+        writeSettings(dir, RECOMMENDED_GUARD_HOOKS);
+        const check = checkGuardHook(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /script missing/);
+        assert.ok((check.detail ?? '').includes(JSON.stringify(RECOMMENDED_GUARD_HOOKS, null, 2)));
+    });
+});
+
+void test('checkGuardHook: settings.local.json can carry the full registration', () => {
+    withTempDir(dir => {
+        writeGuardScript(dir);
+        writeLocalSettings(dir, RECOMMENDED_GUARD_HOOKS);
+        assert.equal(guardHookRegistration(dir), 'full');
+        assert.equal(checkGuardHook(dir).status, 'pass');
+    });
+});
+
+void test('recommended guard hook matcher covers exactly the registered tool names', () => {
+    const matcher = RECOMMENDED_GUARD_HOOKS.hooks.PreToolUse[0].matcher;
+    assert.deepEqual(matcher.split('|'), [...GUARD_HOOK_TOOLS]);
+    assert.equal(matcher.includes('PowerShell'), false);
+});
+
+void test('guardHookNotice reports an unregistered or partially registered hook', () => {
+    withTempDir(dir => {
+        assert.equal(guardHookNotice(dir), null, 'missing script stays silent');
+        writeGuardScript(dir);
+        assert.match(guardHookNotice(dir) ?? '', /not registered/);
+        const [entry] = RECOMMENDED_GUARD_HOOKS.hooks.PreToolUse;
+        writeSettings(dir, { hooks: { PreToolUse: [{ ...entry, matcher: 'Bash|Edit' }] } });
+        const partialNotice = guardHookNotice(dir) ?? '';
+        assert.match(partialNotice, /does not cover every guarded tool/);
+        assert.doesNotMatch(partialNotice, /not registered/);
+        writeSettings(dir, RECOMMENDED_GUARD_HOOKS);
+        assert.equal(guardHookNotice(dir), null, 'full registration stays silent');
     });
 });
 
@@ -1836,7 +1929,40 @@ void test('init: real templates create neither CLAUDE.md nor AGENTS.md', () => {
         assert.equal(scaffolded.includes('AGENTS.md'), false);
         assert.equal(skipped.includes('CLAUDE.md'), false);
         assert.equal(skipped.includes('AGENTS.md'), false);
+        const hookPath = path.join(projectDir, GUARD_HOOK_PATH);
+        assert.equal(scaffolded.includes(GUARD_HOOK_PATH), true);
+        assert.equal(
+            fs.readFileSync(hookPath, 'utf8'),
+            fs.readFileSync(path.join(WORKTREE_ROOT, 'templates', GUARD_HOOK_PATH), 'utf8'),
+        );
+        assert.equal(fs.existsSync(path.join(projectDir, '.claude', 'settings.json')), false);
+        assert.equal(CANON_OWNED.includes(GUARD_HOOK_PATH), true);
     });
+});
+
+void test('canon init and upgrade install the guard without writing adopter settings', () => {
+    withTempDir(projectDir => withTempDir(binDir => {
+        const gitPath = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout?.trim();
+        assert.ok(gitPath, 'git is available to create the fixture');
+        fs.symlinkSync(gitPath, path.join(binDir, 'git'));
+        writeExecutable(binDir, 'claude', ['exit 0']);
+        writeExecutable(binDir, 'codex', ['exit 0']);
+        const env = { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}` };
+
+        execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: projectDir });
+        execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectDir });
+        execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: projectDir });
+
+        const init = runDistCli(['init'], { cwd: projectDir, env });
+        assert.equal(init.status, 0, init.stderr);
+        assert.equal(fs.existsSync(path.join(projectDir, GUARD_HOOK_PATH)), true);
+        assert.equal(fs.existsSync(path.join(projectDir, '.claude', 'settings.json')), false);
+
+        const upgrade = runDistCli(['upgrade'], { cwd: projectDir, env });
+        assert.equal(upgrade.status, 0, upgrade.stderr);
+        assert.match(upgrade.stdout, /not registered/);
+        assert.equal(fs.existsSync(path.join(projectDir, '.claude', 'settings.json')), false);
+    }));
 });
 
 void test('scaffoldTemplates: existing files skipped, new ones copied', () => {
@@ -3148,6 +3274,32 @@ function setupSkillTemplate(pkgDir: string, content: string): string {
     return rel;
 }
 
+void test('runUpgrade: installs the guard hook and force-restores a local edit after dirty refusal', () => {
+    withTempDir(projectDir => {
+        const hookRel = GUARD_HOOK_PATH;
+        const hookPath = path.join(projectDir, hookRel);
+        fs.mkdirSync(path.join(projectDir, '.canon'), { recursive: true });
+        fs.writeFileSync(path.join(projectDir, '.canon', 'version'), `${process.env['CANON_VERSION'] ?? 'dev'}\n`);
+        gitInit(projectDir);
+        gitAddCommit(projectDir, 'seed adopter repo');
+
+        const first = runUpgrade(projectDir, WORKTREE_ROOT);
+        assert.ok(first.upgraded.includes(hookRel));
+        const templateContent = fs.readFileSync(path.join(WORKTREE_ROOT, 'templates', hookRel), 'utf8');
+        assert.equal(fs.readFileSync(hookPath, 'utf8'), templateContent);
+        gitAddCommit(projectDir, 'track installed canon files');
+
+        fs.writeFileSync(hookPath, 'local edit\n');
+        const refused = runUpgrade(projectDir, WORKTREE_ROOT);
+        assert.ok(refused.refusals.trackedDirty.includes(hookRel));
+        assert.equal(fs.readFileSync(hookPath, 'utf8'), 'local edit\n');
+
+        const forced = runUpgrade(projectDir, WORKTREE_ROOT, { force: true });
+        assert.ok(forced.upgraded.includes(hookRel));
+        assert.equal(fs.readFileSync(hookPath, 'utf8'), templateContent);
+    });
+});
+
 void test('parseUpgradeArgs: accepts --check, --dry-run, --force, --no-stage', () => {
     assert.deepEqual(parseUpgradeArgs([]), {});
     assert.deepEqual(parseUpgradeArgs(['--check']), { check: true });
@@ -3755,6 +3907,14 @@ void test('README "Skip the permission prompts" allowlist matches RECOMMENDED_AL
     );
 });
 
+void test('README "Guard hooks" JSON matches RECOMMENDED_GUARD_HOOKS', () => {
+    const readme = fs.readFileSync(path.join(WORKTREE_ROOT, 'README.md'), 'utf8');
+    const blockMatch = readme.match(/### Guard hooks[\s\S]*?```json\n([\s\S]*?)\n```/);
+    assert.ok(blockMatch, 'README "Guard hooks" json block not found');
+    const parsed: unknown = JSON.parse(blockMatch[1]);
+    assert.deepEqual(parsed, RECOMMENDED_GUARD_HOOKS);
+});
+
 void test('README discovery nudge matches RECOMMENDED_NUDGE', () => {
     const readme = fs.readFileSync(path.join(WORKTREE_ROOT, 'README.md'), 'utf8');
     const blockMatch = readme.match(
@@ -3844,6 +4004,7 @@ type CanonDevTokens = {
 // every adopter via `npm install canon-ai`.
 const ADOPTER_SHIPPED_PATHS = [
     'templates/.gitignore',
+    'templates/.claude/hooks/canon-guard.mjs',
     'templates/.canon/templates/spec.md',
     'templates/.canon/templates/plan.md',
     'templates/.canon/templates/handoff.md',

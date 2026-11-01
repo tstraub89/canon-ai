@@ -1914,7 +1914,7 @@ function assertTaskBranchPushed(taskId: string, branchName?: string): void {
  *     than have the safety check pass spuriously next time).
  * Either way, shipping silently would orphan the remote commits.
  */
-function assertOriginTaskBranchAbsent(branchName: string, baseBranch: string): void {
+function assertOriginTaskBranchAbsent(branchName: string, baseBranch: string, taskIds: string[]): void {
     // Query origin directly via ls-remote rather than the local tracking ref. When
     // origin/<branch> was deleted from another checkout, `git fetch --prune origin
     // <branch>` does NOT prune the stale local tracking ref, so a `rev-parse
@@ -1993,7 +1993,7 @@ function assertOriginTaskBranchAbsent(branchName: string, baseBranch: string): v
         `  Either the remote branch has commits that were never PR'd, or a prior merge\n` +
         `  failed to delete it. Shipping silently would orphan the remote work.\n` +
         `  Resolve manually:\n` +
-        `    - If unmerged work: open + merge a PR (gh pr create --base ${splitState.shellQuoteArg(baseBranch)} --head ${splitState.shellQuoteArg(branchName)} ...).\n` +
+        `    - If unmerged work: open a PR (gh pr create --base ${splitState.shellQuoteArg(baseBranch)} --head ${splitState.shellQuoteArg(branchName)} ...), then re-run \`canon run ${taskIds.map(splitState.shellQuoteArg).join(' ')} --ship\` — it merges the open PR.\n` +
         `    - If already merged elsewhere: \`git push origin --delete ${branchName}\` and re-run --ship.`,
     );
 }
@@ -2153,14 +2153,13 @@ function establishMergeProof(
  * returned false (no PR was merged this run) — a defensive cross-check against gh
  * transient issues that might have caused findOpenPRNumber to return null spuriously.
  */
-function assertNoOpenPRForTask(branchName: string, baseBranch: string): void {
+function assertNoOpenPRForTask(branchName: string, baseBranch: string, taskIds: string[]): void {
     const prNum = findOpenPRNumber(branchName, baseBranch);
     if (prNum !== null) {
         splitCli.die(
             `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.\n` +
-            `  This can happen during gh transient hiccups. Re-running --ship usually works; if it\n` +
-            `  keeps failing, merge the PR manually (gh pr merge ${prNum} --squash --delete-branch)\n` +
-            `  and re-run.`,
+            `  This can happen during gh transient hiccups. Re-run \`canon run ${taskIds.map(splitState.shellQuoteArg).join(' ')} --ship\`; if it keeps failing,\n` +
+            `  the human can merge PR #${prNum} manually and re-run --ship.`,
         );
     }
 }
@@ -2265,7 +2264,7 @@ function mergeOpenPRsAndPull(
             // Setting anyMerged = true below skips the downstream !merged safety
             // net, so verify the remote branch is absent here instead. The check
             // retries the delete only when origin's tip matches the merged head.
-            assertOriginTaskBranchAbsent(branch, baseBranch);
+            assertOriginTaskBranchAbsent(branch, baseBranch, taskIds);
         }
         anyMerged = true;
     }
@@ -2463,7 +2462,7 @@ function shipTasks(taskIds: string[]): void {
     if (baseBranches.size > 1) {
         splitCli.die(
             `Bundle base_branch mismatch: tasks have different base branches (${[...baseBranches].join(', ')}). ` +
-            `All tasks in a bundle must target the same base. Edit status.json to align before invoking.`,
+            `All tasks in a bundle must target the same base. Align them with \`canon task set <id> base_branch <branch>\` before the tasks branch; once branched, ask the human to fix status.json.`,
         );
     }
     const baseBranch = [...baseBranches][0];
@@ -2631,7 +2630,7 @@ function shipTasks(taskIds: string[]): void {
         // commits and leaving the base branch missing the task's content.
         // Independent verification here prevents that class of silent failure.
         assertLocalBaseInSyncWithOrigin(baseBranch);
-        for (const taskId of taskIds) assertNoOpenPRForTask(taskSnapshot(taskId).branch, baseBranch);
+        for (const taskId of taskIds) assertNoOpenPRForTask(taskSnapshot(taskId).branch, baseBranch, taskIds);
         // After mergeOpenPRsAndPull(), a successful merge would have invoked
         // --delete-branch and removed origin/task/<id>. If that branch still exists
         // here, no merge ever happened for it — abort. The earlier
@@ -2639,7 +2638,7 @@ function shipTasks(taskIds: string[]): void {
         // this case because origin can be AHEAD of local and have unmerged commits
         // that are only on the remote, never in the base. Caught via codex review
         // of fb76257.
-        for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskSnapshot(taskId).branch, baseBranch);
+        for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskSnapshot(taskId).branch, baseBranch, taskIds);
     }
 
     // Post-merge: project-specific hook (default no-op; edit runPostMergeHook).
