@@ -107,7 +107,7 @@ A halt message that names the same heading on two lines (the fix line and a scop
 
 *(2026-10-24, source: pr-pushes-scaffold-base)*
 
-When a check computes "commits not on any remote" from remote-tracking refs, a stale ref for a branch deleted on the remote hides local commits from the check. The fix is to prune first, but a failed prune must not fall back to the unpruned refs; that silently reopens the hole. Rule: if the refresh step fails, skip the action that depends on it and warn, and do not compute from the old state. Prove the prune matters with a mutation: remove only the prune, confirm the stale-ref fixture then succeeds in pushing something it should refuse, and restore it. Canonical example: the missing-remote range in `src/orchestrator/git.ts` and its stale-origin integration case in `tests/run-task-safety.test.ts`.
+When a check computes "commits not on any remote" from remote-tracking refs, a stale ref for a branch deleted on the remote hides local commits from the check. The fix is to prune first, but a failed prune must not fall back to the unpruned refs; that silently reopens the hole. Rule: if the refresh step fails, skip the action that depends on it and warn, and do not compute from the old state. Prove the prune matters with a mutation: remove only the prune, confirm the stale-ref fixture then succeeds in pushing something it should refuse, and restore it. Canonical example: the missing-remote range in `src/orchestrator/git.ts` and its stale-origin integration case in `tests/run-task-safety-scaffold-push.test.ts`.
 
 ---
 
@@ -151,7 +151,7 @@ When a default root became absolute, three call sites that read "absolute" as "`
 
 *(2026-10-25, source: shared-tasks-root)*
 
-A fallback query added to production code so a fake git stub would pass hid a real argv mismatch and bypassed the main-working-tree rule. Fix the fake to answer the exact `rev-parse` invocation production sends, and keep production to one code path. Check that a stub's expected argv matches the call site before adding branches to satisfy it. See `tests/run-task-safety.test.ts` and `src/lib/project-root.ts`.
+A fallback query added to production code so a fake git stub would pass hid a real argv mismatch and bypassed the main-working-tree rule. Fix the fake to answer the exact `rev-parse` invocation production sends, and keep production to one code path. Check that a stub's expected argv matches the call site before adding branches to satisfy it. See `setupFakeGit` in `tests/run-task-safety-helpers.ts` and `src/lib/project-root.ts`.
 
 ### Find the main checkout's root with `--show-toplevel`, not the parent of the common git dir
 
