@@ -1,7 +1,7 @@
 {
   "id": "spec-manifest-lint",
   "title": "Reject malformed scope manifests before planning and implementation",
-  "status": "code_review",
+  "status": "human_review",
   "created": "2026-11-01",
   "updated": "2026-11-01",
   "branch": "task/spec-manifest-lint",
@@ -47,18 +47,18 @@
       "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 3,
+      "iterations_total": 4,
       "changes_requested_total": 2,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -70,7 +70,8 @@
   "sessions": {
     "author": "34958e28-8ca3-48f4-9dfc-3cf51c52a02a",
     "implementer": "01a19541-c020-7d92-a7dd-7361c8557330",
-    "spec_reviewer": "01a1959d-1611-7bf2-bc2d-09d4eed719b4"
+    "spec_reviewer": "01a1959d-1611-7bf2-bc2d-09d4eed719b4",
+    "reviewer": "896db717-526f-4cf7-a8f7-19fd4cb49b0f"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
@@ -78,6 +79,7 @@
   "session_backends": {
     "author": "claude",
     "implementer": "codex",
-    "spec_reviewer": "codex"
+    "spec_reviewer": "codex",
+    "reviewer": "claude"
   }
 }

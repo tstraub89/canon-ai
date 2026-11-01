@@ -28,7 +28,7 @@ The lint rejects six shapes: fused cells, header-less table blocks, malformed pa
 - `docs/lessons-learned.md` — removed the fused-row entry, since the rule is now enforced.
 - `docs/BACKLOG.md` — the Affected Files half of "Shift the `--pr` artifact-format gates left" is marked done; the docs-refs half stays open.
 - `dist/cli/index.js`, `dist/orchestrator/run-task.js` — rebuilt tracked bundles.
-- Tests: `tests/markdown-table.test.ts`, `tests/run-task-validation.test.ts`, `tests/run-task-safety.test.ts`, `tests/run-task-reroute-preflight.test.ts`, `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` (regenerated).
+- Tests: `tests/markdown-table.test.ts`, `tests/run-task-validation.test.ts`, `tests/run-task-safety.test.ts`, `tests/run-task-reroute-preflight.test.ts`, `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` (regenerated), `tests/task-cli.test.ts` (one worktree-routing fixture given a canonical Design manifest; its assertions are unchanged).
 
 ## How to Test
 
@@ -46,11 +46,11 @@ The lint rejects six shapes: fused cells, header-less table blocks, malformed pa
 |---|---|
 | `npm run lint` | Pass |
 | `npm run type-check` | Pass |
-| `npm test` | Pass — 1,917 tests: 1,916 passed, 0 failed, 1 skipped (linked-worktree root test that skips under restricted git writes) |
+| `npm test` | Pass — 1,925 tests: 1,924 passed, 0 failed, 1 skipped (linked-worktree root test that skips under restricted git writes) |
 | `npm run build` | Pass |
 | `npm run sync-templates:check` | Pass |
 | `npm run docs-refs-check` | Pass |
-| Scoped parser and validation tests | Pass — 274 tests across `tests/markdown-table.test.ts` and `tests/run-task-validation.test.ts` |
+| Scoped parser and validation tests | Pass — 279 tests across `tests/markdown-table.test.ts` and `tests/run-task-validation.test.ts` (amendment pass) |
 | AC-6 red-first regressions (fenced displacement, commented table) | Fail on pre-fix parser as expected (`['example.ts']` and `['real.ts', 'old.ts']`), pass after fix |
 | Mutation checks (spec gate, evidence pre-check, plan pre-flight, implement pre-flight, main force forwarding) | Each removal fails its targeted test; source restored |
 | Archive calibration | 127 archived specs scanned; 15 flagged (fused-cells 3, malformed-path 4, ignored-heading 9; header-less, empty-first-cell, and duplicate-heading 0). Zero consumer path-array differences from the base parser. Archives not edited. |
@@ -99,7 +99,7 @@ Scope check: the gate, the pre-flights, and the parser fix all change what users
 - **Docs-refs half of BACKLOG item (b)** — running docs-refs validation at spec or pre-implement — stays open.
 - **Interrupted implement with a broken spec** can pick misleading resume wording (review item R5). Deferred; no state corruption found.
 
-Maintenance: lessons-learned.md plus this task's fragment have 25 entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").
+Maintenance: lessons-learned.md plus this task's fragment have 26 entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").
 
 ## Quality Log
 - Spec verdict: changes_requested

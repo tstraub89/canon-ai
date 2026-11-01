@@ -1,1 +1,1 @@
-The manifest lint and pre-flight checks are consistent with the scope-parsing paths and their documented bypass behavior. The test suite and type-check completed without reported failures; no actionable regressions were found.
+I found no actionable regressions in the changed code. The test suite, type-check, and lint completed successfully.
