@@ -80,11 +80,11 @@ function foregroundReason(flag) {
 function mergeReason(taskId, taskIds = [taskId]) {
     const ids = taskIds.join(' ');
     const subject = taskIds.length > 1 ? `bundle tasks ${taskIds.join(', ')}` : 'the task';
-    return `canon guard: this PR's head is task/${taskId}, a canon task branch. Squash and default merges of task PRs go through ` +
-        `\`canon run ${ids} --ship\`, which squash-merges and then archives ${subject} and cleans up the worktree and branches. ` +
+    return `canon guard: this PR's head is task/${taskId}, a canon task branch. Merge task PRs through ` +
+        `\`canon run ${ids} --ship\`, which uses the project's configured method (\`ship.merge_method\`, squash by default) ` +
+        `and then archives ${subject} and cleans up the worktree and branches. ` +
         `--ship archives only the task ids it is given, so name every task whose status.json records this branch. ` +
-        `If the project merges with rebase or merge commits, rerun this command with --rebase or --merge, then run ` +
-        `\`canon run ${ids} --ship\` for cleanup. Retry with \`canon run ${ids} --ship\`.`;
+        `Retry with \`canon run ${ids} --ship\`.`;
 }
 
 function isTaskStatusFile(filePath, cwd) {

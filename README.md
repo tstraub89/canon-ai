@@ -105,7 +105,7 @@ A single command runs a task end-to-end:
 canon run <task-id>
 ```
 
-`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` runs *after* PR approval — it squash-merges the PR, deletes the branch, tears down the worktree, archives the task, and pulls the base branch (don't merge the PR manually first). `--reroute` resets a task once implementation has begun: current phase `code_review`, `qa`, or `human_review` (any status or verdict), or `implement` when implement is in progress or blocked, code review is blocked, or code review already ran in the current loop (a review round or a pre-flight rejection). In a bundle, a sibling at implement pending with no current-loop activity is admitted alongside a task that qualifies when both belong to the same non-empty task branch. Full-tier tasks (S/M/L/XL or delicate) re-enter at `spec_review`, fast-tier tasks (XS) re-enter at `implement`. `--full-send` skips the spec gate and auto-opens a draft PR on clean QA. `--dry-run` prints planned phases without spawning agents.
+`--step --expect <phase>` runs one phase with a phase-mismatch guard. `--pr` pushes and opens a draft PR at `human_review`. `--ship` runs *after* PR approval — it merges the PR with the configured method (squash by default; see `ship.merge_method`), deletes the branch, tears down the worktree, archives the task, and pulls the base branch (don't merge the PR manually first). `--reroute` resets a task once implementation has begun: current phase `code_review`, `qa`, or `human_review` (any status or verdict), or `implement` when implement is in progress or blocked, code review is blocked, or code review already ran in the current loop (a review round or a pre-flight rejection). In a bundle, a sibling at implement pending with no current-loop activity is admitted alongside a task that qualifies when both belong to the same non-empty task branch. Full-tier tasks (S/M/L/XL or delicate) re-enter at `spec_review`, fast-tier tasks (XS) re-enter at `implement`. `--full-send` skips the spec gate and auto-opens a draft PR on clean QA. `--dry-run` prints planned phases without spawning agents.
 
 Multiple task IDs in one invocation activates **bundle mode** — `canon run id1 id2 id3` runs all tasks together per phase under a single review loop with one commit history and one PR. Any full-tier task in the bundle promotes the entire bundle to full tier.
 
@@ -274,7 +274,7 @@ Claude Code creates `settings.json` on first use — check what's already there 
 
 - Direct edits to `tasks/<id>/status.json`: use the matching `canon task phase`, `canon task set`, `canon task accept`, or `canon task reset-*` command; if none covers the change, give the human the exact edit.
 - Piping `canon run` or `canon watch`, or polling `.canon-run.log`: run `canon run <id>` bare, then `canon watch <id>` without a pipe.
-- Squash or default `gh pr merge` on a `task/*` PR: use `canon run <id> --ship`, naming every task of a bundle (the hook lists the tasks whose `status.json` records that branch). Rebase and merge-commit merges remain allowed; after one, run `canon run <id> --ship` for cleanup.
+- Squash or default `gh pr merge` on a `task/*` PR: use `canon run <id> --ship`, naming every task of a bundle (the hook lists the tasks whose `status.json` records that branch). `--ship` uses the project's configured method (`ship.merge_method`, squash by default). The hook continues to allow direct rebase and merge-commit invocations.
 
 To register it, merge this block into the existing `hooks` key in `.claude/settings.json`:
 
@@ -308,7 +308,7 @@ Pipeline sessions are headless, so nobody is at the keyboard to answer a permiss
 - **Worktrees separate branch state by convention, not by enforcement.** Each task, or each bundle when you pass several task ids together, gets its own worktree and branch, and the pipeline's dirty-tree gates inspect the active worktree at phase boundaries. But Claude sessions are also given the main checkout via `--add-dir` and run with permissions skipped, so nothing stops a session from writing there, and an unrelated file dropped into the main checkout is not something those gates look for; tasks with `worktree: false` run in the main checkout outright. Validation commands run with your normal privileges.
 - **Budget caps bound cost, not access.** Each headless Claude phase runs with `--max-budget-usd`; hitting the cap stops the session. It does not narrow what the session may do beforehand, and interactive sessions (`--interactive`) run uncapped.
 - **Your code goes to the model providers.** Each agent phase sends prompts and repository context to the provider running it. In mixed mode that is Anthropic for Claude phases and OpenAI for Codex phases, with mixed-mode `code_review` using both. In `claude` mode prompts and repository context go only to Anthropic; the exception is `/canon-inline-review`, which, if you use it, sends the diff to OpenAI. These sessions use the relevant CLIs under whatever data terms your accounts have. Treat a `canon run` like any other agent session in that respect.
-- **Git side effects need a flag.** The pipeline never pushes, opens PRs, merges, or publishes on its own. `--pr` pushes the task branch and opens a draft PR, stopping at `human_review`. `--ship` squash-merges that PR; it checks the task's phase, not whether anyone approved, so PR approval is your prerequisite (or your branch protection's), not something canon enforces. `--full-send` skips the human spec gate and opens the draft PR on clean QA, still stopping before merge. `--pr`, `--push` and full-send first push canon's own unpushed scaffold and telemetry commits on the base, creating it on origin if missing when every local-only commit is canon-safe or already published. Other unpushed base commits block unless `--allow-divergent-base` is set; that escape does not apply to a missing remote base. On a `delicate` task, `--full-send` refuses without `--force`.
+- **Git side effects need a flag.** The pipeline never pushes, opens PRs, merges, or publishes on its own. `--pr` pushes the task branch and opens a draft PR, stopping at `human_review`. `--ship` merges that PR with the configured method (squash by default; see `ship.merge_method`); it checks the task's phase, not whether anyone approved, so PR approval is your prerequisite (or your branch protection's), not something canon enforces. `--full-send` skips the human spec gate and opens the draft PR on clean QA, still stopping before merge. `--pr`, `--push` and full-send first push canon's own unpushed scaffold and telemetry commits on the base, creating it on origin if missing when every local-only commit is canon-safe or already published. Other unpushed base commits block unless `--allow-divergent-base` is set; that escape does not apply to a missing remote base. On a `delicate` task, `--full-send` refuses without `--force`.
 
 #### Optional: Claude Code sandbox
 
@@ -346,7 +346,7 @@ Run canon on repositories where you would be comfortable running your test suite
 | `canon run <id> --push` | Push branch only, no PR |
 | `canon run <id> --reroute` | Reset a task once implementation has begun: current phase `code_review`, `qa`, or `human_review` (any status or verdict), or `implement` when implement is in progress or blocked, code review is blocked, or code review already ran in the current loop (a review round or a pre-flight rejection). In a bundle, a sibling at implement pending with no current-loop activity is admitted alongside a task that qualifies when both belong to the same non-empty task branch. Requires the next amendment section (`## Amendment`, then `## Amendment Round N`) appended to `spec.md` first; full-tier re-enters at `spec_review`, fast-tier at `implement`. |
 | `canon run <id> --full-send` | Skip the spec gate and auto-open a draft PR after clean QA |
-| `canon run <id> --ship` | After PR approval: squash-merge, delete branch, tear down worktree, archive the task, pull base branch. Don't merge the PR manually first. |
+| `canon run <id> --ship` | After PR approval: merge with the configured method (squash by default; see `ship.merge_method`), delete branch, tear down worktree, archive the task, pull base branch. Don't merge the PR manually first. |
 | `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |
 | `canon stop <id>` | Stop a detached canon run (SIGTERM → SIGKILL after 10s). Waits up to 30s — override via `CANON_STOP_WAIT_MS` — for the orchestrator's first heartbeat to verify the PID before signaling. |
 | `canon upgrade` | Sync vendored canon-owned files to match the installed version. It does not touch adopter-owned `AGENTS.md` or `CLAUDE.md`. Refuses to overwrite canon-owned targets that are locally modified, untracked but present, or whose git state cannot be verified unless `--force` is set. Symlinks at destination files or parent directories are refused even with `--force`; replace them with regular files/directories first. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
@@ -411,6 +411,20 @@ branch's copy, so uncommitted main-checkout changes are not available there.
 Malformed config stops runs, including reroute and ship, and fails the docs-freshness
 check in `canon doctor`; unknown keys warn. Telemetry files and task-artifact paths
 cannot be configured. Without a config, the default protected set applies.
+
+### Configuring the merge method
+
+Set `ship.merge_method` to `"squash"`, `"rebase"`, or `"merge"` in the same
+adopter-owned `.canon/config.json`. It defaults to `"squash"`. When an open task
+PR will be merged, `--ship` checks that GitHub allows the configured method
+before changing local state; the check is skipped when there is no open PR, such
+as after an external merge.
+
+```json
+{
+  "ship": { "merge_method": "rebase" }
+}
+```
 
 ## Architecture: two layers
 

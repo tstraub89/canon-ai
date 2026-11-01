@@ -78,14 +78,14 @@ Pushes the task branch (first pushing canon's own unpushed scaffold commits on `
 After the PR is marked ready and approved — do **not** merge it manually:
 
 ```bash
-canon run <task-id> --ship              # squash-merge the PR, pull base, tear down worktree, archive, clean up branches
+canon run <task-id> --ship              # merge the PR (squash by default), pull base, tear down worktree, archive, clean up branches
 ```
 
-`--ship` runs `gh pr merge --squash` itself, deletes the remote task branch, then pulls/fast-forwards the base branch, proves the merge (forge-proof gate) before deleting any local task branch, tears down the worktree, and archives `tasks/<id>/`. If the PR was already merged externally, `--ship` detects that and picks up at cleanup — and `canon task post-merge-sync` exists as a recovery helper if the local base has diverged after an external squash-merge, not as a standard pre-ship step.
+`--ship` merges with the configured method (`ship.merge_method`, squash by default), deletes the remote task branch, then pulls/fast-forwards the base branch, proves the merge (forge-proof gate) before deleting any local task branch, tears down the worktree, and archives `tasks/<id>/`. If the PR was already merged externally, `--ship` detects that and picks up at cleanup — and `canon task post-merge-sync` exists as a recovery helper if the local base has diverged after an external squash or rebase merge, not as a standard pre-ship step.
 
 If the task targeted a release branch (`base_branch` in `status.json`), `--ship` merges and archives there — not main.
 
-`--ship` requires the task to be at `human_review` (or `complete`). If it refuses with "task is at: code_review" (or similar), the squash-merge captured a pre-progression `status.json`. Advance the phases manually — artifacts are on disk, so this is paperwork. Use the verdict actually checked in `tasks/<task-id>/review.md` (`approved` or `approved_with_nits`) — the phase gate rejects a verdict that doesn't match the artifact:
+`--ship` requires the task to be at `human_review` (or `complete`). If it refuses with "task is at: code_review" (or similar), the squash or rebase merge captured a pre-progression `status.json`. Advance the phases manually — artifacts are on disk, so this is paperwork. Use the verdict actually checked in `tasks/<task-id>/review.md` (`approved` or `approved_with_nits`) — the phase gate rejects a verdict that doesn't match the artifact:
 
 ```bash
 canon task phase <task-id> code_review done <verdict-from-review.md>
@@ -166,7 +166,7 @@ Tasks land on the default branch; no version numbers, no CHANGELOG, no tags.
 
 ## Snag recovery
 
-When the pipeline gets stuck — auto-block on a review loop, phase mismatch, `--ship` refusing, branch divergence after squash-merge, parallel-task artifact conflicts, or agent auth 401 — see [recovery.md](recovery.md). Each scenario has a documented diagnosis and fix.
+When the pipeline gets stuck — auto-block on a review loop, phase mismatch, `--ship` refusing, branch divergence after squash or rebase merge, parallel-task artifact conflicts, or agent auth 401 — see [recovery.md](recovery.md). Each scenario has a documented diagnosis and fix.
 
 ## Pre-flight checklist before `--pr` or `--ship`
 

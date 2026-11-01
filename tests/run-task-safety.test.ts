@@ -303,17 +303,21 @@ function setupFakeCliTools(scriptDir: string): void {
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then',
         '  head=""',
         '  base=""',
+        '  state_filter="open"',
         '  json=0',
         '  while [ $# -gt 0 ]; do',
         '    case "$1" in',
         '      --head) head="$2"; shift 2 ;;',
         '      --base) base="$2"; shift 2 ;;',
+        '      --state) state_filter="$2"; shift 2 ;;',
         '      --json) json=1; shift 2 ;;',
         '      *) shift ;;',
         '    esac',
         '  done',
+        '  if [ "$state_filter" = "open" ] && [ "${FAKE_GH_PR_LIST_FAIL:-}" = "1" ]; then printf "%s\\n" "open PR listing failed" >&2; exit 1; fi',
+        '  if [ "$state_filter" = "open" ] && [ "${FAKE_GH_PR_LIST_MALFORMED:-}" = "1" ]; then printf "%s\\n" "not json"; exit 0; fi',
         '  read_pr_state',
-        '  if [ -z "$FAKE_GH_STATE_NUMBER" ]; then exit 0; fi',
+        '  if [ -z "$FAKE_GH_STATE_NUMBER" ]; then if [ "$json" = "1" ]; then printf "[]\\n"; fi; exit 0; fi',
         '  # When FAKE_GH_PR_BASE is set, simulate `gh pr list --base` filtering:',
         '  # only emit the PR when the caller passes a matching --base value.',
         '  # This is how production gh behaves and lets tests assert that callers',
@@ -390,6 +394,16 @@ function setupFakeCliTools(scriptDir: string): void {
         '  if [ -n "$FAKE_GH_STATE_NUMBER" ] && [ "$pr_num" = "$FAKE_GH_STATE_NUMBER" ] && [ -n "$FAKE_GH_STATE_URL" ]; then printf "%s\\n" "$FAKE_GH_STATE_URL"; exit 0; fi',
         '  if [ -n "${FAKE_GH_PR_URL:-}" ]; then printf "%s\\n" "$FAKE_GH_PR_URL"; exit 0; fi',
         '  exit 1',
+        'fi',
+        'if [ "${1:-}" = "repo" ] && [ "${2:-}" = "view" ]; then',
+        '  if [ "${FAKE_GH_REPO_VIEW_FAIL:-}" = "1" ]; then printf "%s\\n" "repository settings unavailable" >&2; exit 1; fi',
+        '  if [ "${FAKE_GH_REPO_VIEW_MALFORMED:-}" = "1" ]; then printf "%s\\n" "not json"; exit 0; fi',
+        '  allowed_methods=",${FAKE_GH_ALLOWED_METHODS:-squash,rebase,merge},"',
+        '  case "$allowed_methods" in *,squash,*) squash=true ;; *) squash=false ;; esac',
+        '  case "$allowed_methods" in *,rebase,*) rebase=true ;; *) rebase=false ;; esac',
+        '  case "$allowed_methods" in *,merge,*) merge=true ;; *) merge=false ;; esac',
+        '  printf \'{"squashMergeAllowed":%s,"rebaseMergeAllowed":%s,"mergeCommitAllowed":%s}\\n\' "$squash" "$rebase" "$merge"',
+        '  exit 0',
         'fi',
         'printf "%s\\n" "unexpected gh args: $*" >&2',
         'exit 1',
@@ -6146,7 +6160,7 @@ void test('main --pr does NOT match an open PR on the wrong base (Codex P2 on re
     // open PR against an unrelated base ('release/v9') must not be picked
     // up as the "existing PR" for idempotent --pr. Before the fix,
     // findOpenPRNumber ignored --base entirely; the wrong-base PR's URL
-    // would be printed and (worse) mergeOpenPRsAndPull would squash-merge
+    // would be printed and (worse) mergeOpenPRsAndPull would merge it
     // it into the wrong base on --ship.
     withTempDir('run-task-wrong-base-pr-', dir => {
         const tasksRoot = path.join(dir, 'tasks');

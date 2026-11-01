@@ -299,7 +299,9 @@ void test('task PR merge rule denies squash/default and allows other strategies 
                 const result = run(command);
                 assert.equal(result.denied, true, result.reason || command);
                 assert.match(result.reason, /canon run foo --ship/);
-                assert.match(result.reason, /--rebase or --merge/);
+                assert.match(result.reason, /ship\.merge_method/);
+                assert.match(result.reason, /squash by default/);
+                assert.doesNotMatch(result.reason, /merge outside canon/);
             });
         }
         const repoFlagCases = [

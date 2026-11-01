@@ -10,6 +10,7 @@ import { METRICS_SKELETON, recordMetric } from '../src/orchestrator/metrics.js';
 import { CANON_LOG_HEADERS, writeQualityLogForTask } from '../src/orchestrator/quality-log.js';
 import { applyTelemetryFold, foldLessonsFragment, foldTelemetryFragments, planTelemetryFold, sharedTelemetryDocsTouched } from '../src/orchestrator/telemetry-fold.js';
 import { parseTable } from '../src/orchestrator/markdown-table.js';
+import { formatMergeFailureMessage, parseAllowedMergeMethods } from '../src/orchestrator/main.js';
 import type { StatusJson } from '../src/orchestrator/types.js';
 
 const WORKTREE_ROOT = process.cwd();
@@ -19,6 +20,23 @@ const MD_LOADER = path.join(WORKTREE_ROOT, 'tests', 'md-loader-register.mjs');
 const MAIN_HREF = pathToFileURL(path.join(WORKTREE_ROOT, 'src', 'orchestrator', 'main.ts')).href;
 
 type RunResult = { status: number | null; stdout: string; stderr: string };
+
+void test('allowed merge-method response requires all three boolean fields', () => {
+    const parsed = parseAllowedMergeMethods('{"squashMergeAllowed":false,"rebaseMergeAllowed":true,"mergeCommitAllowed":false}');
+    assert.deepEqual(parsed, { ok: true, allowed: { squash: false, rebase: true, merge: false } });
+    assert.deepEqual(parseAllowedMergeMethods('{"squashMergeAllowed":true,"rebaseMergeAllowed":true}'), { ok: false });
+    assert.deepEqual(parseAllowedMergeMethods('not json'), { ok: false });
+});
+
+void test('merge failure message reports partial progress only when an earlier PR merged', () => {
+    const common = { prNum: 12, stderr: 'merge queue pending', taskIds: ['example-task'] };
+    const noEarlierMerge = formatMergeFailureMessage({ ...common, mergedEarlier: [] });
+    const earlierMerged = formatMergeFailureMessage({ ...common, mergedEarlier: [11] });
+    assert.match(noEarlierMerge, /No local cleanup ran/);
+    assert.match(noEarlierMerge, /re-run `canon run example-task --ship`/);
+    assert.doesNotMatch(noEarlierMerge, /base branch has not been pulled/);
+    assert.match(earlierMerged, /PR #11 already merged; the base branch has not been pulled yet/);
+});
 
 function withTempDir(prefix: string, fn: (dir: string) => void): void {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -126,6 +144,8 @@ function setupFakeTools(scriptDir: string): void {
         '      *) shift ;;',
         '    esac',
         '  done',
+        '  if [ "$state_filter" = "open" ] && [ "${FAKE_GH_PR_LIST_FAIL:-}" = "1" ]; then printf "%s\\n" "open PR listing failed" >&2; exit 1; fi',
+        '  if [ "$state_filter" = "open" ] && [ "${FAKE_GH_PR_LIST_MALFORMED:-}" = "1" ]; then printf "%s\\n" "not json"; exit 0; fi',
         '  emit_list "$state_filter" "$head" "$base" "$json"',
         'fi',
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "create" ]; then',
@@ -145,6 +165,7 @@ function setupFakeTools(scriptDir: string): void {
         '  exit 0',
         'fi',
         'if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then',
+        '  if [ "${FAKE_GH_MERGE_FAIL:-}" = "1" ]; then printf "%s\\n" "${FAKE_GH_MERGE_ERROR:-merge failed}" >&2; exit 1; fi',
         '  if [ -n "$state_file" ]; then',
         '    read_state',
         '    if [ -n "$STATE_NUMBER" ]; then printf "%s|%s|%s|%s|MERGED\\n" "$STATE_NUMBER" "$STATE_URL" "$STATE_BASE" "$STATE_HEAD" > "$state_file"; fi',
@@ -166,6 +187,16 @@ function setupFakeTools(scriptDir: string): void {
         '  if [ "$json" = "baseRefName" ]; then printf "%s\\n" "${FAKE_GH_BASE_REF_NAME:-${STATE_BASE:-main}}"; exit 0; fi',
         '  if [ "$json" = "url" ]; then printf "%s\\n" "${FAKE_GH_PR_URL:-${STATE_URL:-https://github.com/example/repo/pull/1}}"; exit 0; fi',
         '  exit 1',
+        'fi',
+        'if [ "${1:-}" = "repo" ] && [ "${2:-}" = "view" ]; then',
+        '  if [ "${FAKE_GH_REPO_VIEW_FAIL:-}" = "1" ]; then printf "%s\\n" "repository settings unavailable" >&2; exit 1; fi',
+        '  if [ "${FAKE_GH_REPO_VIEW_MALFORMED:-}" = "1" ]; then printf "%s\\n" "not json"; exit 0; fi',
+        '  allowed_methods=",${FAKE_GH_ALLOWED_METHODS:-squash,rebase,merge},"',
+        '  case "$allowed_methods" in *,squash,*) squash=true ;; *) squash=false ;; esac',
+        '  case "$allowed_methods" in *,rebase,*) rebase=true ;; *) rebase=false ;; esac',
+        '  case "$allowed_methods" in *,merge,*) merge=true ;; *) merge=false ;; esac',
+        '  printf \'{"squashMergeAllowed":%s,"rebaseMergeAllowed":%s,"mergeCommitAllowed":%s}\\n\' "$squash" "$rebase" "$merge"',
+        '  exit 0',
         'fi',
         'printf "%s\\n" "unexpected gh args: $*" >&2',
         'exit 1',
@@ -714,9 +745,11 @@ void test('--ship proves pinned merged PR, fast-forwards, archives, and deletes 
         const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
             prNumbers: { [taskId]: 101 },
         });
+        const ghLog = path.join(dir, 'gh.log');
         assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '101');
 
         const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_LOG: ghLog,
             FAKE_GH_PR_STATE: 'MERGED',
             FAKE_GH_BASE_REF_NAME: 'main',
             FAKE_GH_HEAD_REF_OID: tip,
@@ -724,6 +757,7 @@ void test('--ship proves pinned merged PR, fast-forwards, archives, and deletes 
 
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /fast-forwarding/);
+        assert.doesNotMatch(fs.readFileSync(ghLog, 'utf8'), /repo view/);
         expectArchivedAndDeleted(localDir, taskId, branch);
     });
 });
@@ -1379,32 +1413,97 @@ void test('--ship honors CANON_TASKS_DIR_OVERRIDE when resolving ship cwd', () =
     });
 });
 
-void test('--ship merges without gh --delete-branch and deletes the remote branch itself', () => {
-    withTempDir('run-task-ship-remote-delete-', dir => {
-        const taskId = 'ship-remote-delete';
-        const { localDir, originDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
-            deleteRemote: false,
-        });
-        const ghLog = path.join(dir, 'gh.log');
+for (const [method, flag] of [['squash', '--squash'], ['rebase', '--rebase'], ['merge', '--merge']] as const) {
+    void test(`--ship merges with ${method} and deletes the remote branch itself`, () => {
+        withTempDir(`run-task-ship-${method}-delete-`, dir => {
+            const taskId = `ship-${method}-delete`;
+            const { localDir, originDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+                deleteRemote: false,
+            });
+            if (method !== 'squash') writeRel(localDir, '.canon/config.json', `${JSON.stringify({ ship: { merge_method: method } })}\n`);
+            const ghLog = path.join(dir, 'gh.log');
 
-        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
-            FAKE_GH_LOG: ghLog,
-            FAKE_GH_OPEN_PR_NUMBER: '107',
-            FAKE_GH_MERGED_PR_NUMBER: '107',
-            FAKE_GH_PR_HEAD: branch,
-            FAKE_GH_PR_BASE: 'main',
-            FAKE_GH_HEAD_REF_OID: tip,
-        });
+            const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+                FAKE_GH_LOG: ghLog,
+                FAKE_GH_OPEN_PR_NUMBER: '107',
+                FAKE_GH_MERGED_PR_NUMBER: '107',
+                FAKE_GH_PR_HEAD: branch,
+                FAKE_GH_PR_BASE: 'main',
+                FAKE_GH_HEAD_REF_OID: tip,
+            });
 
-        assert.equal(result.status, 0, result.stderr);
-        const log = fs.readFileSync(ghLog, 'utf8');
-        assert.match(log, /^pr merge 107 --squash$/m);
-        assert.doesNotMatch(log, /--delete-branch/);
-        assert.match(result.stdout, new RegExp(`Deleted remote branch ${branch}\\.`));
-        assert.doesNotMatch(result.stdout + result.stderr, /tolerated/);
-        assert.equal(gitIn(originDir, 'branch', '--list', branch), '');
-        expectArchivedAndDeleted(localDir, taskId, branch);
+            assert.equal(result.status, 0, result.stderr);
+            const log = fs.readFileSync(ghLog, 'utf8');
+            assert.match(log, new RegExp(`^pr merge 107 ${flag}$`, 'm'));
+            for (const otherFlag of ['--squash', '--rebase', '--merge']) {
+                if (otherFlag !== flag) assert.doesNotMatch(log, new RegExp(`^pr merge 107 ${otherFlag}$`, 'm'));
+            }
+            assert.doesNotMatch(log, /--delete-branch/);
+            assert.match(result.stdout, new RegExp(`Deleted remote branch ${branch}\\.`));
+            assert.doesNotMatch(result.stdout + result.stderr, /tolerated/);
+            assert.equal(gitIn(originDir, 'branch', '--list', branch), '');
+            expectArchivedAndDeleted(localDir, taskId, branch);
+        });
     });
+}
+
+void test('--ship pre-flight refuses unreadable or disallowed merge settings before local changes', () => {
+    const cases: Array<{ name: string; env: Record<string, string>; expected: RegExp; keepRemoteBranch?: boolean }> = [
+        { name: 'disallowed method', env: { FAKE_GH_ALLOWED_METHODS: 'squash' }, expected: /rebase.*ship\.merge_method.*squash/, keepRemoteBranch: true },
+        { name: 'unreadable repository settings', env: { FAKE_GH_REPO_VIEW_FAIL: '1' }, expected: /could not read the repository's merge settings/ },
+        { name: 'malformed repository settings', env: { FAKE_GH_REPO_VIEW_MALFORMED: '1' }, expected: /could not read the repository's merge settings/ },
+        { name: 'failed open PR listing', env: { FAKE_GH_PR_LIST_FAIL: '1' }, expected: /could not read the open-PR listing.*re-running `--ship` is safe/ },
+        { name: 'malformed open PR listing', env: { FAKE_GH_PR_LIST_MALFORMED: '1' }, expected: /could not read the open-PR listing.*re-running `--ship` is safe/ },
+    ] as const;
+    for (const scenario of cases) {
+        withTempDir(`ship-preflight-${scenario.name.replaceAll(' ', '-')}-`, dir => {
+            const taskId = 'preflight-task';
+            const suffix = '| sibling | pre-implement | row |\n';
+            const tmpDir = makeTmpDir(dir);
+            const ghLog = path.join(dir, 'gh.log');
+            const { localDir, branch, fakeTools } = prepareShipFixture(dir, [taskId], {
+                deleteRemote: !scenario.keepRemoteBranch,
+                initialFiles: {
+                    'docs/pipeline-invocations.md': METRICS_SKELETON,
+                    'docs/task-quality-log.md': '# Quality log\n',
+                    'docs/lessons-learned.md': '# Lessons\n',
+                },
+            });
+            const fetchHeadPath = path.join(localDir, '.git', 'FETCH_HEAD');
+            if (scenario.keepRemoteBranch) fs.writeFileSync(fetchHeadPath, 'preflight sentinel\n', 'utf8');
+            writeRel(localDir, '.canon/config.json', `${JSON.stringify({ ship: { merge_method: 'rebase' } })}\n`);
+            markTaskWorktree(localDir, taskId);
+            fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+            const branchBefore = gitIn(localDir, 'branch', '--show-current');
+            const taskDir = path.join(localDir, 'tasks', taskId);
+            const taskBefore = Object.fromEntries(fs.readdirSync(taskDir).sort().map(name => [name, fs.readFileSync(path.join(taskDir, name), 'utf8')]));
+            const statusBefore = readRel(localDir, `tasks/${taskId}/status.json`);
+
+            const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+                TMPDIR: tmpDir,
+                FAKE_GH_LOG: ghLog,
+                FAKE_GH_OPEN_PR_NUMBER: '107',
+                FAKE_GH_PR_HEAD: branch,
+                FAKE_GH_PR_BASE: 'main',
+                FAKE_GH_PR_STATE: 'OPEN',
+                ...scenario.env,
+            });
+
+            assert.notEqual(result.status, 0, scenario.name);
+            assert.match(result.stderr, scenario.expected, scenario.name);
+            const log = fs.readFileSync(ghLog, 'utf8');
+            assert.doesNotMatch(log, /pr merge/);
+            if (scenario.name.includes('open PR listing')) assert.doesNotMatch(log, /repo view/);
+            else assert.match(log, /repo view/);
+            assert.equal(gitIn(localDir, 'branch', '--show-current'), branchBefore);
+            if (scenario.keepRemoteBranch) assert.equal(fs.readFileSync(fetchHeadPath, 'utf8'), 'preflight sentinel\n');
+            assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);
+            assert.deepEqual(backupEntries(tmpDir), []);
+            assert.equal(readRel(localDir, `tasks/${taskId}/status.json`), statusBefore);
+            const taskAfter = Object.fromEntries(fs.readdirSync(taskDir).sort().map(name => [name, fs.readFileSync(path.join(taskDir, name), 'utf8')]));
+            assert.deepEqual(taskAfter, taskBefore);
+        });
+    }
 });
 
 void test('--ship tolerates remote branch already gone during stale-remote cleanup', () => {
@@ -1669,6 +1768,41 @@ void test('--ship failed fold restores preserved sibling telemetry dirt before a
         assert.ok(backupPath, result.stdout);
         assert.equal(fs.existsSync(backupPath), false);
         assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);
+    });
+});
+
+void test('--ship failed merge restores preserved telemetry dirt before aborting', () => {
+    withTempDir('ship-merge-fail-dirt-', dir => {
+        const taskId = 'merge-fail-dirt';
+        const suffix = '| sibling | pre-implement | row |\n';
+        const tmpDir = makeTmpDir(dir);
+        const { localDir, branch, fakeTools } = prepareShipFixture(dir, [taskId], {
+            initialFiles: {
+                'docs/pipeline-invocations.md': METRICS_SKELETON,
+                'docs/task-quality-log.md': '# Quality log\n',
+                'docs/lessons-learned.md': '# Lessons\n',
+            },
+        });
+        markTaskWorktree(localDir, taskId);
+        fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            TMPDIR: tmpDir,
+            FAKE_GH_OPEN_PR_NUMBER: '107',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_PR_STATE: 'OPEN',
+            FAKE_GH_MERGE_FAIL: '1',
+        });
+
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Failed to merge PR #107/);
+        const backupPath = result.stdout.match(/backup: (.+)/)?.[1]?.trim();
+        assert.ok(backupPath, result.stdout);
+        assert.equal(fs.existsSync(backupPath), false);
+        assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);
+        assert.match(result.stderr, /no local cleanup ran/i);
+        assert.match(result.stderr, /re-run `canon run .* --ship`/);
     });
 });
 

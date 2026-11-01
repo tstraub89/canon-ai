@@ -41,7 +41,10 @@ sessions without that sandbox.
 config.json in this directory is adopter-owned. `canon init` does not create it,
 and `canon upgrade` never creates, changes, or refuses on it. The docs_freshness
 field configures QA's protected docs, path mappings, and flag-only docs; see
-"Configuring docs freshness" in the canon-ai README for the full behavior.
+"Configuring docs freshness" in the canon-ai README for the full behavior. The
+optional `ship.merge_method` field selects `squash`, `rebase`, or `merge` for
+`--ship` (default `squash`). Before changing local state, `--ship` checks the
+configured method against the repository's allowed methods when an open PR exists.
 
 ```json
 {
@@ -49,6 +52,7 @@ field configures QA's protected docs, path mappings, and flag-only docs; see
     "protected": ["docs/architecture.md", "docs/codebase-map.md"],
     "paths": { "api/**": ["docs/api-contract.md"], "**": ["docs/ROADMAP.md"] },
     "flag_only": ["AGENTS.md"]
-  }
+  },
+  "ship": { "merge_method": "rebase" }
 }
 ```
