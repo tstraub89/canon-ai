@@ -59,7 +59,7 @@ Coverage is limited to Claude Code's Bash and Edit/Write/MultiEdit tools. Sessio
 ## Human Verification Required
 
 - `node dist/cli/index.js doctor` (AC-11 full-doctor smoke): run from the task worktree, `doctor` resolves to the supervising checkout (`src/lib/project-root.ts`), which predates this task, so it reports the hook as missing. `checkGuardHook(process.cwd())` passes against the worktree. After merge, run `canon doctor` in canon-ai and confirm it emits no hook warning.
-- Acknowledged: AC-11 full `canon doctor` smoke deferred to post-merge — `doctor` resolves to the supervising checkout, so it cannot see the hook until the task reaches main. The worktree-scoped `checkGuardHook` check passes; the operator runs `canon doctor` on main immediately after `--ship`.
+Acknowledged: AC-11 full `canon doctor` smoke deferred to post-merge — `doctor` resolves to the supervising checkout, so it cannot see the hook until the task reaches main. The worktree-scoped `checkGuardHook` check passes; the operator runs `canon doctor` on main immediately after `--ship`.
 
 Pre-merge checklist (not confirmable from here):
 - [ ] Version correct — release step decides the bump tier (see Proposed Changelog).
