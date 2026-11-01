@@ -111,6 +111,7 @@ function writeExecutable(dir: string, name: string, lines: string[]): string {
 
 function makeGhShim(binDir: string): void {
     writeExecutable(binDir, 'gh', [
+        'if [ -n "${CANON_GUARD_GH_LOG-}" ]; then printf "%s\\n" "$*" >> "$CANON_GUARD_GH_LOG"; fi',
         'case "$3" in',
         '  12) printf "%s\\n" task/foo ;;',
         '  13) printf "%s\\n" release/v1.2 ;;',
@@ -172,6 +173,7 @@ void test('status.json rule denies task-state writes and allows read and neighbo
             ['sed -i on an external worktree from inside that worktree', "sed -i 's/a/b/' tasks/foo/status.json", fixture.externalWorktree],
             ['sed -i task status write', "sed -i 's/a/b/' tasks/foo/status.json", fixture.repo],
             ['perl -pi task status write', "perl -pi -e 's/a/b/' tasks/foo/status.json", fixture.repo],
+            ['perl in-place with backup extension', "perl -pi.bak -e 's/a/b/' tasks/foo/status.json", fixture.repo],
             ['jq output redirect task status write', "jq '.phases' tasks/foo/status.json > tasks/foo/status.json", fixture.repo],
             ['append redirect task status write', 'echo x >> tasks/foo/status.json', fixture.repo],
             ['attached redirect target task status write', 'echo x >tasks/foo/status.json', fixture.repo],
@@ -189,6 +191,7 @@ void test('status.json rule denies task-state writes and allows read and neighbo
             ['cat read with stderr redirect', { tool_name: 'Bash', tool_input: { command: 'cat tasks/foo/status.json 2>/dev/null' }, cwd: fixture.repo }, fixture.repo],
             ['read redirected to another file', { tool_name: 'Bash', tool_input: { command: "jq '.phases' tasks/foo/status.json > /tmp/x.json" }, cwd: fixture.repo }, fixture.repo],
             ['sed read', { tool_name: 'Bash', tool_input: { command: "sed -n '1,5p' tasks/foo/status.json" }, cwd: fixture.repo }, fixture.repo],
+            ['perl -Mstrict read', { tool_name: 'Bash', tool_input: { command: "perl -Mstrict -ne 'print' tasks/foo/status.json" }, cwd: fixture.repo }, fixture.repo],
             ['quoted redirect-looking commit message', { tool_name: 'Bash', tool_input: { command: 'git commit -m "fix > tasks/foo/status.json"' }, cwd: fixture.repo }, fixture.repo],
             ['read piped to tee elsewhere', { tool_name: 'Bash', tool_input: { command: 'cat tasks/foo/status.json | tee /tmp/x' }, cwd: fixture.repo }, fixture.repo],
             ['canon template status', statusPayload('Edit', '.canon/templates/status.json', fixture.repo), fixture.repo],
@@ -278,6 +281,21 @@ void test('task PR merge rule denies squash/default and allows other strategies 
                 assert.equal(result.denied, true, result.reason || command);
                 assert.match(result.reason, /canon run foo --ship/);
                 assert.match(result.reason, /--rebase or --merge/);
+            });
+        }
+        const repoFlagCases = [
+            ['global -R flag', 'gh -R owner/repo pr merge 12 --squash'],
+            ['global --repo flag', 'gh --repo owner/repo pr merge 12 --squash'],
+            ['global --repo=value flag', 'gh --repo=owner/repo pr merge 12 --squash'],
+        ] as const;
+        const ghLogPath = path.join(fixture.root, 'gh-lookup.log');
+        for (const [name, command] of repoFlagCases) {
+            await t.test(name, () => {
+                fs.rmSync(ghLogPath, { force: true });
+                const result = run(command, fixture.repo, { CANON_GUARD_GH_LOG: ghLogPath });
+                assert.equal(result.denied, true, result.reason || command);
+                assert.match(result.reason, /canon run foo --ship/);
+                assert.match(fs.readFileSync(ghLogPath, 'utf8'), /-R owner\/repo/);
             });
         }
         await t.test('implicit PR on the current task branch', () => {

@@ -7,6 +7,7 @@ import path from 'node:path';
 
 const WRAPPERS = new Set(['env', 'command', 'exec', 'time', 'nohup', 'npx', 'sudo']);
 const GH_VALUE_FLAGS = new Set(['-t', '--subject', '-b', '--body', '-F', '--body-file', '-A', '--author-email', '--match-head-commit', '-R', '--repo']);
+const PERL_VALUE_FLAGS = new Set(['M', 'm', 'I', 'e', 'E', 'x', 'l', '0', 'C', 'd', 'D', 'V']);
 const GH_TIMEOUT_MS = Number(process.env.CANON_GUARD_GH_TIMEOUT_MS) || 3000;
 
 function main() {
@@ -384,7 +385,13 @@ function isSedInPlace(arg) {
 }
 
 function isPerlInPlace(arg) {
-    return /^-(?!-)[a-zA-Z]*i/.test(arg);
+    if (!/^-(?!-)[a-zA-Z0-9]/.test(arg)) return false;
+    for (const flag of arg.slice(1)) {
+        if (flag === 'i') return true;
+        if (PERL_VALUE_FLAGS.has(flag)) return false;
+        if (!/[a-zA-Z]/.test(flag)) return false;
+    }
+    return false;
 }
 
 function monitorRule(commands) {
@@ -438,12 +445,14 @@ function isTailFollow(arg) {
 function mergeRule(commands, cwd) {
     for (const command of commands) {
         const invocation = commandProgram(command);
-        if (invocation?.name !== 'gh' || invocation.args[0] !== 'pr' || invocation.args[1] !== 'merge') continue;
+        if (invocation?.name !== 'gh') continue;
+        const parsed = parseGhMergeArgs(invocation.args);
+        if (!parsed) continue;
 
-        const args = invocation.args.slice(2);
+        const { args, repo: globalRepo } = parsed;
         if (args.some(arg => ['--rebase', '-r', '--merge', '-m'].includes(arg) || isMergeFlagCluster(arg))) continue;
 
-        const { ref, repo } = findPRReference(args);
+        const { ref, repo } = findPRReference(args, globalRepo);
         const head = ref === null ? lookupCurrentBranch(cwd) : lookupPRHead(ref, repo, cwd);
         if (typeof head !== 'string' || !head.startsWith('task/')) continue;
         const taskId = head.slice('task/'.length);
@@ -452,13 +461,35 @@ function mergeRule(commands, cwd) {
     return null;
 }
 
+function parseGhMergeArgs(args) {
+    let index = 0;
+    let repo = null;
+    while (index < args.length) {
+        const arg = args[index];
+        if (arg === '-R' || arg === '--repo') {
+            if (typeof args[index + 1] !== 'string') return null;
+            repo = args[index + 1];
+            index += 2;
+            continue;
+        }
+        if (arg.startsWith('--repo=')) {
+            repo = arg.slice('--repo='.length);
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    if (args[index] !== 'pr' || args[index + 1] !== 'merge') return null;
+    return { args: args.slice(index + 2), repo };
+}
+
 function isMergeFlagCluster(arg) {
     return /^-[^-]+$/.test(arg) && arg.length > 2 && /[rm]/.test(arg.slice(1));
 }
 
-function findPRReference(args) {
+function findPRReference(args, initialRepo = null) {
     let ref = null;
-    let repo = null;
+    let repo = initialRepo;
     for (let index = 0; index < args.length; index += 1) {
         const arg = args[index];
         if (GH_VALUE_FLAGS.has(arg)) {
