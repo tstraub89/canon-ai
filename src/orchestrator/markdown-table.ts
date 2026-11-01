@@ -168,69 +168,123 @@ export function parseTableH3(markdown: string, sectionHeading: string): Array<Re
 // each block, so a second table with the same column names does not bleed state
 // from the first. Used for `### Affected Files` where a spec author may write
 // one table per subsystem — the allow-list gate and context preload must see
-// all of them.
+// all of them. Fenced and HTML-commented content is excluded.
 export function parseAllTablesH3(markdown: string, sectionHeading: string): Array<Record<string, string>> {
-    const lines = markdown.split('\n');
-    const headingIndex = lines.findIndex(line => line.trimEnd() === `### ${sectionHeading}`);
+    const { lines, hidden } = visibleMarkdownLines(markdown);
+    const headingIndex = lines.findIndex((line, i) => !hidden[i] && line.trimEnd() === `### ${sectionHeading}`);
     if (headingIndex === -1) return [];
+    let end = headingIndex + 1;
+    while (end < lines.length && (hidden[end] || !/^#{1,3}\s/.test(lines[end]))) end += 1;
+    return blocksToRecords(scanTableBlocks(lines, hidden, headingIndex + 1, end));
+}
 
-    let sectionEnd = lines.length;
-    for (let index = headingIndex + 1; index < lines.length; index += 1) {
-        if (/^#{1,3}\s/.test(lines[index])) {
-            sectionEnd = index;
-            break;
+// Manifest readers share visibility, heading boundaries and raw cell scanning.
+// Keep extractSectionBodies unchanged: its other callers read review/handoff bodies.
+function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: boolean[] } {
+    const hidden: boolean[] = [];
+    let comment = false;
+    let fence: { char: string; length: number } | null = null;
+    const lines = markdown.split('\n').map(line => {
+        if (fence) {
+            hidden.push(true);
+            const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
+            if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
+            return line;
         }
-    }
-
-    const allRows: Array<Record<string, string>> = [];
-    let scanFrom = headingIndex + 1;
-
-    while (scanFrom < sectionEnd) {
-        // Find the next table block start (first `|` line from scanFrom).
-        let tableStart = -1;
-        for (let i = scanFrom; i < sectionEnd; i += 1) {
-            if (lines[i].trimStart().startsWith('|')) {
-                tableStart = i;
-                break;
+        const opener = !comment && /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+        if (opener) {
+            fence = { char: opener[1][0], length: opener[1].length };
+            hidden.push(true);
+            return line;
+        }
+        // A comment marker inside an inline code span is literal example text.
+        // Remove only actual comment content, retaining visible cells on the line.
+        let visible = '';
+        let i = 0;
+        while (i < line.length) {
+            if (comment) {
+                const close = line.indexOf('-->', i);
+                if (close === -1) break;
+                comment = false;
+                i = close + 3;
+            } else if (line.startsWith('<!--', i)) {
+                comment = true;
+                i += 4;
+            } else if (line[i] === '`') {
+                const run = /^`+/.exec(line.slice(i))![0];
+                const rest = line.slice(i + run.length);
+                const close = [...rest.matchAll(/`+/g)].find(match => match[0].length === run.length);
+                const end = close ? i + run.length + close.index + run.length : i + run.length;
+                visible += line.slice(i, end);
+                i = end;
+            } else {
+                visible += line[i];
+                i += 1;
             }
         }
-        if (tableStart === -1) break;
+        hidden.push(visible.trim() === '');
+        return visible;
+    });
+    return { lines, hidden };
+}
 
-        // The first `|` line of each block is the header row.
-        const headerCells = normalizeCells(lines[tableStart]);
-        if (headerCells.length === 0) {
-            scanFrom = tableStart + 1;
-            continue;
+export type RawTableRow = { line: number; cells: string[] };
+export type RawTableBlock = { header: RawTableRow; hasSeparator: boolean; rows: RawTableRow[] };
+
+export function scanTableBlocks(lines: readonly string[], hidden: readonly boolean[], start: number, end: number): RawTableBlock[] {
+    const blocks: RawTableBlock[] = [];
+    let i = start;
+    while (i < end) {
+        if (hidden[i] || !lines[i].trimStart().startsWith('|')) { i += 1; continue; }
+        const header = { line: i + 1, cells: normalizeCells(lines[i]) };
+        i += 1;
+        if (header.cells.length === 0) continue;
+        const hasSeparator = i < end && !hidden[i] && isSeparatorRow(normalizeCells(lines[i]));
+        if (hasSeparator) i += 1;
+        const rows: RawTableRow[] = [];
+        while (i < end && !hidden[i] && lines[i].trimStart().startsWith('|')) {
+            const cells = normalizeCells(lines[i]);
+            if (!isSeparatorRow(cells)) rows.push({ line: i + 1, cells });
+            i += 1;
         }
-
-        // Skip an optional separator row immediately after the header.
-        let rowStart = tableStart + 1;
-        if (rowStart < sectionEnd) {
-            const maybeSep = normalizeCells(lines[rowStart]);
-            if (isSeparatorRow(maybeSep)) rowStart += 1;
-        }
-
-        // Collect contiguous `|` lines as data rows for this block.
-        let tableEnd = rowStart;
-        while (tableEnd < sectionEnd && lines[tableEnd].trimStart().startsWith('|')) {
-            tableEnd += 1;
-        }
-
-        for (let index = rowStart; index < tableEnd; index += 1) {
-            const cells = normalizeCells(lines[index]);
-            if (isSeparatorRow(cells)) continue;
-            const row: Record<string, string> = {};
-            for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
-                row[headerCells[cellIndex]] = cells[cellIndex] ?? '';
-            }
-            allRows.push(row);
-        }
-
-        // Advance past this block and look for the next one.
-        scanFrom = tableEnd;
+        blocks.push({ header, hasSeparator, rows });
     }
+    return blocks;
+}
 
-    return allRows;
+export function blocksToRecords(blocks: readonly RawTableBlock[]): Array<Record<string, string>> {
+    return blocks.flatMap(block => block.rows.map(({ cells }) => {
+        const row: Record<string, string> = {};
+        block.header.cells.forEach((name, i) => { row[name] = cells[i] ?? ''; });
+        return row;
+    }));
+}
+
+export type ScannedHeading = { index: number; line: number; level: number; text: string; sectionEnd: number };
+export type ManifestHeading = { heading: ScannedHeading; blocks: RawTableBlock[] };
+export type ManifestSection = { h2: ScannedHeading; kind: 'design' | 'amendment'; affectedFiles: ManifestHeading[] };
+
+export function scanSpecManifest(markdown: string): {
+    lines: string[]; hidden: boolean[]; headings: ScannedHeading[]; sections: ManifestSection[];
+} {
+    const { lines, hidden } = visibleMarkdownLines(markdown);
+    const headings: ScannedHeading[] = [];
+    lines.forEach((line, index) => {
+        const match = !hidden[index] && /^(#{1,6})\s/.exec(line);
+        if (match) headings.push({ index, line: index + 1, level: match[1].length, text: line.trimEnd(), sectionEnd: lines.length });
+    });
+    headings.forEach((heading, i) => {
+        heading.sectionEnd = headings.slice(i + 1).find(next => next.level <= Math.max(3, heading.level))?.index ?? lines.length;
+    });
+    const sections: ManifestSection[] = [];
+    headings.forEach((h2, i) => {
+        if (h2.level !== 2 || !/^## (?:Design|Amendment)\b/.test(h2.text)) return;
+        const end = headings.slice(i + 1).find(next => next.level <= 2)?.index ?? lines.length;
+        const affectedFiles = headings.filter(h => h.index > h2.index && h.index < end && h.text === '### Affected Files')
+            .map(heading => ({ heading, blocks: scanTableBlocks(lines, hidden, heading.index + 1, Math.min(end, heading.sectionEnd)) }));
+        sections.push({ h2, kind: /^## Design\b/.test(h2.text) ? 'design' : 'amendment', affectedFiles });
+    });
+    return { lines, hidden, headings, sections };
 }
 
 export type ScannedTable = {

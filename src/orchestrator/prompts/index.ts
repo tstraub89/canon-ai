@@ -136,6 +136,8 @@ function roleView(state: PipelineState): object {
     };
 }
 
+export const SPEC_MANIFEST_CONTRACT = 'Affected Files uses exactly one `### Affected Files` heading per `## Design` or `## Amendment…` section and one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Marking the spec done enforces this format, and canon re-checks it before planning and implementation.';
+
 export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<string, readonly string[]>>): string {
     const { tasks, tier, isBundle } = state;
     const combined = tier === 'fast';
@@ -161,7 +163,7 @@ export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<str
         selfCheck: [
             'Before running the canon task command, self-check each spec against this list. Fix anything that fails:',
             '- Every AC is verifiable with a specific test (not just "it works" — state exactly how to verify)',
-            '- Affected Files lists specific files (not directories) with specific, actionable change descriptions',
+            `- ${SPEC_MANIFEST_CONTRACT} Each row has a specific, actionable change description.`,
             combined ? '- Plan steps reference actual function/file names from the codebase (not just concepts)' : null,
             combined ? "- plan.md's Approach records the feasibility check (exists, real path, callers, tests that can fail, predicates, Affected Files, async/stateful; N/A where it doesn't apply)" : null,
             '- Known Risks covers failure modes for the trickiest ACs',

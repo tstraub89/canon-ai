@@ -2544,3 +2544,36 @@ void test('reroute plan evidence gate rejects the stale original plan, accepts a
         assert.equal(fresh.advanced, true, fresh.note);
     });
 });
+
+void test('manifest lint follows fast-tier reroute to the active amendment spec', () => {
+    withTempDir('manifest-reroute-', dir => {
+        initGitRepo(dir);
+        const tasksRoot = path.join(dir, 'tasks');
+        const worktreesRoot = path.join(dir, 'worktrees');
+        const id = 'manifest-reroute';
+        const status = makeRerouteStatus(id, `task/${id}`, 0, { taskSize: 'XS', delicate: false });
+        writeTaskStatus(tasksRoot, id, status);
+        writeTaskStatus(worktreeTasksRoot(worktreesRoot, id), id, status);
+        writeSpec(dir, id, '# Spec: clean main checkout\n');
+        writeSpec(path.join(worktreesRoot, id), id, '# Spec: amendment\n## Amendment\n### Affected Files\n| File | Change |\n|---|---|\n| `a.ts` | x || `b.ts` | y |\n');
+        const before = fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8');
+        const reroute = runReroute(dir, [id], false);
+        assert.equal(reroute.status, 0, reroute.stderr);
+        const updated = readStatus(worktreeTasksRoot(worktreesRoot, id), id) as StatusJson;
+        assert.equal(updated.phases.implement?.status, 'pending');
+        assert.equal(updated.phases.implement?.rerouted, true);
+        assert.equal(updated.phases.plan?.status, 'done');
+        const env: NodeJS.ProcessEnv = { ...process.env, CANON_WORKTREES_ROOT: worktreesRoot };
+        delete env.CANON_TASKS_DIR_OVERRIDE;
+        const result = spawnSync(process.execPath, ['--import', MD_LOADER, '--import', TSX_LOADER, '-e', `
+import assert from 'node:assert/strict';
+import { lintSpecManifestForTasks } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/validation.ts')).href}';
+const failures = lintSpecManifestForTasks(['${id}']);
+assert.equal(failures.length, 1);
+assert.equal(failures[0].issues[0].section, '## Amendment');
+assert.equal(failures[0].issues[0].kind, 'fused-cells');
+`], { cwd: dir, env, encoding: 'utf8' });
+        assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+        assert.equal(fs.readFileSync(path.join(tasksRoot, id, 'status.json'), 'utf8'), before);
+    });
+});

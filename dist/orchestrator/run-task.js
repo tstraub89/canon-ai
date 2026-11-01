@@ -200,7 +200,8 @@ var RUN_USAGE = [
   "  --force             Acknowledge high-commitment combinations and bypass",
   "                      explicit safety gates where documented (currently:",
   "                      --full-send on delicate tasks, reroute amendment gate,",
-  "                      base-drift gate, and dirty REPO_ROOT worktree-start gate).",
+  "                      base-drift gate, dirty REPO_ROOT worktree-start gate,",
+  "                      and spec manifest pre-flight before plan/implement).",
   "  --allow-divergent-base",
   "                      At --push, --pr, and --ship: bypass only the commit-divergence",
   "                      block when local <base> has commits not yet on origin/<base>.",
@@ -3432,54 +3433,101 @@ function parseTableH3(markdown, sectionHeading) {
   }
   return rows;
 }
-function parseAllTablesH3(markdown, sectionHeading) {
-  const lines = markdown.split("\n");
-  const headingIndex = lines.findIndex((line) => line.trimEnd() === `### ${sectionHeading}`);
-  if (headingIndex === -1) return [];
-  let sectionEnd = lines.length;
-  for (let index = headingIndex + 1; index < lines.length; index += 1) {
-    if (/^#{1,3}\s/.test(lines[index])) {
-      sectionEnd = index;
-      break;
+function visibleMarkdownLines(markdown) {
+  const hidden = [];
+  let comment = false;
+  let fence = null;
+  const lines = markdown.split("\n").map((line) => {
+    if (fence) {
+      hidden.push(true);
+      const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
+      if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
+      return line;
     }
-  }
-  const allRows = [];
-  let scanFrom = headingIndex + 1;
-  while (scanFrom < sectionEnd) {
-    let tableStart = -1;
-    for (let i = scanFrom; i < sectionEnd; i += 1) {
-      if (lines[i].trimStart().startsWith("|")) {
-        tableStart = i;
-        break;
+    const opener = !comment && /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (opener) {
+      fence = { char: opener[1][0], length: opener[1].length };
+      hidden.push(true);
+      return line;
+    }
+    let visible = "";
+    let i = 0;
+    while (i < line.length) {
+      if (comment) {
+        const close = line.indexOf("-->", i);
+        if (close === -1) break;
+        comment = false;
+        i = close + 3;
+      } else if (line.startsWith("<!--", i)) {
+        comment = true;
+        i += 4;
+      } else if (line[i] === "`") {
+        const run = /^`+/.exec(line.slice(i))[0];
+        const rest = line.slice(i + run.length);
+        const close = [...rest.matchAll(/`+/g)].find((match) => match[0].length === run.length);
+        const end = close ? i + run.length + close.index + run.length : i + run.length;
+        visible += line.slice(i, end);
+        i = end;
+      } else {
+        visible += line[i];
+        i += 1;
       }
     }
-    if (tableStart === -1) break;
-    const headerCells = normalizeCells(lines[tableStart]);
-    if (headerCells.length === 0) {
-      scanFrom = tableStart + 1;
+    hidden.push(visible.trim() === "");
+    return visible;
+  });
+  return { lines, hidden };
+}
+function scanTableBlocks(lines, hidden, start, end) {
+  const blocks = [];
+  let i = start;
+  while (i < end) {
+    if (hidden[i] || !lines[i].trimStart().startsWith("|")) {
+      i += 1;
       continue;
     }
-    let rowStart = tableStart + 1;
-    if (rowStart < sectionEnd) {
-      const maybeSep = normalizeCells(lines[rowStart]);
-      if (isSeparatorRow(maybeSep)) rowStart += 1;
+    const header = { line: i + 1, cells: normalizeCells(lines[i]) };
+    i += 1;
+    if (header.cells.length === 0) continue;
+    const hasSeparator = i < end && !hidden[i] && isSeparatorRow(normalizeCells(lines[i]));
+    if (hasSeparator) i += 1;
+    const rows = [];
+    while (i < end && !hidden[i] && lines[i].trimStart().startsWith("|")) {
+      const cells = normalizeCells(lines[i]);
+      if (!isSeparatorRow(cells)) rows.push({ line: i + 1, cells });
+      i += 1;
     }
-    let tableEnd = rowStart;
-    while (tableEnd < sectionEnd && lines[tableEnd].trimStart().startsWith("|")) {
-      tableEnd += 1;
-    }
-    for (let index = rowStart; index < tableEnd; index += 1) {
-      const cells = normalizeCells(lines[index]);
-      if (isSeparatorRow(cells)) continue;
-      const row = {};
-      for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex += 1) {
-        row[headerCells[cellIndex]] = cells[cellIndex] ?? "";
-      }
-      allRows.push(row);
-    }
-    scanFrom = tableEnd;
+    blocks.push({ header, hasSeparator, rows });
   }
-  return allRows;
+  return blocks;
+}
+function blocksToRecords(blocks) {
+  return blocks.flatMap((block) => block.rows.map(({ cells }) => {
+    const row = {};
+    block.header.cells.forEach((name, i) => {
+      row[name] = cells[i] ?? "";
+    });
+    return row;
+  }));
+}
+function scanSpecManifest(markdown) {
+  const { lines, hidden } = visibleMarkdownLines(markdown);
+  const headings = [];
+  lines.forEach((line, index) => {
+    const match = !hidden[index] && /^(#{1,6})\s/.exec(line);
+    if (match) headings.push({ index, line: index + 1, level: match[1].length, text: line.trimEnd(), sectionEnd: lines.length });
+  });
+  headings.forEach((heading, i) => {
+    heading.sectionEnd = headings.slice(i + 1).find((next) => next.level <= Math.max(3, heading.level))?.index ?? lines.length;
+  });
+  const sections = [];
+  headings.forEach((h2, i) => {
+    if (h2.level !== 2 || !/^## (?:Design|Amendment)\b/.test(h2.text)) return;
+    const end = headings.slice(i + 1).find((next) => next.level <= 2)?.index ?? lines.length;
+    const affectedFiles = headings.filter((h) => h.index > h2.index && h.index < end && h.text === "### Affected Files").map((heading) => ({ heading, blocks: scanTableBlocks(lines, hidden, heading.index + 1, Math.min(end, heading.sectionEnd)) }));
+    sections.push({ h2, kind: /^## Design\b/.test(h2.text) ? "design" : "amendment", affectedFiles });
+  });
+  return { lines, hidden, headings, sections };
 }
 function scanAllTables(markdown) {
   const lines = markdown.split("\n");
@@ -4065,6 +4113,11 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     if (isTemplate) {
       return { ok: false, reason: `${config3.artifactName} is still the unfilled template for phase '${phase}'` };
     }
+    if (phase === "spec") {
+      const issues = lintSpecManifest(content);
+      if (issues.length > 0) return { ok: false, reason: `${formatManifestLintIssues(issues)}
+Fix the \`### Affected Files\` table in spec.md, then rerun \`canon task phase ${taskId} spec done\`.` };
+    }
     let rerouteEv = { reroute: false };
     if (phase === "spec_review" || phase === "plan") {
       let statusRaw;
@@ -4168,15 +4221,12 @@ function parseAffectedFilesFromSpec(taskId) {
   } catch {
     return { files: [], malformed: [] };
   }
-  const sectionBodies = [
-    ...extractSectionBodies(content, /^## Design\b/),
-    ...extractSectionBodies(content, /^## Amendment\b/)
-  ];
-  if (sectionBodies.length === 0) return { files: [], malformed: [] };
+  const scan2 = scanSpecManifest(content);
+  const sections = [...scan2.sections.filter((s) => s.kind === "design"), ...scan2.sections.filter((s) => s.kind === "amendment")];
   const files = /* @__PURE__ */ new Set();
   const malformed = [];
-  for (const body of sectionBodies) {
-    const rows = parseAllTablesH3(body, "Affected Files");
+  for (const section of sections) {
+    const rows = blocksToRecords(section.affectedFiles[0]?.blocks ?? []);
     for (const row of rows) {
       const firstColumn = Object.values(row)[0] ?? "";
       if (!firstColumn.trim()) continue;
@@ -4718,6 +4768,65 @@ function buildSharedDocAbortMessage(abortedFiles) {
     "Recovery: commit or stash your edits, then re-run --ship.",
     "--force does not bypass this gate."
   ].join("\n");
+}
+function lintSpecManifest(markdown) {
+  const scan2 = scanSpecManifest(markdown);
+  const issues = [];
+  const hasToken = (cell) => /`[^`]+`/.test(cell);
+  for (const section of scan2.sections) {
+    const label = section.h2.text;
+    for (const duplicate of section.affectedFiles.slice(1)) {
+      issues.push({ section: label, line: duplicate.heading.line, kind: "duplicate-heading", message: "A second ### Affected Files heading is not read; merge its rows into the first table in this section." });
+    }
+    let row = 0;
+    for (const block of section.affectedFiles[0]?.blocks ?? []) {
+      if (!block.hasSeparator) issues.push({ section: label, line: block.header.line, kind: "header-less-block", message: "This line is being read as a header, so its path is not in scope. Keep each table contiguous and start it with a header followed by a |---|---| separator row." });
+      for (const raw of block.rows) {
+        row += 1;
+        const { cells, line } = raw;
+        const at = { section: label, row, line };
+        if (cells.length > block.header.cells.length && cells.slice(block.header.cells.length).some(hasToken)) {
+          issues.push({ ...at, kind: "fused-cells", message: `Row has ${cells.length} cells but its header has ${block.header.cells.length}; an extra path is not read. Put one file per row, or comma-join paths in column 1.` });
+        }
+        if (!cells[0] && cells.slice(1).some(hasToken)) {
+          issues.push({ ...at, kind: "empty-first-cell", message: "The first column is empty, so a path in another cell is not read. Put the path in column 1." });
+        } else if (cells[0]) {
+          for (const malformed of parseHandoffPathCell(cells[0]).malformed) {
+            issues.push({ ...at, kind: "malformed-path", message: `First-column cell ${cells[0]}: ${malformed.reason}. Start with backticked paths, comma-join multiple paths, and move notes to the Change column.` });
+          }
+        }
+      }
+    }
+  }
+  const exact = scan2.sections.flatMap((s) => s.affectedFiles);
+  for (const heading of scan2.headings) {
+    if (!/affected files/i.test(heading.text)) continue;
+    if (exact.some((entry) => entry.heading.index === heading.index || heading.level >= 4 && heading.index > entry.heading.index && heading.index < entry.heading.sectionEnd)) continue;
+    if (scanTableBlocks(scan2.lines, scan2.hidden, heading.index + 1, heading.sectionEnd).length === 0) continue;
+    const section = scan2.headings.filter((h) => h.level === 2 && h.index <= heading.index).at(-1)?.text ?? "(before any ## section)";
+    issues.push({ section, line: heading.line, kind: "ignored-heading", message: `Heading ${heading.text} is not read as scope. Use exactly ### Affected Files directly under ## Design or an ## Amendment\u2026 section.` });
+  }
+  return issues;
+}
+function formatManifestLintIssues(issues) {
+  return `spec.md's Affected Files table has ${issues.length} problem(s):
+` + issues.map(
+    (issue) => `  - ${issue.section}${issue.row === void 0 ? "" : `, row ${issue.row}`}${issue.line === void 0 ? "" : ` (line ${issue.line})`}: ${issue.message}`
+  ).join("\n");
+}
+function lintSpecManifestForTasks(taskIds) {
+  return taskIds.flatMap((taskId) => {
+    const specPath = path9.join(taskDirFor(taskId), "spec.md");
+    if (!fs11.existsSync(specPath)) return [];
+    const issues = lintSpecManifest(fs11.readFileSync(specPath, "utf8"));
+    return issues.length > 0 ? [{ taskId, issues }] : [];
+  });
+}
+function manifestPreflightMessage(failures, phase, force, taskIds = failures.map((f) => f.taskId)) {
+  const detail = failures.map(({ taskId, issues }) => `[${taskId}] ${formatManifestLintIssues(issues)}`).join("\n");
+  return `${force ? "--force bypass: " : ""}Spec manifest pre-flight before ${phase}:
+${detail}
+` + (force ? "Proceeding with manifest issues at user request." : `Fix the ### Affected Files table in each task's active-checkout spec.md, then rerun canon run ${taskIds.join(" ")}.`);
 }
 
 // src/orchestrator/prompts/index.ts
@@ -5619,7 +5728,7 @@ var qa_default = 'You are writing QA summaries for {{taskScope}} for {{projectNa
 var spec_default = '{{{header}}}\n\n{{{startup}}}\n\n{{{instructions}}}\n{{{bundleNote}}}\n{{#doneNote}}\nNote: {{{doneNote}}}{{/doneNote}}\n\n{{#docsMapBlock}}\n{{{docsMapBlock}}}\n\n{{/docsMapBlock}}\n**Spec-writing rules of thumb** \u2014 apply when writing each spec:\n\n- **Name effects to DELETE** \u2014 frame supersession as replacement, not add-plus-remove. State: "replace `oldFn` with `newFn`; `oldFn` must not exist after" \u2014 not separate "Add" and "Remove" bullets.\n- **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe; bare prose negation is fragile.\n- **Symbols named in ACs must exist** \u2014 grep for every function or symbol an AC names; verify its return shape matches the spec\'s assumed data contract before marking spec done.\n- **Enumerate every caller and classify its execution context before asserting how a mechanism works** \u2014 "counter X only increments on event Y" or "this writer can only be invoked from surface Z" is a control-flow claim, and control-flow claims need every caller traced. A helper named for one trigger routinely serves several, and whether a call site runs inside an agent\'s own session or in the orchestrator\'s process is invisible from the function body. Grep every caller of the function or counter \u2014 including skills and docs, not just source \u2014 and classify each site as in-agent-session or orchestrator-context before the spec asserts anything about it.\n- **Find sibling implementations, not just callers** \u2014 before settling Affected Files, search for every other place that implements the behavior the spec changes: a second listener or entry path, a parallel component, or a test or doc that asserts the current behavior. A change that reaches one of two implementations ships half-done, and the gap usually surfaces only at code review.\n- **Behavioral contracts, not mechanics** \u2014 ACs describe observable behavior; defer implementation mechanics (signatures, constant names, precise algorithms) to plan/implement. If review rounds start re-litigating literal regexes, exact file layouts, or verbatim command strings, the spec has dropped to code altitude and each round\'s "underspecified" finding just adds more reviewable surface: move the mechanics into a clearly-labeled non-binding *Implementation Notes* subsection owned by plan/implement, rather than wording the same mechanism more precisely.\n- **Bug and flake-fix specs need a confirmed mechanism and red-first test** \u2014 For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed \u2014 not merely a plausible cause. Evidence must match the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation \u2014 a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.\n- **At \u22653 spec_review iterations, read the rounds\' content, not the count** \u2014 label each round *edge-fine-tune* (it narrows an already-identified case \u2014 converging, safe to finish once the remaining findings are addressed) or *scope-expansion* (it names a **new** structural case the spec hadn\'t covered \u2014 a real design gap). Round count alone is not the signal; a 6-round run of successive fine-tunes is convergence, not churn. On genuine scope-expansion, don\'t refine again: check whether the last two rejections share one structural root, and whether an existing layer already owns the concern. Dropping the whole mechanism class \u2014 or deleting the mechanism in favor of the layer that already owns it \u2014 is usually cheaper than another round of hardening.\n- **Refactor specs need structural caps** \u2014 provide hard size caps, explicit deletion expectations per symbol, and an allow-list grep AC for any symbol that must disappear.\n- **Refactor specs need a correctness audit** \u2014 For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record. N/A for features and bug fixes.\n- **UI spatial / gesture tasks** \u2014 flag "visual positioning \u2014 expect human iteration" or "runtime debugging required" in *Known Risks*.\n- **Sensitive-surface escalation** \u2014 flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.\n\n{{{selfCheck}}}\n\nWhen done, run (one per task):\n{{{phaseCommands}}}\n';
 
 // src/orchestrator/prompts/templates/spec-revision.md
-var spec_revision_default = 'You are revising specs for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks with review feedback:\n{{{reviewLines}}}\n\nAddress every `changes_requested` finding in each spec.md.{{#combined}}\nAlso update plan.md if spec changes affect the implementation approach.{{/combined}}\n\n{{#docsMapBlock}}\n{{{docsMapBlock}}}\n\n{{/docsMapBlock}}\n**Spec-writing rules of thumb** \u2014 apply when revising each spec:\n\n- **Name effects to DELETE** \u2014 frame supersession as replacement, not add-plus-remove. State: "replace `oldFn` with `newFn`; `oldFn` must not exist after" \u2014 not separate "Add" and "Remove" bullets.\n- **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe; bare prose negation is fragile.\n- **Symbols named in ACs must exist** \u2014 grep for every function or symbol an AC names; verify its return shape matches the spec\'s assumed data contract before marking spec done.\n- **Enumerate every caller and classify its execution context before asserting how a mechanism works** \u2014 "counter X only increments on event Y" or "this writer can only be invoked from surface Z" is a control-flow claim, and control-flow claims need every caller traced. A helper named for one trigger routinely serves several, and whether a call site runs inside an agent\'s own session or in the orchestrator\'s process is invisible from the function body. Grep every caller of the function or counter \u2014 including skills and docs, not just source \u2014 and classify each site as in-agent-session or orchestrator-context before the spec asserts anything about it.\n- **Find sibling implementations, not just callers** \u2014 before settling Affected Files, search for every other place that implements the behavior the spec changes: a second listener or entry path, a parallel component, or a test or doc that asserts the current behavior. A change that reaches one of two implementations ships half-done, and the gap usually surfaces only at code review.\n- **Behavioral contracts, not mechanics** \u2014 ACs describe observable behavior; defer implementation mechanics (signatures, constant names, precise algorithms) to plan/implement. If review rounds start re-litigating literal regexes, exact file layouts, or verbatim command strings, the spec has dropped to code altitude and each round\'s "underspecified" finding just adds more reviewable surface: move the mechanics into a clearly-labeled non-binding *Implementation Notes* subsection owned by plan/implement, rather than wording the same mechanism more precisely.\n- **Bug and flake-fix specs need a confirmed mechanism and red-first test** \u2014 For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed \u2014 not merely a plausible cause. Evidence must match the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation \u2014 a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.\n- **At \u22653 spec_review iterations, read the rounds\' content, not the count** \u2014 label each round *edge-fine-tune* (it narrows an already-identified case \u2014 converging, safe to finish once the remaining findings are addressed) or *scope-expansion* (it names a **new** structural case the spec hadn\'t covered \u2014 a real design gap). Round count alone is not the signal; a 6-round run of successive fine-tunes is convergence, not churn. On genuine scope-expansion, don\'t refine again: check whether the last two rejections share one structural root, and whether an existing layer already owns the concern. Dropping the whole mechanism class \u2014 or deleting the mechanism in favor of the layer that already owns it \u2014 is usually cheaper than another round of hardening.\n- **Refactor specs need structural caps** \u2014 provide hard size caps, explicit deletion expectations per symbol, and an allow-list grep AC for any symbol that must disappear.\n- **Refactor specs need a correctness audit** \u2014 For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record. N/A for features and bug fixes.\n- **UI spatial / gesture tasks** \u2014 flag "visual positioning \u2014 expect human iteration" or "runtime debugging required" in *Known Risks*.\n- **Sensitive-surface escalation** \u2014 flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.\n\nWhen done, run:\n{{{phaseCommands}}}\n';
+var spec_revision_default = 'You are revising specs for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks with review feedback:\n{{{reviewLines}}}\n\nAddress every `changes_requested` finding in each spec.md.{{#combined}}\nAlso update plan.md if spec changes affect the implementation approach.{{/combined}}\n\n{{#docsMapBlock}}\n{{{docsMapBlock}}}\n\n{{/docsMapBlock}}\n**Spec-writing rules of thumb** \u2014 apply when revising each spec:\n\n- **Name effects to DELETE** \u2014 frame supersession as replacement, not add-plus-remove. State: "replace `oldFn` with `newFn`; `oldFn` must not exist after" \u2014 not separate "Add" and "Remove" bullets.\n- **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe; bare prose negation is fragile.\n- **Symbols named in ACs must exist** \u2014 grep for every function or symbol an AC names; verify its return shape matches the spec\'s assumed data contract before marking spec done.\n- **Enumerate every caller and classify its execution context before asserting how a mechanism works** \u2014 "counter X only increments on event Y" or "this writer can only be invoked from surface Z" is a control-flow claim, and control-flow claims need every caller traced. A helper named for one trigger routinely serves several, and whether a call site runs inside an agent\'s own session or in the orchestrator\'s process is invisible from the function body. Grep every caller of the function or counter \u2014 including skills and docs, not just source \u2014 and classify each site as in-agent-session or orchestrator-context before the spec asserts anything about it.\n- **Find sibling implementations, not just callers** \u2014 before settling Affected Files, search for every other place that implements the behavior the spec changes: a second listener or entry path, a parallel component, or a test or doc that asserts the current behavior. A change that reaches one of two implementations ships half-done, and the gap usually surfaces only at code review.\n- **Behavioral contracts, not mechanics** \u2014 ACs describe observable behavior; defer implementation mechanics (signatures, constant names, precise algorithms) to plan/implement. If review rounds start re-litigating literal regexes, exact file layouts, or verbatim command strings, the spec has dropped to code altitude and each round\'s "underspecified" finding just adds more reviewable surface: move the mechanics into a clearly-labeled non-binding *Implementation Notes* subsection owned by plan/implement, rather than wording the same mechanism more precisely.\n- **Bug and flake-fix specs need a confirmed mechanism and red-first test** \u2014 For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed \u2014 not merely a plausible cause. Evidence must match the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation \u2014 a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.\n- **At \u22653 spec_review iterations, read the rounds\' content, not the count** \u2014 label each round *edge-fine-tune* (it narrows an already-identified case \u2014 converging, safe to finish once the remaining findings are addressed) or *scope-expansion* (it names a **new** structural case the spec hadn\'t covered \u2014 a real design gap). Round count alone is not the signal; a 6-round run of successive fine-tunes is convergence, not churn. On genuine scope-expansion, don\'t refine again: check whether the last two rejections share one structural root, and whether an existing layer already owns the concern. Dropping the whole mechanism class \u2014 or deleting the mechanism in favor of the layer that already owns it \u2014 is usually cheaper than another round of hardening.\n- **Refactor specs need structural caps** \u2014 provide hard size caps, explicit deletion expectations per symbol, and an allow-list grep AC for any symbol that must disappear.\n- **Refactor specs need a correctness audit** \u2014 For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record. N/A for features and bug fixes.\n- **UI spatial / gesture tasks** \u2014 flag "visual positioning \u2014 expect human iteration" or "runtime debugging required" in *Known Risks*.\n- **Sensitive-surface escalation** \u2014 flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.\n\n- **Scope manifest** \u2014 Affected Files uses exactly one `### Affected Files` heading per `## Design` or `## Amendment\u2026` section and one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Marking the spec done enforces this format, and canon re-checks it before planning and implementation.\n\nWhen done, run:\n{{{phaseCommands}}}\n';
 
 // src/orchestrator/prompts/templates/spec-review-reroute.md
 var spec_review_reroute_default = "You are reviewing {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nA human amended the spec and rerouted this task after implementation began. The original spec was already reviewed and approved. Your job is to review **the amendment and its integration** with the already-approved spec, not to re-litigate settled findings.\n\n{{{roundBanner}}}Tasks with amendments to review:\n{{{taskLines}}}\n\n**Amendment review scope** (for each task \u2014 EXCEPT tasks whose line above marks them EXEMPT: those have no amendment and require no review work this round; do not request changes for a missing Amendment heading on them):\n1. Read `tasks/<id>/spec.md` from your current directory. Locate the exact amendment heading named above: `## Amendment` for round 1, or `## Amendment Round N` for round 2+.\n2. Read `tasks/<id>/spec-review.md` so you know what was already reviewed and do not re-raise settled findings.\n3. Review the amendment itself: is it implementable as written, are ACs verifiable, and are edge cases handled?\n4. Review integration with approved ACs: does the amendment contradict, weaken, duplicate, or leave gaps against previously approved requirements?\n5. Review overall shape: with the amendment included, is the spec still coherent and in scope?\n6. Do **not** read or audit `handoff.md`, `review.md`, or `done.md`. This phase stays in the spec domain.\n\nGrounding rule: if a finding depends on a symbol or file, re-open it before claiming it exists.\n\n{{#mixedProvider}}**Cross-review rule**: No agent reviews its own output. Claude writes specs \u2192 Codex reviews specs. Codex writes code \u2192 Claude reviews code.{{/mixedProvider}}{{^mixedProvider}}**Cross-review rule**: Separate Claude sessions write specs, review specs, implement code and review code. Reviewers use independent sessions; cold code-review lenses remain spec-blind.{{/mixedProvider}}\n\n**Diagnose before you fix \u2014 3-role checkpoint**: For any amendment addressing a bug or flake fix, each role owns a checkpoint: the spec author states the confirmed mechanism and its evidence in *Problem* (a deterministic mechanism \u2014 fixed inputs hit the same wrong branch every run \u2014 may cite a trace with the verified trigger values; a runtime-dependent mechanism \u2014 race, timing, environment/config interaction \u2014 needs executed confirmation: a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro); the reviewer challenges whether that evidence establishes the root cause; the implementer runs the spec's red-first test against the pre-fix code (or, under the environment-bound-and-impractical escape, its named deterministic alternative) and reports the result in the handoff. A mechanism with no confirmation evidence, or evidence below its class's required rung, is a blocking Shape Check concern \u2014 as is a bug/flake amendment carrying neither a red-first regression-test AC nor the explicit environment-bound-and-impractical escape with a named deterministic alternative.\n\n**Verdict rules** (same as normal spec review):\n- `changes_requested` \u2014 one or more blocking findings. The human must revise the amendment and re-run.\n- `approved_with_nits` \u2014 no blockers; non-blocking observations only. Loop exits immediately.\n- `approved` \u2014 no findings.\n\nFor each task, append a new amendment-review section to `tasks/<id>/spec-review.md`; do not overwrite the prior review. Use this exact heading for the section (the orchestrator's evidence gate requires it before advancing):\n   - Round 1: `## Amendment Review`\n   - Round N >= 2: `## Amendment Review Round N`\nRecord your verdict **inside that section** as a checked box \u2014 the evidence gate reads the verdict from this section, not from the original review above it. Check exactly one of:\n`- [x] **Approved**` / `- [x] **Approved with nits**` / `- [x] **Changes requested**`.\n\nWhen done, run (one per task with actual verdict):\n{{{phaseCommands}}}\n\n<!-- per-round append shape (round 1 omits the round suffix):\n## Amendment Review          (round 1)\n## Amendment Review Round N  (round N >= 2)\n- [x] **Approved**            (check exactly one verdict box)\n> Findings: ...\n-->\n";
@@ -5729,6 +5838,7 @@ function roleView(state) {
     toolExamples: state.provider === "claude" ? "Claude, canon, an LLM" : "Claude, Codex, canon, an LLM"
   };
 }
+var SPEC_MANIFEST_CONTRACT = "Affected Files uses exactly one `### Affected Files` heading per `## Design` or `## Amendment\u2026` section and one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Marking the spec done enforces this format, and canon re-checks it before planning and implementation.";
 function promptSpec(state, docsPaths) {
   const { tasks, tier, isBundle } = state;
   const combined = tier === "fast";
@@ -5758,7 +5868,7 @@ ${planFeasibilityCheck("in plan.md's Approach section")}` : ""),
     selfCheck: [
       "Before running the canon task command, self-check each spec against this list. Fix anything that fails:",
       '- Every AC is verifiable with a specific test (not just "it works" \u2014 state exactly how to verify)',
-      "- Affected Files lists specific files (not directories) with specific, actionable change descriptions",
+      `- ${SPEC_MANIFEST_CONTRACT} Each row has a specific, actionable change description.`,
       combined ? "- Plan steps reference actual function/file names from the codebase (not just concepts)" : null,
       combined ? "- plan.md's Approach records the feasibility check (exists, real path, callers, tests that can fail, predicates, Affected Files, async/stateful; N/A where it doesn't apply)" : null,
       "- Known Risks covers failure modes for the trickiest ACs",
@@ -7163,6 +7273,15 @@ function shouldUseImplementRevision(tasks) {
 async function runImplementPhase(state, interactive, resumeId, force = false) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
+  const manifestFailures = lintSpecManifestForTasks(taskIds);
+  if (manifestFailures.length > 0) {
+    const message = manifestPreflightMessage(manifestFailures, "implement", force, taskIds);
+    warn(message);
+    if (!force) {
+      autoBlockPhase(taskIds, "implement", 0, message);
+      process.exit(2);
+    }
+  }
   const codeReviewCheck = evaluateCodeReviewLoop(tasks, getMaxReviewLoops(tasks));
   if (codeReviewCheck.count > 0 && codeReviewCheck.blocked) {
     warn(codeReviewCheck.reason);
@@ -7240,9 +7359,18 @@ async function runImplementPhase(state, interactive, resumeId, force = false) {
 // src/orchestrator/phases/plan.ts
 import fs20 from "fs";
 import path18 from "path";
-async function runPlanPhase(state, interactive) {
+async function runPlanPhase(state, interactive, force = false) {
   const { tasks } = state;
   const taskIds = tasks.map((t) => t.taskId);
+  const manifestFailures = lintSpecManifestForTasks(taskIds);
+  if (manifestFailures.length > 0) {
+    const message = manifestPreflightMessage(manifestFailures, "plan", force, taskIds);
+    warn(message);
+    if (!force) {
+      autoBlockPhase(taskIds, "plan", 0, message);
+      process.exit(2);
+    }
+  }
   info(`Phase: plan (Claude writes plan${state.isBundle ? "s" : ""})`);
   for (const t of tasks) taskPhase(t.taskId, "plan", "in_progress");
   const backend = agentBackendFor("author", roleAssignmentFor(state.provider));
@@ -9950,7 +10078,7 @@ async function runPhase(phase, state) {
     return runSpecReviewPhase(state, cliArgs.interactive, session);
   }
   if (phase === "plan") {
-    return runPlanPhase(state, cliArgs.interactive);
+    return runPlanPhase(state, cliArgs.interactive, cliArgs.force);
   }
   if (phase === "implement") {
     return runImplementPhase(state, cliArgs.interactive, session, cliArgs.force);
@@ -10162,6 +10290,10 @@ function tryEvidenceAdvance(taskId, phase) {
     case "spec": {
       const content = readArtifact(taskId, "spec.md");
       if (isTemplateUnfilled(content)) return { advanced: false, note: "spec.md is missing or still the template" };
+      if (!process.env.CANON_SKIP_PHASE_GATE) {
+        const issues = lintSpecManifest(content);
+        if (issues.length > 0) return { advanced: false, note: formatManifestLintIssues(issues) };
+      }
       taskPhase(taskId, "spec", "done");
       return { advanced: true, note: "spec.md is populated" };
     }

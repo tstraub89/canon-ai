@@ -3185,7 +3185,7 @@ async function runPhase(phase: CurrentPhase, state: PipelineState): Promise<Phas
         return runSpecReviewPhase(state, cliArgs.interactive, session);
     }
     if ((phase as Phase) === 'plan') {
-        return runPlanPhase(state, cliArgs.interactive);
+        return runPlanPhase(state, cliArgs.interactive, cliArgs.force);
     }
     if ((phase as Phase) === 'implement') {
         return runImplementPhase(state, cliArgs.interactive, session, cliArgs.force);
@@ -3477,6 +3477,10 @@ export function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult
         case 'spec': {
             const content = readArtifact(taskId, 'spec.md');
             if (splitValidation.isTemplateUnfilled(content)) return { advanced: false, note: 'spec.md is missing or still the template' };
+            if (!process.env.CANON_SKIP_PHASE_GATE) {
+                const issues = splitValidation.lintSpecManifest(content!);
+                if (issues.length > 0) return { advanced: false, note: splitValidation.formatManifestLintIssues(issues) };
+            }
             taskPhase(taskId, 'spec', 'done');
             return { advanced: true, note: 'spec.md is populated' };
         }

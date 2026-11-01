@@ -1,3 +1,4 @@
+import { lintSpecManifestForTasks, manifestPreflightMessage } from '../validation.js';
 import { roleAssignmentFor } from '../policy.js';
 import { info, warn } from '../cli.js';
 import { getMaxReviewLoops } from '../policy.js';
@@ -40,6 +41,16 @@ export async function runImplementPhase(
 ): Promise<PhaseRunResult> {
     const { tasks } = state;
     const taskIds = tasks.map(t => t.taskId);
+    const manifestFailures = lintSpecManifestForTasks(taskIds);
+    if (manifestFailures.length > 0) {
+        const message = manifestPreflightMessage(manifestFailures, 'implement', force, taskIds);
+        warn(message);
+        if (!force) {
+            autoBlockPhase(taskIds, 'implement', 0, message);
+            process.exit(2);
+        }
+    }
+
     // Gated on count > 0 so MAX_REVIEW_LOOPS=0 (a valid, tested "no retries"
     // override — tests/pipeline-policy.test.ts) still lets the very first
     // implementation run. count >= cap alone would also trip at count=0,

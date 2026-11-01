@@ -8,6 +8,7 @@ import test, { after, before } from 'node:test';
 
 import { REPO_ROOT } from '../src/orchestrator/env.js';
 import {
+    SPEC_MANIFEST_CONTRACT,
     promptCodeReview,
     promptImplement,
     promptImplementResume,
@@ -1363,3 +1364,15 @@ console.log(JSON.stringify({type:'result',session_id:'phase-session',result:'don
         }
     });
 }
+
+void test('scope manifest contract agrees across authoring surfaces', () => {
+    const carriers = [
+        promptSpec(makeState(makeTask())),
+        ...['.canon/templates/spec.md', '.claude/skills/canon-spec/SKILL.md', 'src/orchestrator/prompts/templates/spec-revision.md']
+            .map(file => fs.readFileSync(path.join(process.cwd(), file), 'utf8')),
+    ];
+    for (const carrier of carriers) {
+        assert.ok(carrier.includes(SPEC_MANIFEST_CONTRACT));
+        assert.doesNotMatch(carrier, /not directories/);
+    }
+});

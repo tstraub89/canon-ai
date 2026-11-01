@@ -27,5 +27,7 @@ Also update plan.md if spec changes affect the implementation approach.{{/combin
 - **UI spatial / gesture tasks** — flag "visual positioning — expect human iteration" or "runtime debugging required" in *Known Risks*.
 - **Sensitive-surface escalation** — flag these categories as `delicate: true` in `status.json` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.
 
+- **Scope manifest** — Affected Files uses exactly one `### Affected Files` heading per `## Design` or `## Amendment…` section and one file per row: comma-join extra paths for the same change in the first column, put notes in the Change column, and never put a second backticked token in a first-column note (directory entries ending in `/` are fine). Marking the spec done enforces this format, and canon re-checks it before planning and implementation.
+
 When done, run:
 {{{phaseCommands}}}

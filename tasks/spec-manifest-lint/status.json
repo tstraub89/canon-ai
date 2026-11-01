@@ -1,10 +1,10 @@
 {
   "id": "spec-manifest-lint",
   "title": "Reject malformed scope manifests before planning and implementation",
-  "status": "implement",
+  "status": "code_review",
   "created": "2026-11-01",
   "updated": "2026-11-01",
-  "branch": "",
+  "branch": "task/spec-manifest-lint",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,7 +41,7 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
@@ -66,13 +66,15 @@
   "escalations": [],
   "sessions": {
     "spec_reviewer": "01a19534-0412-7503-83c7-f130a8d23a66",
-    "author": "34958e28-8ca3-48f4-9dfc-3cf51c52a02a"
+    "author": "34958e28-8ca3-48f4-9dfc-3cf51c52a02a",
+    "implementer": "01a19541-c020-7d92-a7dd-7361c8557330"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
   "session_backends": {
     "spec_reviewer": "codex",
-    "author": "claude"
+    "author": "claude",
+    "implementer": "codex"
   }
 }

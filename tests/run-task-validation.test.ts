@@ -27,6 +27,9 @@ import { _VERDICT_VALUES } from '../src/orchestrator/types.js';
 import type { StatusJson, TaskContext } from '../src/orchestrator/types.js';
 import { TASK_SUBCOMMAND_ARGS } from '../src/task/index.js';
 import {
+    lintSpecManifest,
+    formatManifestLintIssues,
+    manifestPreflightMessage,
     checkAcCoveragePlaceholders,
     checkRerouteEvidence,
     buildSharedDocAbortMessage,
@@ -64,7 +67,7 @@ import {
     determinePreflightRoute,
     writePreflightReviewArtifacts,
 } from '../src/orchestrator/phases/code-review.js';
-import { taskPhasePreflightRejected, VALID_VERDICTS } from '../src/task/index.js';
+import { taskPhase, taskPhasePreflightRejected, VALID_VERDICTS } from '../src/task/index.js';
 
 function withTempPair(
     specContent: string,
@@ -4357,4 +4360,152 @@ void test('status template agent defaults agree with primary role assignment', a
         const role = phasePrimaryRole(phase);
         assert.equal(template.phases[phase].agent, role ? roleBackendId(role, MIXED_ROLE_ASSIGNMENT) : 'human', phase);
     }
+});
+
+for (const [name, hidden] of [
+    ['fenced displacement', ['```markdown', '### Affected Files', '| File | Change |', '|---|---|', '| `example.ts` | example |', '```'].join('\n')],
+    ['commented table', ['<!--', '| File | Change |', '|---|---|', '| `old.ts` | retired |', '-->'].join('\n')],
+] as const) {
+    void test(`AC-6 manifest excludes ${name}`, () => {
+        withTempTaskDir((taskId, taskDir) => {
+            const real = ['### Affected Files', '| File | Change |', '|---|---|', '| `real.ts` | live |'].join('\n');
+            const body = name === 'fenced displacement' ? `${hidden}\n${real}` : `${real}\n${hidden}`;
+            fs.writeFileSync(path.join(taskDir, 'spec.md'), `# Spec\n## Design\n${body}\n`);
+            assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['real.ts']);
+        });
+    });
+}
+
+function manifestTable(rows: string[], heading = '### Affected Files', section = '## Design'): string {
+    return ['# Spec: manifest', section, heading, '| File | Change |', '|---|---|', ...rows].join('\n');
+}
+
+void test('manifest lint rejects fused paths but allows prose and escaped pipes', () => {
+    const issues = lintSpecManifest(manifestTable(['| `ok.ts` | good |', '| `a.ts` | x || `b.ts` | y |']));
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].kind, 'fused-cells');
+    assert.equal(issues[0].section, '## Design');
+    assert.equal(issues[0].row, 2);
+    assert.match(issues[0].message, /one file per row/);
+    assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | prose | more prose |', String.raw`| ` + '`b.ts`' + String.raw` | escaped \| pipe |`])), []);
+});
+
+void test('manifest lint rejects each header-less block, including a single swallowed row', () => {
+    for (const separator of ['', '\n\n', '\nA note.\n']) {
+        const md = separator === '' ? '# Spec\n## Design\n### Affected Files\n| `a.ts` | x |\n| `b.ts` | y |'
+            : manifestTable(['| `a.ts` | x |']) + separator + '| `b.ts` | y |';
+        const issues = lintSpecManifest(md);
+        assert.ok(issues.some(i => i.kind === 'header-less-block' && /read as a header/.test(i.message)), md);
+    }
+});
+
+for (const cell of ['prose `a.ts`', '`old.ts` → `new.ts`', '`dist/` (rebuilt by `npm run build`)', '`a.ts` (also `b.ts`)', '`<path>`', '`/abs.ts`', '`src/*.ts`', '`a.ts`, `<path>`']) {
+    void test(`manifest lint uses path-cell rejection reason: ${cell}`, () => {
+        const issues = lintSpecManifest(manifestTable([`| ${cell} | change |`]));
+        const malformed = parseHandoffPathCell(cell).malformed;
+        assert.ok(malformed.length > 0);
+        assert.equal(issues.length, malformed.length);
+        for (const [i, entry] of malformed.entries()) {
+            assert.equal(issues[i].kind, 'malformed-path');
+            assert.ok(issues[i].message.includes(entry.reason));
+            assert.equal(issues[i].row, 1);
+        }
+    });
+}
+
+for (const [heading, section] of [
+    ['### Affected files', '## Design'], ['#### Affected Files', '## Design'],
+    ['### Amendment Affected Files', '## Design'], ['### Affected Files', '## Scope'],
+    ['### Affected Files', '## Amendments'],
+]) {
+    void test(`manifest lint detects ignored heading ${section} / ${heading}`, () => {
+        const issues = lintSpecManifest(manifestTable(['| `a.ts` | x |'], heading, section));
+        assert.equal(issues.length, 1);
+        assert.equal(issues[0].kind, 'ignored-heading');
+        assert.ok(issues[0].message.includes(heading));
+        assert.match(issues[0].message, /exactly ### Affected Files/);
+    });
+}
+
+void test('manifest lint rejects duplicate headings only within the same H2', () => {
+    const table = manifestTable(['| `b.ts` | x |']).split('\n').slice(2).join('\n');
+    const md = manifestTable(['| `a.ts` | x |']);
+    assert.equal(lintSpecManifest(`${md}\n${table}`)[0].kind, 'duplicate-heading');
+    assert.equal(lintSpecManifest(`${md}\n### Affected Files`)[0].kind, 'duplicate-heading');
+    assert.deepEqual(lintSpecManifest(`${md}\n## Amendment Round 2\n${table}`), []);
+});
+
+void test('manifest lint empty first cells gate on backticked tokens', () => {
+    const issues = lintSpecManifest(manifestTable(['| | |', '| | a note |', '| | `lost.ts` |']));
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].kind, 'empty-first-cell');
+    assert.equal(issues[0].row, 3);
+});
+
+void test('manifest lint accepts the valid grammar, hidden content and this task spec', () => {
+    for (const md of [
+        '# Affected Files\nNo table.\n## Design\nNo manifest.',
+        '# Affected Files\n' + manifestTable(['| `a.ts` | x |']),
+        manifestTable(['| `a.ts`, `b.ts` | x |', '| `dist/` rebuilt by build | x |', '| [old.ts](old.ts) | deleted |']),
+        manifestTable(['| `a.ts` | x |'], '### Affected Files\n#### Affected Files'),
+        '## Design\n```md\n### Affected Files\n| `bad.ts` | x |\n```\n<!--\n### Affected files\n| `bad.ts` | x |\n-->\n',
+        fs.readFileSync(path.join(process.cwd(), 'tasks/spec-manifest-lint/spec.md'), 'utf8'),
+    ]) assert.deepEqual(lintSpecManifest(md), [], md);
+});
+
+void test('manifest parser preserves existing visible ordering and directory/comma grammar', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'spec.md'),
+            manifestTable(['| `extra.ts` | amend |'], '### Affected Files', '## Amendment Round 2') + '\n' +
+            manifestTable(['| `a.ts`, `b.ts` | x |', '| `dist/` rebuilt | x |']));
+        assert.deepEqual(parseAffectedFilesFromSpec(taskId), { files: ['a.ts', 'b.ts', 'dist/', 'extra.ts'], malformed: [] });
+    });
+});
+
+void test('spec manifest gate lists all issues, honors override and retains the env bypass', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        const bad = manifestTable(['| `a.ts` | x || `b.ts` | y |', '| | `lost.ts` |']);
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), bad);
+        const blocked = checkPhaseGate(taskId, 'spec');
+        assert.equal(blocked.ok, false);
+        assert.match(blocked.reason ?? '', /row 1[\s\S]*row 2/);
+        assert.ok(blocked.reason?.includes(`canon task phase ${taskId} spec done`));
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), manifestTable(['| `ok.ts` | x |']));
+        assert.deepEqual(checkPhaseGate(taskId, 'spec'), { ok: true });
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-override-'));
+        try {
+            fs.mkdirSync(path.join(root, taskId));
+            fs.writeFileSync(path.join(root, taskId, 'spec.md'), bad);
+            assert.equal(checkPhaseGate(taskId, 'spec', undefined, root).ok, false);
+        } finally { fs.rmSync(root, { recursive: true, force: true }); }
+        const status = JSON.parse(fs.readFileSync(path.join(process.cwd(), '.canon/templates/status.json'), 'utf8')) as StatusJson;
+        status.id = taskId;
+        status.phases.spec!.status = 'in_progress';
+        writeStatusToFile(path.join(taskDir, 'status.json'), status);
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), bad);
+        const prev = process.env.CANON_SKIP_PHASE_GATE;
+        process.env.CANON_SKIP_PHASE_GATE = '1';
+        try {
+            taskPhase(taskId, 'spec', 'done');
+            assert.equal(readStatus(taskId).phases.spec?.status, 'done');
+        } finally {
+            if (prev === undefined) delete process.env.CANON_SKIP_PHASE_GATE;
+            else process.env.CANON_SKIP_PHASE_GATE = prev;
+        }
+    });
+});
+
+void test('manifest diagnostics and pre-flight messages are adopter safe for every issue kind', () => {
+    const issues = [
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x || `b.ts` | y |', '| | `lost.ts` |', '| prose `a.ts` | x |'])),
+        ...lintSpecManifest('# Spec\n## Design\n### Affected Files\n| `a.ts` | x |'),
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x |'], '### Affected files')),
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x |']) + '\n### Affected Files'),
+    ];
+    assert.equal(new Set(issues.map(i => i.kind)).size, 6);
+    const messages = [formatManifestLintIssues(issues)];
+    for (const phase of ['plan', 'implement'] as const) for (const force of [true, false]) {
+        messages.push(manifestPreflightMessage([{ taskId: 'example-task', issues }], phase, force));
+    }
+    for (const message of messages) assert.doesNotMatch(message, /src\/|markdown-table|validation\.ts|parseHandoffPathCell|parseAllTablesH3|extractSectionBodies|parseAffectedFilesFromSpec|scanSpecManifest|lintSpecManifest/);
 });
