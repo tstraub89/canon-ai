@@ -4181,6 +4181,11 @@ void test('countHumanPendingChecks: returns matching rows with check name + note
     assert.equal(pending[1].check, '`npm run e2e:firefox`');
 });
 
+void test('hasHumanPendingWaiver: the scaffolded done.md template carries no waiver', () => {
+    const template = fs.readFileSync(path.join(process.cwd(), '.canon', 'templates', 'done.md'), 'utf8');
+    assert.equal(hasHumanPendingWaiver(template), false);
+});
+
 void test('hasHumanPendingWaiver: matches an "Acknowledged:" line in done.md', () => {
     assert.ok(hasHumanPendingWaiver('## Decisions\n\nAcknowledged: Safari/Firefox e2e deferred to post-merge by team agreement.\n'));
     assert.ok(hasHumanPendingWaiver('   acknowledged: deferred  '));  // leading whitespace + lowercase ok

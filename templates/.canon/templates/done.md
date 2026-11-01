@@ -29,10 +29,9 @@ One paragraph, plain English. No code jargon.
 
 ## Human Verification Required
 
-List any unresolved `human_pending` validation checks from handoff.md. If none remain, write "None." If the human intentionally defers a pending check, add a waiver line beginning exactly with `Acknowledged:` and state the rationale.
+List any unresolved `human_pending` validation checks from handoff.md. If none remain, write "None." If the human intentionally defers a pending check, add an unbulleted line that begins exactly with `Acknowledged:` and states the rationale, such as `Acknowledged: <check> deferred until after merge because …`. Leave it out unless the human defers a check: the line itself is the waiver.
 
 - (none / `Check name` — why it requires human verification)
-- Acknowledged: (only if waiving or deferring a pending human check)
 
 ## Proposed Changelog
 
