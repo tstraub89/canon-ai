@@ -5656,7 +5656,7 @@ void test('runImplementPhase writes metrics and task artifacts only in the workt
             },
         };
         writeTaskStatus(path.join(localDir, 'tasks'), taskId, status);
-        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'spec.md'), '# Spec\n\n## Acceptance Criteria\n\n- [ ] AC-1: Fixture\n', 'utf8');
+        fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'spec.md'), '# Spec\n\n## Acceptance Criteria\n\n- [ ] AC-1: Fixture\n\n## Design\n### Affected Files\n| File | Change |\n|---|---|\n| `initial-fixture.txt` | update |\n', 'utf8');
         fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'plan.md'), '# Plan\n', 'utf8');
         fs.writeFileSync(path.join(localDir, 'tasks', taskId, 'handoff.md'), 'root scaffold\n', 'utf8');
 
@@ -11699,7 +11699,7 @@ console.log(result.note);
 });
 
 for (const phase of ['plan', 'implement'] as const) {
-    for (const mode of ['blocked', 'forced', 'clean'] as const) {
+    for (const mode of ['blocked', 'forced', 'clean', 'missing'] as const) {
         void test(`manifest pre-flight ${phase}: ${mode} before any agent runs`, () => {
             withTempDir('manifest-entry-', dir => {
                 const id = 'manifest-entry';
@@ -11717,7 +11717,9 @@ for (const phase of ['plan', 'implement'] as const) {
                 if (phase === 'implement') status.phases.implement!.rerouted = true;
                 writeTaskStatus(fixture.tasksRoot, id, status);
                 const row = mode === 'clean' ? '| `initial-fixture.txt` | x |' : '| `a.ts` | x || `b.ts` | y |';
-                fs.writeFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), `# Spec: entry\n## ${phase === 'implement' ? 'Amendment' : 'Design'}\n### Affected Files\n| File | Change |\n|---|---|\n${row}\n`);
+                const design = '# Spec: entry\n## Design\n### Affected Files\n| File | Change |\n|---|---|\n| `initial-fixture.txt` | update |\n';
+                const manifest = (phase === 'implement' ? design : '') + `# Spec: entry\n## ${phase === 'implement' ? 'Amendment' : 'Design'}\n### Affected Files\n| File | Change |\n|---|---|\n${row}\n`;
+                fs.writeFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), mode === 'missing' ? '# Spec: missing manifest\n## Design\nProse only.\n' : manifest);
                 // The main checkout remains clean; the gate must read the active copy.
                 const mainStatus = path.join(fixture.localDir, 'tasks', id, 'status.json');
                 const beforeMain = fs.readFileSync(mainStatus, 'utf8');
@@ -11742,18 +11744,18 @@ const state = buildPipelineState(['${id}']);
 assert.equal(state.tasks[0].status.phases.${phase}.status, 'pending');
 await ${handler}(state, false, ${args});
 `, env, fixture.localDir);
-                assert.equal(result.status, mode === 'blocked' ? 2 : 0, combinedOutput(result));
+                assert.equal(result.status, mode === 'blocked' || mode === 'missing' ? 2 : 0, combinedOutput(result));
                 const output = combinedOutput(result);
                 const after = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
                 assert.equal(fs.readFileSync(mainStatus, 'utf8'), beforeMain);
-                if (mode === 'blocked') {
-                    assert.match(output, /row 1/);
+                if (mode === 'blocked' || mode === 'missing') {
+                    assert.match(output, mode === 'missing' ? /No ### Affected Files table under ## Design/ : /row 1/);
                     assert.match(output, /Fix the ### Affected Files table.*canon run manifest-entry/);
                     assert.equal(after.phases[phase]?.status, 'blocked');
                     assert.equal(after.escalations?.at(-1)?.phase, phase);
                     assert.equal(fs.existsSync(agentLog), false);
                     // Fix and resume the same blocked phase without resetting it.
-                    fs.writeFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), '# Spec: fixed\n');
+                    fs.writeFileSync(path.join(fixture.tasksRoot, id, 'spec.md'), design);
                     const resumed = runNodeInline(`
 import { buildPipelineState } from '${pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href}';
 import { ${handler} } from '${pathToFileURL(path.join(WORKTREE_ROOT, `src/orchestrator/phases/${phase}.ts`)).href}';
@@ -11779,7 +11781,7 @@ void test('manifest pre-flight checks every bundle member including exempt rerou
         for (const id of ['leader', 'secondary']) writeTaskStatus(fixture.tasksRoot, id, {
             ...status, id, phases: { ...status.phases, implement: { ...status.phases.implement!, status: 'pending', reroute_exempt: id === 'secondary' } },
         });
-        fs.writeFileSync(path.join(fixture.tasksRoot, 'leader/spec.md'), '# Spec: clean\n');
+        fs.writeFileSync(path.join(fixture.tasksRoot, 'leader/spec.md'), '# Spec: clean\n## Design\n### Affected Files\n| File | Change |\n|---|---|\n| `initial-fixture.txt` | update |\n');
         fs.writeFileSync(path.join(fixture.tasksRoot, 'secondary/spec.md'), '# Spec: bad\n## Amendment\n### Affected files\n| File | Change |\n|---|---|\n| `lost.ts` | x |\n');
         const log = path.join(dir, 'agents.log');
         const result = runNodeInline(`

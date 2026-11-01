@@ -3018,7 +3018,7 @@ function withTempTaskDir(
 
 void test('checkPhaseGate: spec phase accepts a filled spec.md', () => {
     withTempTaskDir((taskId, taskDir) => {
-        fs.writeFileSync(path.join(taskDir, 'spec.md'), '# Spec: real task — Real Title\n\n## Problem\n\nReal problem.\n');
+        fs.writeFileSync(path.join(taskDir, 'spec.md'), manifestTable(['| `a.ts` | update |']));
         const result = checkPhaseGate(taskId, 'spec');
         assert.deepEqual(result, { ok: true });
     });
@@ -4419,7 +4419,7 @@ for (const [heading, section] of [
     ['### Affected Files', '## Amendments'],
 ]) {
     void test(`manifest lint detects ignored heading ${section} / ${heading}`, () => {
-        const issues = lintSpecManifest(manifestTable(['| `a.ts` | x |'], heading, section));
+        const issues = lintSpecManifest(manifestTable(['| `a.ts` | x |'], heading, section) + '\n' + manifestTable(['| `base.ts` | base |']));
         assert.equal(issues.length, 1);
         assert.equal(issues[0].kind, 'ignored-heading');
         assert.ok(issues[0].message.includes(heading));
@@ -4481,11 +4481,10 @@ void test('manifest lint accepts the valid grammar, hidden content and this task
         "| `dist/orchestrator/run-task.js` | Rebuilt bundle. |",
     ].join('\n');
     for (const md of [
-        '# Affected Files\nNo table.\n## Design\nNo manifest.',
         '# Affected Files\n' + manifestTable(['| `a.ts` | x |']),
         manifestTable(['| `a.ts`, `b.ts` | x |', '| `dist/` rebuilt by build | x |', '| [old.ts](old.ts) | deleted |']),
         manifestTable(['| `a.ts` | x |'], '### Affected Files\n#### Affected Files'),
-        '## Design\n```md\n### Affected Files\n| `bad.ts` | x |\n```\n<!--\n### Affected files\n| `bad.ts` | x |\n-->\n',
+        '## Design\n```md\n### Affected Files\n| `bad.ts` | x |\n```\n<!--\n### Affected files\n| `bad.ts` | x |\n-->\n' + manifestTable(['| `live.ts` | live |']),
         taskScopeFixture,
     ]) assert.deepEqual(lintSpecManifest(md), [], md);
 });
@@ -4538,8 +4537,11 @@ void test('manifest diagnostics and pre-flight messages are adopter safe for eve
         ...lintSpecManifest('# Spec\n## Design\n### Affected Files\n| `a.ts` | x |'),
         ...lintSpecManifest(manifestTable(['| `a.ts` | x |'], '### Affected files')),
         ...lintSpecManifest(manifestTable(['| `a.ts` | x |']) + '\n### Affected Files'),
+        ...lintSpecManifest('# Spec: no manifest'),
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x |']) + '\n<!--'),
+        ...lintSpecManifest(manifestTable(['| `a.ts` | x |']) + '\n~~~'),
     ];
-    assert.equal(new Set(issues.map(i => i.kind)).size, 6);
+    assert.equal(new Set(issues.map(i => i.kind)).size, 8);
     const messages = [formatManifestLintIssues(issues)];
     for (const phase of ['plan', 'implement'] as const) for (const force of [true, false]) {
         messages.push(manifestPreflightMessage([{ taskId: 'example-task', issues }], phase, force));
@@ -4589,18 +4591,18 @@ void test('revision R1: fused-cell issue explains how to escape a literal pipe',
 });
 
 void test('revision R2: unaffected heading is prose while affected files remains gated', () => {
-    assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | unchanged |'], '### Unaffected Files')), []);
-    const issues = lintSpecManifest(manifestTable(['| `a.ts` | test |'], '### Tests for affected files'));
+    assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | unchanged |'], '### Unaffected Files') + '\n' + manifestTable(['| `base.ts` | base |'])), []);
+    const issues = lintSpecManifest(manifestTable(['| `a.ts` | test |'], '### Tests for affected files') + '\n' + manifestTable(['| `base.ts` | base |']));
     assert.equal(issues[0]?.kind, 'ignored-heading');
 });
 
 for (const heading of ['### _Affected Files_', '### __Affected Files__']) {
     void test(`round 2 N1: emphasized affected-files heading is rejected: ${heading}`, () => {
-        const issues = lintSpecManifest(manifestTable(['| `a.ts` | live |'], heading));
+        const issues = lintSpecManifest(manifestTable(['| `a.ts` | live |'], heading) + '\n' + manifestTable(['| `base.ts` | base |']));
         assert.equal(issues.length, 1);
         assert.equal(issues[0].kind, 'ignored-heading');
         assert.ok(issues[0].message.includes(heading));
-        assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | unchanged |'], '### Unaffected Files')), []);
+        assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | unchanged |'], '### Unaffected Files') + '\n' + manifestTable(['| `base.ts` | base |'])), []);
     });
 }
 
@@ -4614,3 +4616,47 @@ for (const comment of ['<!-->', '<!--->']) {
         });
     });
 }
+
+void test('amendment AC-A2 red-first: unclosed fence before Design is diagnosed', () => {
+    const issues = lintSpecManifest('```markdown\n' + manifestTable(['| `a.ts` | live |']));
+    assert.deepEqual(issues.map(issue => issue.kind), ['unclosed-block', 'missing-manifest']);
+    assert.equal(issues[0].line, 1);
+    assert.match(issues[0].message, /fence.*line 1/);
+});
+
+void test('amendment AC-A2 red-first: unclosed comment after live manifest is diagnosed', () => {
+    const markdown = manifestTable(['| `a.ts` | live |']) + '\n<!--';
+    const line = markdown.split('\n').length;
+    const issues = lintSpecManifest(markdown);
+    assert.deepEqual(issues.map(issue => issue.kind), ['unclosed-block']);
+    assert.equal(issues[0].line, line);
+    assert.match(issues[0].message, /comment/);
+    assert.ok(issues[0].message.includes(`line ${line}`));
+});
+
+void test('amendment AC-A1: Design must contain a nonempty exact manifest', () => {
+    for (const markdown of [
+        '# Spec: no Design', '# Spec\n## Design\nOnly prose.',
+        '# Spec\n## Design\n### Affected Files',
+        '# Spec\n## Design\n### Affected Files\n| File | Change |\n|---|---|',
+        manifestTable(['| `a.ts` | amend |'], '### Affected Files', '## Amendment'),
+    ]) {
+        assert.deepEqual(lintSpecManifest(markdown).map(issue => issue.kind), ['missing-manifest']);
+    }
+    assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | live |']) + '\n## Amendment\nBehavior only.'), []);
+    withTempTaskDir((id, dir) => {
+        fs.writeFileSync(path.join(dir, 'spec.md'), '# Spec\n## Design\nOnly prose.');
+        const result = checkPhaseGate(id, 'spec');
+        assert.equal(result.ok, false);
+        assert.match(result.reason ?? '', /No ### Affected Files table under ## Design/);
+    });
+});
+
+void test('amendment AC-A2: trailing tilde fence is diagnosed; closed examples pass', () => {
+    const manifest = manifestTable(['| `a.ts` | live |']);
+    const issues = lintSpecManifest(manifest + '\n~~~');
+    assert.deepEqual(issues.map(issue => issue.kind), ['unclosed-block']);
+    assert.equal(issues[0].line, manifest.split('\n').length + 1);
+    assert.match(issues[0].message, /fence/);
+    assert.deepEqual(lintSpecManifest('```md\nexample\n```\n<!--\nexample\n-->\n' + manifest), []);
+});

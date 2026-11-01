@@ -1013,18 +1013,23 @@ function parseTableH3(markdown, sectionHeading) {
 }
 function visibleMarkdownLines(markdown) {
   const hidden = [];
+  let unclosed = null;
   let comment = false;
   let fence = null;
-  const lines = markdown.split("\n").map((line) => {
+  const lines = markdown.split("\n").map((line, index) => {
     if (fence) {
       hidden.push(true);
       const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
-      if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
+      if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+        fence = null;
+        unclosed = null;
+      }
       return line;
     }
     const opener = !comment && /^\s{0,3}(`{3,}|~{3,})/.exec(line);
     if (opener && (opener[1][0] !== "`" || !line.slice(opener[0].length).includes("`"))) {
       fence = { char: opener[1][0], length: opener[1].length };
+      unclosed = { kind: "fence", line: index + 1 };
       hidden.push(true);
       return line;
     }
@@ -1035,11 +1040,13 @@ function visibleMarkdownLines(markdown) {
         const close = line.indexOf("-->", i);
         if (close === -1) break;
         comment = false;
+        unclosed = null;
         i = close + 3;
       } else if (line.startsWith("<!-->", i) || line.startsWith("<!--->", i)) {
         i += line[i + 4] === ">" ? 5 : 6;
       } else if (line.startsWith("<!--", i) && (/^ {0,3}$/.test(line.slice(0, i)) || line.indexOf("-->", i + 4) !== -1)) {
         comment = true;
+        unclosed = { kind: "comment", line: index + 1 };
         i += 4;
       } else if (line[i] === "`") {
         const run = /^`+/.exec(line.slice(i))[0];
@@ -1056,7 +1063,7 @@ function visibleMarkdownLines(markdown) {
     hidden.push(visible.trim() === "");
     return visible;
   });
-  return { lines, hidden };
+  return { lines, hidden, unclosed };
 }
 function scanTableBlocks(lines, hidden, start, end) {
   const blocks = [];
@@ -1082,7 +1089,7 @@ function scanTableBlocks(lines, hidden, start, end) {
   return blocks;
 }
 function scanSpecManifest(markdown) {
-  const { lines, hidden } = visibleMarkdownLines(markdown);
+  const { lines, hidden, unclosed } = visibleMarkdownLines(markdown);
   const headings = [];
   lines.forEach((line, index) => {
     const match = !hidden[index] && /^(#{1,6})\s/.exec(line);
@@ -1098,7 +1105,7 @@ function scanSpecManifest(markdown) {
     const affectedFiles = headings.filter((h) => h.index > h2.index && h.index < end && h.text === "### Affected Files").map((heading) => ({ heading, blocks: scanTableBlocks(lines, hidden, heading.index + 1, Math.min(end, heading.sectionEnd)) }));
     sections.push({ h2, kind: /^## Design\b/.test(h2.text) ? "design" : "amendment", affectedFiles });
   });
-  return { lines, hidden, headings, sections };
+  return { lines, hidden, headings, sections, unclosed };
 }
 function parseTable(markdown, sectionHeading) {
   const lines = markdown.split("\n");
@@ -4237,6 +4244,17 @@ function lintSpecManifest(markdown) {
     if (scanTableBlocks(scan.lines, scan.hidden, heading.index + 1, heading.sectionEnd).length === 0) continue;
     const section = scan.headings.filter((h) => h.level === 2 && h.index <= heading.index).at(-1)?.text ?? "(before any ## section)";
     issues.push({ section, line: heading.line, kind: "ignored-heading", message: `Heading ${heading.text} is not read as scope. Use exactly ### Affected Files directly under ## Design or an ## Amendment\u2026 section.` });
+  }
+  if (scan.unclosed) {
+    const { kind, line } = scan.unclosed;
+    const section = scan.headings.filter((h) => h.level === 2 && h.line <= line).at(-1)?.text ?? "(before any ## section)";
+    const construct = kind === "fence" ? "code fence" : "HTML comment";
+    const fix = kind === "fence" ? "Close it with a matching fence line." : "Close it with -->.";
+    issues.push({ section, line, kind: "unclosed-block", message: `An unclosed ${construct} opened at line ${line} hides everything after it, including any Affected Files table. ${fix}` });
+  }
+  const designs = scan.sections.filter((section) => section.kind === "design");
+  if (!designs.some((section) => section.affectedFiles[0]?.blocks.some((block) => block.rows.length > 0))) {
+    issues.push({ section: designs[0]?.h2.text ?? "(no ## Design section)", kind: "missing-manifest", message: "No ### Affected Files table under ## Design, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one file per row." });
   }
   return issues;
 }

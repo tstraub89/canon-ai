@@ -1926,7 +1926,7 @@ export function buildSharedDocAbortMessage(abortedFiles: readonly { relPath: str
     ].join('\n');
 }
 
-export type ManifestLintKind = 'fused-cells' | 'header-less-block' | 'malformed-path' | 'empty-first-cell' | 'ignored-heading' | 'duplicate-heading';
+export type ManifestLintKind = 'fused-cells' | 'header-less-block' | 'malformed-path' | 'empty-first-cell' | 'ignored-heading' | 'duplicate-heading' | 'missing-manifest' | 'unclosed-block';
 export type ManifestLintIssue = { section: string; row?: number; line?: number; kind: ManifestLintKind; message: string };
 
 export function lintSpecManifest(markdown: string): ManifestLintIssue[] {
@@ -1966,6 +1966,17 @@ export function lintSpecManifest(markdown: string): ManifestLintIssue[] {
         if (scanTableBlocks(scan.lines, scan.hidden, heading.index + 1, heading.sectionEnd).length === 0) continue;
         const section = scan.headings.filter(h => h.level === 2 && h.index <= heading.index).at(-1)?.text ?? '(before any ## section)';
         issues.push({ section, line: heading.line, kind: 'ignored-heading', message: `Heading ${heading.text} is not read as scope. Use exactly ### Affected Files directly under ## Design or an ## Amendment… section.` });
+    }
+    if (scan.unclosed) {
+        const { kind, line } = scan.unclosed;
+        const section = scan.headings.filter(h => h.level === 2 && h.line <= line).at(-1)?.text ?? '(before any ## section)';
+        const construct = kind === 'fence' ? 'code fence' : 'HTML comment';
+        const fix = kind === 'fence' ? 'Close it with a matching fence line.' : 'Close it with -->.';
+        issues.push({ section, line, kind: 'unclosed-block', message: `An unclosed ${construct} opened at line ${line} hides everything after it, including any Affected Files table. ${fix}` });
+    }
+    const designs = scan.sections.filter(section => section.kind === 'design');
+    if (!designs.some(section => section.affectedFiles[0]?.blocks.some(block => block.rows.length > 0))) {
+        issues.push({ section: designs[0]?.h2.text ?? '(no ## Design section)', kind: 'missing-manifest', message: 'No ### Affected Files table under ## Design, so nothing is in scope. Add one under ## Design: a header row, a |---|---| separator, then one file per row.' });
     }
     return issues;
 }

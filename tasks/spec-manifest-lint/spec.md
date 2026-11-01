@@ -219,7 +219,7 @@ None. No `status.json` fields, no artifact schema changes.
 1. Write a new task's spec with an Affected Files table where two files share one row, separated by a double bar. Mark the spec done. Expected: canon refuses, names the row, and tells you to put one file per row.
 2. Fix the row and mark the spec done again. Expected: it advances.
 3. Put the table under a lowercase "Affected files" heading and mark done. Expected: canon refuses and tells you the exact heading it expects. A spec whose title merely mentions Affected Files is not flagged.
-4. Write a spec with no Affected Files table and mark it done. Expected: it advances.
+4. Write a spec with no Affected Files table and mark it done. Expected: canon refuses and tells you to add the table under the Design section (changed by the Amendment).
 5. Let a task reach the human spec gate, then break a row in its table and start the pipeline. Expected: canon stops before planning, lists the problem, and tells you how to fix it. Starting it again with the force option proceeds with a warning.
 6. On a task that needs a reroute, add an amendment whose table has a malformed row and start the reroute. Expected: canon stops before implementation starts, with the same kind of message.
 
@@ -235,3 +235,44 @@ None. No `status.json` fields, no artifact schema changes.
 - [x] Validation Required has at least one entry marked `- [x]`
 - [x] (Bug/flake fixes) — applies to AC-6 only (the rest is a new feature): shape 6 in *Problem* states the deterministic mechanism and the executed probe that confirmed it, and AC-6 carries the red-first regression test
 - [x] (Refactors) — N/A, feature
+
+## Amendment
+
+Post-PR review (Codex and CodeRabbit on the draft PR) found three gaps in the round-1 contract. The operator approved the scope change below.
+
+1. **A missing manifest is an error.** This replaces the round-1 rule that "a spec with no Affected Files table stays valid": both that sentence in Decision and the AC-8 "a spec with no Affected Files table" passing case are superseded.
+   - A spec whose `## Design` section has no exact `### Affected Files` table fails the lint with a `missing-manifest` issue telling the author to add one under `## Design`. A spec with no `## Design` section at all fails the same way.
+   - Without a manifest, the `code_review` scope pre-flight's allowlist holds only telemetry and admitted docs, so every changed source file blocks there. A spec with no table was therefore never a working shape: 3 of 127 archived specs lack the exact heading, all pre-convention and using an `## Affected Files` H2.
+   - `## Amendment…` sections stay optional: a behavioral amendment may add no files.
+   - The manifest contract text (`SPEC_MANIFEST_CONTRACT` and its restatements) is now accurate as written. `docs/pipeline-orchestrator.md`'s "a spec with no scope table is valid" sentence (and its mirror) is replaced with the requirement.
+2. **An unclosed fence or HTML comment is an error.** When the shared scan reaches end of file inside an open code fence or `<!--` comment, the lint reports an `unclosed-block` issue naming the construct and its opening line. Before this, everything after it was hidden silently, which could hide the whole manifest. Hiding the content stays; only the silent pass changes. This is not a grammar change: well-formed fences and comments behave exactly as in round 1.
+Human Test Plan step 4 is updated in place to expect a refusal, matching item 1.
+
+3. **The full-send foreman gets the row contract.** `code-review-foreman.md`'s instructions for appending an `## Amendment (full-send scope)` table carry the manifest row contract and one valid two-column example row (path in the first column, reason in the Change column). That way, a foreman-written row is never malformed and dropped from scope.
+
+### Amendment ACs
+
+- [ ] **AC-A1:** The lint returns a `missing-manifest` issue for a spec with a `## Design` section but no exact `### Affected Files` table under it, and for a spec with no `## Design` section. It returns none for a spec whose `## Design` has a valid table and whose `## Amendment` section has no table. The spec gate (AC-9) and the plan/implement pre-flights (AC-11) fail on it. Verified by unit tests, replacing the AC-8 no-table passing case.
+- [ ] **AC-A2:** The lint returns an `unclosed-block` issue, naming the fence or comment and its 1-based opening line, for a spec ending inside an unclosed fence (including one opened before `## Design`) or an unclosed `<!--`. Well-formed fences and comments produce no issue. Verified by unit tests, red-first: the unclosed-fence-before-Design and unclosed-comment cases return no issues on the pre-amendment lint (current-source probes confirmed this during amendment review) and the expected `unclosed-block` issue after; record both runs in `handoff.md`.
+- [ ] **AC-A3:** The foreman prompt's full-send amendment instructions include the manifest contract and a valid example row. A test asserts the rendered foreman prompt contains the contract text, and that the example row passes the lint. The prompt golden fixture is regenerated.
+- [ ] **AC-A4:** `docs/pipeline-orchestrator.md` and its mirror state that a manifest is required under `## Design` and that unclosed fences or comments are rejected. A grep for "a spec with no scope table is valid" returns zero matches in `docs/`, `templates/` and `src/`. Verified by grep.
+- [ ] **AC-A5:** The AC-15 archive calibration is re-run with the new checks. `handoff.md` records the per-kind counts for `missing-manifest` and `unclosed-block`, with a classification of each hit. Archived specs are not edited.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `src/orchestrator/markdown-table.ts` | Report the open fence/comment state at end of scan. |
+| `src/orchestrator/validation.ts` | `missing-manifest` and `unclosed-block` lint issues and messages. |
+| `src/orchestrator/prompts/templates/code-review-foreman.md` | Manifest contract and example row for full-send amendments. |
+| `src/orchestrator/prompts/index.ts` | Pass the contract into the foreman prompt if rendered from a constant. |
+| `tests/markdown-table.test.ts` | Open-state reporting tests. |
+| `tests/run-task-validation.test.ts` | AC-A1, AC-A2 tests; replace the no-table passing case. |
+| `tests/run-task-safety.test.ts` | Update pre-flight fixtures that relied on a table-less spec passing. |
+| `tests/task-cli.test.ts` | Give the worktree `task phase … spec done` fixture a valid `## Design` manifest; a table-less spec is now refused. |
+| `tests/run-task-prompts.test.ts` | AC-A3 foreman-prompt assertions. |
+| `tests/run-task-prompts.golden.json` | Regenerated. |
+| `docs/pipeline-orchestrator.md` | Replace the "no scope table is valid" sentence; document both new checks. |
+| `templates/docs/pipeline-orchestrator.md` | Generated mirror. |
+| `dist/cli/index.js` | Rebuilt bundle. |
+| `dist/orchestrator/run-task.js` | Rebuilt bundle. |

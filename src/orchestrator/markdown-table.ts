@@ -180,21 +180,28 @@ export function parseAllTablesH3(markdown: string, sectionHeading: string): Arra
 
 // Manifest readers share visibility, heading boundaries and raw cell scanning.
 // Keep extractSectionBodies unchanged: its other callers read review/handoff bodies.
-function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: boolean[] } {
+export type UnclosedBlock = { kind: 'fence' | 'comment'; line: number };
+
+function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: boolean[]; unclosed: UnclosedBlock | null } {
     const hidden: boolean[] = [];
+    let unclosed: UnclosedBlock | null = null;
     let comment = false;
     let fence: { char: string; length: number } | null = null;
-    const lines = markdown.split('\n').map(line => {
+    const lines = markdown.split('\n').map((line, index) => {
         if (fence) {
             hidden.push(true);
             const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(line);
-            if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
+            if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+                fence = null;
+                unclosed = null;
+            }
             return line;
         }
         const opener = !comment && /^\s{0,3}(`{3,}|~{3,})/.exec(line);
         // Backticks in a backtick fence's info string make this inline text.
         if (opener && (opener[1][0] !== '`' || !line.slice(opener[0].length).includes('`'))) {
             fence = { char: opener[1][0], length: opener[1].length };
+            unclosed = { kind: 'fence', line: index + 1 };
             hidden.push(true);
             return line;
         }
@@ -207,6 +214,7 @@ function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: bool
                 const close = line.indexOf('-->', i);
                 if (close === -1) break;
                 comment = false;
+                unclosed = null;
                 i = close + 3;
             } else if (line.startsWith('<!-->', i) || line.startsWith('<!--->', i)) {
                 // These complete empty comments close within the opener's hyphens.
@@ -214,6 +222,7 @@ function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: bool
             } else if (line.startsWith('<!--', i) &&
                 (/^ {0,3}$/.test(line.slice(0, i)) || line.indexOf('-->', i + 4) !== -1)) {
                 comment = true;
+                unclosed = { kind: 'comment', line: index + 1 };
                 i += 4;
             } else if (line[i] === '`') {
                 const run = /^`+/.exec(line.slice(i))![0];
@@ -230,7 +239,7 @@ function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: bool
         hidden.push(visible.trim() === '');
         return visible;
     });
-    return { lines, hidden };
+    return { lines, hidden, unclosed };
 }
 
 export type RawTableRow = { line: number; cells: string[] };
@@ -270,9 +279,9 @@ export type ManifestHeading = { heading: ScannedHeading; blocks: RawTableBlock[]
 export type ManifestSection = { h2: ScannedHeading; kind: 'design' | 'amendment'; affectedFiles: ManifestHeading[] };
 
 export function scanSpecManifest(markdown: string): {
-    lines: string[]; hidden: boolean[]; headings: ScannedHeading[]; sections: ManifestSection[];
+    lines: string[]; hidden: boolean[]; headings: ScannedHeading[]; sections: ManifestSection[]; unclosed: UnclosedBlock | null;
 } {
-    const { lines, hidden } = visibleMarkdownLines(markdown);
+    const { lines, hidden, unclosed } = visibleMarkdownLines(markdown);
     const headings: ScannedHeading[] = [];
     lines.forEach((line, index) => {
         const match = !hidden[index] && /^(#{1,6})\s/.exec(line);
@@ -289,7 +298,7 @@ export function scanSpecManifest(markdown: string): {
             .map(heading => ({ heading, blocks: scanTableBlocks(lines, hidden, heading.index + 1, Math.min(end, heading.sectionEnd)) }));
         sections.push({ h2, kind: /^## Design\b/.test(h2.text) ? 'design' : 'amendment', affectedFiles });
     });
-    return { lines, hidden, headings, sections };
+    return { lines, hidden, headings, sections, unclosed };
 }
 
 export type ScannedTable = {

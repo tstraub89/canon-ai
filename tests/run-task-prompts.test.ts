@@ -1,3 +1,5 @@
+import { lintSpecManifest, parseHandoffPathCell } from '../src/orchestrator/validation.js';
+import { scanSpecManifest, blocksToRecords } from '../src/orchestrator/markdown-table.js';
 import { resolveQaDocsFreshness } from '../src/orchestrator/phases/qa.js';
 import { DEFAULT_PROTECTED_DOCS } from '../src/orchestrator/docs-freshness.js';
 import assert from 'node:assert/strict';
@@ -1368,11 +1370,24 @@ console.log(JSON.stringify({type:'result',session_id:'phase-session',result:'don
 void test('scope manifest contract agrees across authoring surfaces', () => {
     const carriers = [
         promptSpec(makeState(makeTask())),
-        ...['.canon/templates/spec.md', '.claude/skills/canon-spec/SKILL.md', 'src/orchestrator/prompts/templates/spec-revision.md']
+        ...['.canon/templates/spec.md', '.claude/skills/canon-spec/SKILL.md', 'src/orchestrator/prompts/templates/spec-revision.md', 'src/orchestrator/prompts/templates/code-review-foreman.md']
             .map(file => fs.readFileSync(path.join(process.cwd(), file), 'utf8')),
     ];
     for (const carrier of carriers) {
         assert.ok(carrier.includes(SPEC_MANIFEST_CONTRACT));
         assert.doesNotMatch(carrier, /not directories/);
     }
+});
+
+void test('amendment AC-A3: full-send foreman carries the contract and a valid scope row', () => {
+    const prompt = promptCodeReview(baseState, 'main', null, null, null, ['src/extra-helper.ts']);
+    assert.ok(prompt.includes(SPEC_MANIFEST_CONTRACT));
+    const row = prompt.split('\n').find(line => line.startsWith('| `path/to/changed-file.ts`'));
+    assert.ok(row, 'foreman example row must be rendered');
+    const markdown = ['## Design', '### Affected Files', '| File | Change |', '|---|---|', '| `base.ts` | base |',
+        '## Amendment (full-send scope)', '### Affected Files', '| File | Change |', '|---|---|', row].join('\n');
+    assert.deepEqual(lintSpecManifest(markdown), []);
+    const paths = scanSpecManifest(markdown).sections.flatMap(section => blocksToRecords(section.affectedFiles[0]?.blocks ?? []))
+        .flatMap(record => parseHandoffPathCell(Object.values(record)[0]).paths);
+    assert.ok(paths.includes('path/to/changed-file.ts'));
 });

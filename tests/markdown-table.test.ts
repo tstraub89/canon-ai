@@ -362,3 +362,16 @@ void test('manifest visibility distinguishes comment examples from actual commen
     assert.deepEqual(rows.map(row => row.File), ['`a.ts`', '`b.ts`', '`c.ts`']);
     assert.match(rows[0].Change, /<!-- canon:start -->/);
 });
+
+void test('manifest scanner reports the opening line of unclosed constructs', async () => {
+    const { scanSpecManifest } = await import('../src/orchestrator/markdown-table.js');
+    for (const [markdown, expected] of [
+        ['intro\n```md\nexample', { kind: 'fence', line: 2 }],
+        ['intro\n~~~\nexample', { kind: 'fence', line: 2 }],
+        ['intro\n<!--\nexample', { kind: 'comment', line: 2 }],
+        ['<!-- closed -->\n<!--', { kind: 'comment', line: 2 }],
+        ['<!--\nclosed --> <!--', null],
+        ['```md\nexample\n```', null], ['<!--\nexample\n-->', null],
+        ['| `a.ts` | literal <!-- marker |', null], ['<!-->\n<!--->', null],
+    ] as const) assert.deepEqual(scanSpecManifest(markdown).unclosed, expected, markdown);
+});

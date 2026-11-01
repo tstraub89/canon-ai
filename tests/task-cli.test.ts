@@ -439,7 +439,7 @@ void test('task mutations and phase gate from a managed worktree use only its ta
         const worktreeStatus = readStatusFile(worktreeTaskDir);
         worktreeStatus.phases.spec!.status = 'in_progress';
         fs.writeFileSync(path.join(worktreeTaskDir, 'status.json'), `${JSON.stringify(worktreeStatus, null, 2)}\n`);
-        fs.writeFileSync(path.join(worktreeTaskDir, 'spec.md'), '# Filled spec\n');
+        fs.writeFileSync(path.join(worktreeTaskDir, 'spec.md'), '# Filled spec\n\n## Design\n\n### Affected Files\n\n| File | Change |\n|---|---|\n| `example.ts` | Update the example. |\n');
         const env = { ...process.env };
         for (const key of ['CANON_TASKS_DIR_OVERRIDE', 'CANON_WORKTREES_ROOT', 'CANON_SKIP_PHASE_GATE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
         const cli = path.join(WORKSPACE_ROOT, 'src/cli/index.ts');
