@@ -238,3 +238,11 @@ When a mode skips one step in a shared startup block, keep the rest of that bloc
 *(2026-11-01, source: spec-manifest-lint)*
 
 Teaching a shared section extractor to skip fenced code and HTML comments would have changed its output for four non-manifest callers (handoff iterations, review rounds, the Quality Log section), which the spec forbids. The fix was a second, manifest-only scanner that the manifest parser and lint both consume, and the shared helper stayed as it was. Before changing a shared parser's output, grep every caller and check each one's test fixtures for the input the change will alter. Put the new behavior behind a new function when any caller's output would move. Also, when a comment or fence stripper runs before table splitting, protect inline code spans: a literal `<!--` in a Change cell hid a live table in an archived spec until calibration caught it. Canonical example: `scanSpecManifest` in `src/orchestrator/markdown-table.ts`.
+
+---
+
+### Enumerate option forms per tool before writing a command matcher
+
+*(2026-11-01, source: adopter-bypass-guards)*
+
+A regex over a CLI's flags misses valid invocations and over-matches flag values. Two review rounds found bypasses the spec's AC list did not name: `gh -R owner/repo pr merge` (a global repo flag before the subcommand) skipped the merge rule, and Perl switch clusters were read as in-place edits because any `i` matched. Perl value-taking switches (`-M`, `-F`, `-C`, `-D`) consume their own text, so `-Fi` is a read, while `-lpi` and `-0777pi` are in-place. A fix that narrowed one pattern regressed another. Prevention: before writing a matcher for a CLI, read that CLI's option grammar (its `--help` or parser) and enumerate leading global flags, value-taking short flags, and clustered short flags. Add an allow case and a deny case for each form, and check the flag position as well as the subcommand.

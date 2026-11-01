@@ -1,7 +1,7 @@
 {
   "id": "adopter-bypass-guards",
   "title": "Ship a Claude Code hook that redirects agents away from pipeline bypasses",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-01",
   "updated": "2026-11-01",
   "branch": "task/adopter-bypass-guards",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
