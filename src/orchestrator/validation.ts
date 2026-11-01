@@ -1960,7 +1960,7 @@ export function lintSpecManifest(markdown: string): ManifestLintIssue[] {
     }
     const exact = scan.sections.flatMap(s => s.affectedFiles);
     for (const heading of scan.headings) {
-        if (!/\baffected files\b/i.test(heading.text)) continue;
+        if (!/(?<![a-z])affected files(?![a-z])/i.test(heading.text)) continue;
         if (exact.some(entry => entry.heading.index === heading.index ||
             (heading.level >= 4 && heading.index > entry.heading.index && heading.index < entry.heading.sectionEnd))) continue;
         if (scanTableBlocks(scan.lines, scan.hidden, heading.index + 1, heading.sectionEnd).length === 0) continue;

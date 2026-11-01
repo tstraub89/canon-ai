@@ -4572,7 +4572,7 @@ void test('revision C3: real block and closed inline comments still exclude thei
     withTempTaskDir((taskId, taskDir) => {
         const markdown = ['# Spec', '   <!--', '## Design', '### Affected Files',
             '| File | Change |', '|---|---|', '| `hidden.ts` | ignored |', '-->',
-            manifestTable(['| `a.ts` | live <!-- ignored --> note |', '| `b.ts` | live |']),
+            manifestTable(['| `a.ts` | live <!-- `x` | `y` --> note |', '| `b.ts` | live |']),
             '<!--', '| File | Change |', '|---|---|', '| `old.ts` | retired |', '-->',
         ].join('\n');
         fs.writeFileSync(path.join(taskDir, 'spec.md'), markdown);
@@ -4593,3 +4593,24 @@ void test('revision R2: unaffected heading is prose while affected files remains
     const issues = lintSpecManifest(manifestTable(['| `a.ts` | test |'], '### Tests for affected files'));
     assert.equal(issues[0]?.kind, 'ignored-heading');
 });
+
+for (const heading of ['### _Affected Files_', '### __Affected Files__']) {
+    void test(`round 2 N1: emphasized affected-files heading is rejected: ${heading}`, () => {
+        const issues = lintSpecManifest(manifestTable(['| `a.ts` | live |'], heading));
+        assert.equal(issues.length, 1);
+        assert.equal(issues[0].kind, 'ignored-heading');
+        assert.ok(issues[0].message.includes(heading));
+        assert.deepEqual(lintSpecManifest(manifestTable(['| `a.ts` | unchanged |'], '### Unaffected Files')), []);
+    });
+}
+
+for (const comment of ['<!-->', '<!--->']) {
+    void test(`round 2 N2: complete short comment preserves the following manifest: ${comment}`, () => {
+        withTempTaskDir((taskId, taskDir) => {
+            const markdown = '# Spec\n' + comment + '\n' + manifestTable(['| `a.ts` | live |']);
+            fs.writeFileSync(path.join(taskDir, 'spec.md'), markdown);
+            assert.deepEqual(parseAffectedFilesFromSpec(taskId).files, ['a.ts']);
+            assert.deepEqual(lintSpecManifest(markdown), []);
+        });
+    });
+}

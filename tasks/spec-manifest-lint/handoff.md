@@ -238,3 +238,59 @@ C1's post-fix command was `node --test --import /tmp/spec-manifest-r2-no-live.mj
 | Scope and whitespace checks | Pass | Working changes remain within the file cap. Every path in git diff main...HEAD --name-only is covered across the cumulative Changes tables. git diff --check passed. |
 
 E2E remains explicitly inapplicable per the spec. All required Round 1 findings are addressed; optional decisions are recorded above.
+
+## Iteration 3 — addressing review round 2
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `src/orchestrator/validation.ts` | N1: recognize Affected Files when bordered by non-letters, including underscore emphasis, while preserving the Unaffected Files exception. |
+| `src/orchestrator/markdown-table.ts` | N2: consume the two complete short HTML comment forms without opening multiline-comment state. |
+| `tests/run-task-validation.test.ts` | Add single/double underscore heading and short-comment regressions. N3: make closed-inline-comment exclusion observable with a pipe and backticked content inside the comment. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Rebuilt the declared bundles. |
+| `tasks/spec-manifest-lint/handoff.md`, `tasks/spec-manifest-lint/notes.md` | Record Round 2 fixes, red-first and mutation evidence, and validation. |
+
+### Findings addressed
+
+- **N1 — correctness bug:** replace the word-boundary predicate with non-letter boundaries in `src/orchestrator/validation.ts`:1963. Single- and double-underscore Affected Files headings now produce ignored-heading errors; Unaffected Files still passes. Both regression rows failed before the fix and pass afterward.
+- **N2 — correctness bug:** explicitly consume both complete short-comment forms in `src/orchestrator/markdown-table.ts`:211 without leaving comment state open. Each form before a valid manifest now returns its live path and a clean lint. Both tests returned no paths before the fix.
+- **N3 — correctness bug / test integrity:** the existing real-block/closed-inline test in `tests/run-task-validation.test.ts`:4575 now includes a pipe plus backticked tokens inside the inline comment. Disabling only inline-comment stripping makes that test fail with fused-cells; restoring the source makes it pass. The assertion now distinguishes stripped from unstripped content.
+
+### AC deltas
+
+| AC | Status | Delta |
+|---|---|---|
+| AC-4 | Met | Restore ignored-heading detection for underscore emphasis without reintroducing the Unaffected Files false positive. |
+| AC-6 | Met | Complete short comments no longer hide later content; inline-comment exclusion has an observable regression test. |
+| AC-8 | Met | Live scope after short comments is preserved; existing valid-shape tests and the static task-scope fixture pass. |
+| AC-15 | Met | Recalibration remains 127 specs, 15 flagged; per-kind counts and archived consumer paths are unchanged from round-2 HEAD. |
+
+All other ACs remain unchanged and their existing tests pass in the full suite. No new ambiguity, blocker, or plan deviation. Optional Round 2 nits and the previously accepted human/QA follow-ups remain deferred; no file outside the spec cap was edited.
+
+### Red-First Evidence
+
+New N1/N2 regressions ran before any production fix edits against HEAD **286ca9fe14e92c7ab3df9ada177bb0572e07d69f**. All four failed for the reviewed reasons. N3's fixture was strengthened before its mutation check; the temporary source mutation was restored before applying the fixes.
+
+| AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
+| AC-4 — N1 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='round 2 N' tests/run-task-validation.test.ts` | 286ca9fe14e92c7ab3df9ada177bb0572e07d69f | Both underscore-emphasized headings returned zero issues instead of one ignored-heading issue. | Both pass; Unaffected Files remains valid. |
+| AC-6 / AC-8 — N2 | Same command as preceding row | 286ca9fe14e92c7ab3df9ada177bb0572e07d69f | Each complete short comment returned [] instead of ['a.ts'] for the following live table. | Both pass: ['a.ts'] and clean lint. |
+| AC-6 — N3 mutation | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='revision C3: real block' tests/run-task-validation.test.ts` | 286ca9fe14e92c7ab3df9ada177bb0572e07d69f with only inline-comment stripping disabled | Strengthened test failed: expected no lint issues, received fused-cells for row 1. | Pass with stripping restored; included in final full suite. |
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | ESLint completed successfully. |
+| `npm run type-check` | Pass | TypeScript completed successfully. |
+| `npm test` | Pass | Full suite: 1,917 tests, 1,916 passed, zero failed, one existing sandbox skip. The linked-worktree root test in `tests/run-task-safety.test.ts` skips under restricted git writes; fish-dependent subchecks report fish unavailable. |
+| `npm run build` | Pass | Both declared tracked bundles rebuilt successfully. |
+| `npm run sync-templates:check` | Pass | All canon-managed mirrors remain in sync; no guidance changed this round. |
+| `npm run docs-refs-check` | Pass | References valid; rerun after this artifact append before phase close. |
+| Scoped parser and validation tests | Pass | 274 tests passed across `tests/markdown-table.test.ts` and `tests/run-task-validation.test.ts`. |
+| Inline-comment mutation check | Pass | N3 fails with fused-cells when inline stripping is disabled and passes after restoration. |
+| Archive calibration and consumer differential | Pass | 127 specs; 15 flagged. Specs per kind: fused-cells 3, malformed-path 4, ignored-heading 9, other required kinds 0. Zero consumer path-array changes from round-2 HEAD. Archives untouched; existing sample classifications remain applicable. |
+| Scope and whitespace checks | Pass | All edited source/test/generated files are within the cap. Every path in git diff main...HEAD --name-only is covered across the cumulative Changes tables. git diff --check passed. |
+
+E2E remains explicitly inapplicable per the spec. All required Round 2 findings are addressed.

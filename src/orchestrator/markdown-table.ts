@@ -208,6 +208,9 @@ function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: bool
                 if (close === -1) break;
                 comment = false;
                 i = close + 3;
+            } else if (line.startsWith('<!-->', i) || line.startsWith('<!--->', i)) {
+                // These complete empty comments close within the opener's hyphens.
+                i += line[i + 4] === '>' ? 5 : 6;
             } else if (line.startsWith('<!--', i) &&
                 (/^ {0,3}$/.test(line.slice(0, i)) || line.indexOf('-->', i + 4) !== -1)) {
                 comment = true;

@@ -1036,6 +1036,8 @@ function visibleMarkdownLines(markdown) {
         if (close === -1) break;
         comment = false;
         i = close + 3;
+      } else if (line.startsWith("<!-->", i) || line.startsWith("<!--->", i)) {
+        i += line[i + 4] === ">" ? 5 : 6;
       } else if (line.startsWith("<!--", i) && (/^ {0,3}$/.test(line.slice(0, i)) || line.indexOf("-->", i + 4) !== -1)) {
         comment = true;
         i += 4;
@@ -4230,7 +4232,7 @@ function lintSpecManifest(markdown) {
   }
   const exact = scan.sections.flatMap((s) => s.affectedFiles);
   for (const heading of scan.headings) {
-    if (!/\baffected files\b/i.test(heading.text)) continue;
+    if (!/(?<![a-z])affected files(?![a-z])/i.test(heading.text)) continue;
     if (exact.some((entry) => entry.heading.index === heading.index || heading.level >= 4 && heading.index > entry.heading.index && heading.index < entry.heading.sectionEnd)) continue;
     if (scanTableBlocks(scan.lines, scan.hidden, heading.index + 1, heading.sectionEnd).length === 0) continue;
     const section = scan.headings.filter((h) => h.level === 2 && h.index <= heading.index).at(-1)?.text ?? "(before any ## section)";
