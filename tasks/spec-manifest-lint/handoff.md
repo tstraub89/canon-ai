@@ -168,3 +168,73 @@ E2E is explicitly not applicable in the spec: this is a CLI with no UI runtime.
 - [x] All spec ACs met (see coverage and the calibration interpretation)
 - [x] All applicable validation checks pass
 - [x] Deviations documented with rationale
+
+## Iteration 2 — addressing review round 1
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `src/orchestrator/markdown-table.ts` | C2: reject backtick-fence openers with backticks in their info string. C3: an HTML marker starts a multiline comment only at the start of a line with up to three spaces; an inline comment must close on that line. |
+| `src/orchestrator/validation.ts` | R1: describe truncated backticked content and explain literal-pipe escaping. R2: match Affected Files as whole words. |
+| `tests/run-task-validation.test.ts` | C1: embed this task's Affected Files section instead of reading a live task artifact. Add end-to-end parser/lint regressions for C2/C3 and diagnostic/heading tests for R1/R2. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Rebuilt both tracked bundles for the parser and lint changes. |
+| `tasks/spec-manifest-lint/handoff.md`, `tasks/spec-manifest-lint/notes.md` | Record revision decisions, reproductions, and validation. |
+
+### Findings addressed
+
+- **C1 — correctness bug:** the valid-manifest test no longer reads a task artifact that shipping moves. Its static fixture is this task's full Affected Files section (`tests/run-task-validation.test.ts`:4446). An archive simulation that denies the live spec read fails on the pre-revision test with ENOENT and passes on the revised test, without moving or deleting any file.
+- **C2 — correctness bug:** inline triple-backtick text and invalid backtick info strings no longer open a fence (`src/orchestrator/markdown-table.ts`:195). Three malformed-markdown cases now preserve the live manifest's path; the ordinary backtick/tilde fence-exclusion tests remain green.
+- **C3 — correctness bug:** an unclosed comment marker in a table cell stays literal instead of hiding later rows and amendments (`src/orchestrator/markdown-table.ts`:211). End-to-end tests prove both the literal case and real multiline/closed-inline comment exclusion.
+- **R1 — risk/guardrail:** fused-cell errors now say backticked content is discarded and give the backslash-pipe escape for a literal pipe (`src/orchestrator/validation.ts`:1949). The new test requires the actual escape and its explanatory clause.
+- **R2 — risk/guardrail:** whole-word heading detection accepts Unaffected Files while continuing to reject Tests for affected files with a table (`src/orchestrator/validation.ts`:1963).
+
+### AC deltas
+
+| AC | Status | Delta |
+|---|---|---|
+| AC-1 | Met | Fused-cell recovery now explains escaping literal pipes; rejection predicate unchanged. |
+| AC-4 | Met | Remove the Unaffected Files false positive; preserve the required phrase match in other headings. |
+| AC-6 | Met | Exclude real fences/comments while preserving inline backtick text and unclosed mid-cell markers. New regressions ran red before production edits. |
+| AC-8 | Met | Restore valid non-fenced/non-commented scope and make the task-spec fixture independent of task lifecycle. Reviewer marked this Partial before the revision. |
+| AC-15 | Met | Recalibration remains 127 specs, 15 flagged, with identical per-kind counts and no archive path-output changes from round-1 HEAD. |
+
+Other ACs are unchanged; the full suite includes their existing coverage.
+
+### Deferred optional findings and scope
+
+- **R3:** retain the existing decision to exclude a genuinely unclosed fence without adding a diagnostic. Its content is actually fenced; a new lint kind would add a grammar restriction beyond the binding ACs and the required review fixes. The silent exclusion remains a documented residual risk.
+- **R5:** retain the existing park-resume behavior. The interrupted-implement/broken-spec edge can select misleading resume wording or a fresh mixed-mode session, but the review found no state corruption. Changing session routing is unnecessary for these parser fixes.
+- **R4:** the foreman amendment contract follow-up targets `src/orchestrator/prompts/templates/code-review-foreman.md`, which is outside the spec cap. No edit made; human scope amendment remains the follow-up path. The `docs/patterns.md` mirror-row wording remains the QA consistency follow-up identified in review.
+- Other optional nits are deferred. No new ambiguity or execution blocker was found. The baseline archive-classification ambiguity was accepted by Round 1 review.
+
+### Red-First Evidence
+
+The C2/C3/R1/R2 tests ran before this round's production edits against HEAD **34470c8b46c102d6458d0a8604e134aebbd64e59**. The selected run produced six expected failures and one passing real-comment control. The same selection passes all seven tests after the fixes.
+
+| AC | Command | Ran against | Pre-fix failure | Post-fix result |
+|---|---|---|---|---|
+| AC-6 / AC-8 — C2 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='revision [CR]' tests/run-task-validation.test.ts` | 34470c8b46c102d6458d0a8604e134aebbd64e59 | Each of three inline/invalid backtick opener cases returned [] instead of ['a.ts']. | All three pass; exactly ['a.ts']; lint clean. |
+| AC-6 / AC-8 — C3 | Same command as preceding row | 34470c8b46c102d6458d0a8604e134aebbd64e59 | Unclosed mid-cell marker returned ['a.ts'] instead of ['a.ts', 'b.ts', 'c.ts']; the amendment was hidden. | Pass: all three paths returned; real block/closed-inline control also passes. |
+| AC-1 — R1 | Same command as preceding row | 34470c8b46c102d6458d0a8604e134aebbd64e59 | The fused-cell message lacked the required backslash-pipe escape. | Pass: escape and literal-pipe explanation present. |
+| AC-4 — R2 | Same command as preceding row | 34470c8b46c102d6458d0a8604e134aebbd64e59 | Unaffected Files incorrectly returned an ignored-heading issue. | Pass: no issue; Tests for affected files still rejected. |
+| AC-8 — C1 | Selected valid-grammar test with a filesystem read interceptor simulating an archived live spec | 34470c8b46c102d6458d0a8604e134aebbd64e59 | The original test from git show HEAD, loaded from a scratch copy with only import locations rewritten, threw ENOENT at its live artifact read. | The revised test passes under the same interceptor. |
+
+C1's post-fix command was `node --test --import /tmp/spec-manifest-r2-no-live.mjs --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='manifest lint accepts the valid grammar' tests/run-task-validation.test.ts`. The temporary interceptor throws ENOENT only for this task's live spec path. The pre-fix command substituted the scratch copy of the original test for the final argument. Neither run altered the task artifact.
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | ESLint completed successfully. |
+| `npm run type-check` | Pass | TypeScript completed successfully. |
+| `npm test` | Pass | Full suite: 1,913 tests, 1,912 passed, zero failed, one skipped. The existing linked-worktree root test in `tests/run-task-safety.test.ts` skips under restricted git writes; fish-dependent subchecks report fish unavailable. |
+| `npm run build` | Pass | Both declared tracked bundles rebuilt successfully. |
+| `npm run sync-templates:check` | Pass | All canon-managed mirrors remain in sync; no guidance changes this round. |
+| `npm run docs-refs-check` | Pass | All refs valid; checked again after this append before phase close. |
+| Scoped parser and validation tests | Pass | 270 tests passed across `tests/markdown-table.test.ts` and `tests/run-task-validation.test.ts`. |
+| Archived-task simulation | Pass | Original test fails with ENOENT; revised fixture test passes under the identical denied-read condition. |
+| Archive calibration and consumer differential | Pass | 127 specs; 15 flagged. Specs per kind: fused-cells 3, malformed-path 4, ignored-heading 9, other required kinds 0. Zero scope-path differences from round-1 HEAD. No archived specs edited. |
+| Scope and whitespace checks | Pass | Working changes remain within the file cap. Every path in git diff main...HEAD --name-only is covered across the cumulative Changes tables. git diff --check passed. |
+
+E2E remains explicitly inapplicable per the spec. All required Round 1 findings are addressed; optional decisions are recorded above.

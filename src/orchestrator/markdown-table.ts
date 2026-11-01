@@ -192,7 +192,8 @@ function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: bool
             return line;
         }
         const opener = !comment && /^\s{0,3}(`{3,}|~{3,})/.exec(line);
-        if (opener) {
+        // Backticks in a backtick fence's info string make this inline text.
+        if (opener && (opener[1][0] !== '`' || !line.slice(opener[0].length).includes('`'))) {
             fence = { char: opener[1][0], length: opener[1].length };
             hidden.push(true);
             return line;
@@ -207,7 +208,8 @@ function visibleMarkdownLines(markdown: string): { lines: string[]; hidden: bool
                 if (close === -1) break;
                 comment = false;
                 i = close + 3;
-            } else if (line.startsWith('<!--', i)) {
+            } else if (line.startsWith('<!--', i) &&
+                (/^ {0,3}$/.test(line.slice(0, i)) || line.indexOf('-->', i + 4) !== -1)) {
                 comment = true;
                 i += 4;
             } else if (line[i] === '`') {

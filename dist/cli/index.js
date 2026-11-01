@@ -1023,7 +1023,7 @@ function visibleMarkdownLines(markdown) {
       return line;
     }
     const opener = !comment && /^\s{0,3}(`{3,}|~{3,})/.exec(line);
-    if (opener) {
+    if (opener && (opener[1][0] !== "`" || !line.slice(opener[0].length).includes("`"))) {
       fence = { char: opener[1][0], length: opener[1].length };
       hidden.push(true);
       return line;
@@ -1036,7 +1036,7 @@ function visibleMarkdownLines(markdown) {
         if (close === -1) break;
         comment = false;
         i = close + 3;
-      } else if (line.startsWith("<!--", i)) {
+      } else if (line.startsWith("<!--", i) && (/^ {0,3}$/.test(line.slice(0, i)) || line.indexOf("-->", i + 4) !== -1)) {
         comment = true;
         i += 4;
       } else if (line[i] === "`") {
@@ -4216,7 +4216,7 @@ function lintSpecManifest(markdown) {
         const { cells, line } = raw;
         const at = { section: label, row, line };
         if (cells.length > block.header.cells.length && cells.slice(block.header.cells.length).some(hasToken)) {
-          issues.push({ ...at, kind: "fused-cells", message: `Row has ${cells.length} cells but its header has ${block.header.cells.length}; an extra path is not read. Put one file per row, or comma-join paths in column 1.` });
+          issues.push({ ...at, kind: "fused-cells", message: `Row has ${cells.length} cells but its header has ${block.header.cells.length}; extra backticked content is not read. Put one file per row, or comma-join paths in column 1. For a literal pipe in a cell, write \\|.` });
         }
         if (!cells[0] && cells.slice(1).some(hasToken)) {
           issues.push({ ...at, kind: "empty-first-cell", message: "The first column is empty, so a path in another cell is not read. Put the path in column 1." });
@@ -4230,7 +4230,7 @@ function lintSpecManifest(markdown) {
   }
   const exact = scan.sections.flatMap((s) => s.affectedFiles);
   for (const heading of scan.headings) {
-    if (!/affected files/i.test(heading.text)) continue;
+    if (!/\baffected files\b/i.test(heading.text)) continue;
     if (exact.some((entry) => entry.heading.index === heading.index || heading.level >= 4 && heading.index > entry.heading.index && heading.index < entry.heading.sectionEnd)) continue;
     if (scanTableBlocks(scan.lines, scan.hidden, heading.index + 1, heading.sectionEnd).length === 0) continue;
     const section = scan.headings.filter((h) => h.level === 2 && h.index <= heading.index).at(-1)?.text ?? "(before any ## section)";
