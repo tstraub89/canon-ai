@@ -10,6 +10,7 @@
 - **An opt-in Claude Code guard hook.** `canon init` installs `.claude/hooks/canon-guard.mjs`; canon never writes your Claude settings. Once registered, it refuses direct `status.json` edits, piping `canon run` or `canon watch`, polling the run log, and merging a task PR with `gh pr merge` by any method (squash, rebase, or merge commit), and names the canon command to use instead. `canon doctor` warns when the hook is installed but not fully registered.
 - **Malformed Affected Files tables are rejected.** `canon task phase <id> spec done` lists every problem with its row and fix, and plan and implement auto-block on a malformed table before any agent runs (`--force` overrides with a warning).
 - **`ship.merge_method` picks how `--ship` merges a task PR.** Set the key in the repo's `.canon/config.json` to `squash` (the default), `rebase`, or `merge`. Before changing anything locally, `--ship` checks that GitHub allows that method, and it stops and names the allowed methods if the repo does not.
+- **QA records why each task needed rework.** `done.md` gains a `## Root Cause` section with one line per blocking review finding, reroute, or dropped AC, classed as `context-missing`, `context-conflicting`, `spec-gap`, `plan-error`, `execution`, or `unrequested-change` (or `None.`). Grep archived `done.md` files to see whether rework comes from your docs, your specs, or the agents. The task quality log is unchanged.
 
 ### Changed
 
