@@ -155,13 +155,11 @@ jobs:
       # NODE_OPTIONS would leak the flag into the node processes tests spawn.
       # Keep the two in sync. completion.test.ts needs zsh/fish/tcsh, so it
       # runs in the `checks` job instead of installing the shells here.
-      # --test-concurrency=4 uses all 4 vCPUs; node's default leaves one idle,
-      # and these tests mostly wait on git and child processes.
       - name: Run test shard
         run: |
           files=()
           for f in tests/*.test.ts; do
             [ "$f" = tests/completion.test.ts ] || files+=("$f")
           done
-          node --test --test-shard=${{ matrix.shard }}/3 --test-concurrency=4 \
+          node --test --test-shard=${{ matrix.shard }}/3 \
             --import ./tests/md-loader-register.mjs --import tsx "${files[@]}"

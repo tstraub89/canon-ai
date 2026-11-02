@@ -158,7 +158,7 @@ CI is configured via `.github/workflows/ci.yml`.
 **Jobs**: Node 24.x only. Two jobs run in parallel:
 
 - `checks` runs in order: `npm ci` → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm run sync-templates:check` → `npm run docs-refs-check` → `npm run build` → apt install `zsh fish tcsh` → `tests/completion.test.ts` → committed-`dist/` freshness check → git-install smoke test.
-- `test (shard N/3)` is a three-way matrix: `npm ci` → `npm run build` → the `npm test` command with `--test-shard=N/3 --test-concurrency=4` over every test file except `tests/completion.test.ts`. Node assigns whole test files to shards and runs a file's tests serially, so a very large test file becomes its shard's critical path; split it rather than letting it grow.
+- `test (shard N/3)` is a three-way matrix: `npm ci` → `npm run build` → the `npm test` command with `--test-shard=N/3` over every test file except `tests/completion.test.ts`. Node assigns whole test files to shards and runs a file's tests serially, so a very large test file becomes its shard's critical path; split it rather than letting it grow.
 
 Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-check` to their own GitHub Actions workflow file. canon does not ship `.github/workflows/` files to adopter repos, but `canon upgrade` does ship `scripts/docs-refs-check.mjs`, the adopter-owned `scripts/docs-refs-config.mjs` scaffold, and the npm script entry that invokes the checker.
 
