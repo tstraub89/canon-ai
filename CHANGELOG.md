@@ -9,6 +9,7 @@
 - **Claude-only provider mode.** Set `CANON_PROVIDER=claude` and every phase runs on the Claude CLI; Codex is not required. Each task pins its provider at creation (`canon task set <id> provider claude|mixed` switches it). Code review runs an anchored and a spec-blind Claude reviewer, and a failed implement or spec-review run keeps its session so the next `canon run` resumes it. Mixed-provider bundles are refused, and `codex` is not accepted as a provider yet.
 - **An opt-in Claude Code guard hook.** `canon init` installs `.claude/hooks/canon-guard.mjs`; canon never writes your Claude settings. Once registered, it refuses direct `status.json` edits, piping `canon run` or `canon watch`, polling the run log, and merging a task PR with `gh pr merge` by any method (squash, rebase, or merge commit), and names the canon command to use instead. `canon doctor` warns when the hook is installed but not fully registered.
 - **Malformed Affected Files tables are rejected.** `canon task phase <id> spec done` lists every problem with its row and fix, and plan and implement auto-block on a malformed table before any agent runs (`--force` overrides with a warning).
+- **`ship.merge_method` picks how `--ship` merges a task PR.** Set the key in the repo's `.canon/config.json` to `squash` (the default), `rebase`, or `merge`. Before changing anything locally, `--ship` checks that GitHub allows that method, and it stops and names the allowed methods if the repo does not.
 
 ### Changed
 
@@ -22,6 +23,7 @@
 - **Fenced code examples and HTML-commented tables no longer count as spec scope.**
 - **The `done.md` template no longer ships a bulleted `Acknowledged:` placeholder**, which the human-review gate never accepted, so copying it made `--ship` refuse.
 - **`.canon/README.md` no longer says Codex network access is on by default.**
+- **A failed merge in `--ship` no longer loses telemetry notes in your main checkout.** The notes `--ship` set aside are put back before the command exits.
 
 ## [3.16.0] — 2026-10-28
 
