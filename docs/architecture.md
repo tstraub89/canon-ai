@@ -29,7 +29,7 @@ Anything that would change if you migrated to a different framework belongs here
 - **State machine**: `status.json` per task, with phases as nodes (see `.canon/templates/status.json`)
 - **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
-- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests, runs on Node 24.x. A `checks` job runs `npm ci`, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`, the shell-completion tests (after installing `zsh fish tcsh` via apt) and the packaging smoke tests; in parallel, three `test` shards each run a third of the remaining `npm test` files.
+- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests, runs on Node 24.x. A `checks` job runs `npm ci`, a lockfile regenerate-and-diff check, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`, the shell-completion tests (after installing `zsh fish tcsh` via apt) and the packaging smoke tests; in parallel, three `test` shards each run a third of the remaining `npm test` files.
 
 ## High-Level Architecture
 
@@ -153,18 +153,18 @@ The bindings below say what each category means concretely for canon-ai. The uni
 
 CI is configured via `.github/workflows/ci.yml`.
 
-**Triggers**: push to `main`, plus all pull requests (the `pull_request` trigger has no branch filter). The path filters opt out of doc/task paths, then re-include root operator docs (`AGENTS.md`, `CLAUDE.md`). They also re-include canon-owned docs that should still run validation (`docs/pipeline-orchestrator.md`).
+**Triggers**: every pull request (no branch or path filter, so each PR reports the required checks), plus pushes to `main`. Push runs use path filters that opt out of doc/task paths, then re-include root operator docs (`AGENTS.md`, `CLAUDE.md`) and canon-owned docs that should still run validation (`docs/pipeline-orchestrator.md`).
 
 **Jobs**: Node 24.x only. Two jobs run in parallel:
 
-- `checks` runs in order: `npm ci` → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm run sync-templates:check` → `npm run docs-refs-check` → `npm run build` → apt install `zsh fish tcsh` → `tests/completion.test.ts` → committed-`dist/` freshness check → git-install smoke test.
+- `checks` runs in order: `npm ci` → lockfile integrity (`npm install --package-lock-only` must leave `package-lock.json` unchanged) → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm run sync-templates:check` → `npm run docs-refs-check` → `npm run build` → apt install `zsh fish tcsh` → `tests/completion.test.ts` → committed-`dist/` freshness check → git-install smoke test.
 - `test (shard N/3)` is a three-way matrix: `npm ci` → `npm run build` → the `npm test` command with `--test-shard=N/3` over every test file except `tests/completion.test.ts`. Node assigns whole test files to shards and runs a file's tests serially, so a very large test file becomes its shard's critical path; split it rather than letting it grow.
 
 Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-check` to their own GitHub Actions workflow file. canon does not ship `.github/workflows/` files to adopter repos, but `canon upgrade` does ship `scripts/docs-refs-check.mjs`, the adopter-owned `scripts/docs-refs-config.mjs` scaffold, and the npm script entry that invokes the checker.
 
 **Concurrency**: runs on the same `github.ref` cancel in-flight runs when a new push lands.
 
-**To make CI a hard merge gate**: in GitHub → Settings → Branches, add a protection rule for `main` with required status checks `checks`, `test (shard 1/3)`, `test (shard 2/3)` and `test (shard 3/3)`. Until configured, CI is informational only.
+**Merge gate**: the `main` ruleset requires `checks`, `test (shard 1/3)`, `test (shard 2/3)` and `test (shard 3/3)` to pass before a PR merges (branches need not be up to date). Repository admins bypass the ruleset, which keeps canon's direct pushes to `main` (task scaffolds, archives, changelog bullets) working; for admins a red PR is a warning, not a block, and a bad direct push shows up as a red `main` run after it lands.
 
 ## Cross-Cutting Concerns
 

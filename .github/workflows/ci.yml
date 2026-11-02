@@ -21,21 +21,9 @@ on:
       - '!.agent/**'
       - '!.github/**/*.md'
   pull_request:
-    # No `branches:` filter — CI is cheap for canon and we want coverage on
-    # PRs against every base (main, release/**, future-named integration
-    # branches). Path filters still apply so doc-only PRs skip CI.
-    paths:
-      - '**'
-      - '!AGENTS.md'
-      - '!CLAUDE.md'
-      - 'AGENTS.md'
-      - 'CLAUDE.md'
-      - '!docs/**'
-      - 'docs/pipeline-orchestrator.md'
-      - '!tasks/**'
-      - 'tasks/_templates/**'
-      - '!.agent/**'
-      - '!.github/**/*.md'
+    # No `branches:` or `paths:` filter — CI is cheap for canon, and the main
+    # ruleset requires `checks` and the `test` shards, so every PR must report
+    # them. A path-filtered PR would never report and stay blocked.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,6 +45,20 @@ jobs:
           node-version: '24.x'
           cache: 'npm'
       - run: npm ci
+      - name: Verify lockfile integrity
+        # Regenerate package-lock.json from package.json and fail on any byte
+        # change. `npm ci` only checks that the lockfile satisfies
+        # package.json; this also catches a corrupted entry (e.g. a rewritten
+        # transitive version field). auto-release.yml repeats the check on
+        # release pushes, since CI is not a required gate there.
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --silent
+          if ! git diff --quiet -- package-lock.json; then
+            echo "::error::package-lock.json is stale or corrupted — regenerate with 'npm install --package-lock-only' and commit"
+            git --no-pager diff -- package-lock.json | head -80 || true
+            exit 1
+          fi
       - name: Verify CHANGELOG date on release PRs to main
         if: github.event_name == 'pull_request' && github.base_ref == 'main'
         run: |
