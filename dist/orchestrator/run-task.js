@@ -1017,7 +1017,7 @@ function shellQuotePath(p) {
   return `'${p.replace(/'/g, `'\\''`)}'`;
 }
 function shellQuoteArg(arg) {
-  return /^[A-Za-z0-9._\/@%+=:,-]+$/.test(arg) ? arg : shellQuotePath(arg);
+  return /^[A-Za-z0-9._/@%+=:,-]+$/.test(arg) ? arg : shellQuotePath(arg);
 }
 function assertTaskWorktreeWithinRoot(taskId) {
   if (process.env.CANON_TASKS_DIR_OVERRIDE) return;
@@ -3875,7 +3875,7 @@ function verifyRerouteAmendment(taskId, requiredRound) {
   };
 }
 function cleanCitedPathToken(rawToken) {
-  return rawToken.trim().replace(/^[`'"\[({<]+/, "").replace(/[>`'"\])}.,;]+$/, "");
+  return rawToken.trim().replace(/^[`'"[({<]+/, "").replace(/[>`'"\])}.,;]+$/, "");
 }
 function stripCitedLocation(token) {
   return token.replace(/:\d+(?::\d+)?$/, "");

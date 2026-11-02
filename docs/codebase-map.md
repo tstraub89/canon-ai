@@ -152,7 +152,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | Node/TS project metadata, npm scripts | `package.json` | `test`, `type-check`, `task`, `run-task` scripts |
 | Pre-commit sync hook | `package.json` | `simple-git-hooks` config plus `sync-templates` scripts |
 | GitHub Actions CI workflow | `.github/workflows/ci.yml` | Triggers, matrix, audit, lint, type-check, test; see `docs/architecture.md` `## CI` |
-| ESLint flat config | `eslint.config.mjs` | `@typescript-eslint/recommendedTypeChecked`, `projectService: true` |
+| oxlint config | `.oxlintrc.json` | The former ESLint `recommendedTypeChecked` rule set (type-aware via `oxlint-tsgolint`), plus oxlint's `correctness` category |
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `src/`, `tests/`, and the remaining `scripts/**/*.d.ts` tooling declaration |
 | Claude permissions, SessionStart and PreToolUse guard registration | `.claude/settings.json` | Auto-shows in-progress tasks at session start; guard registration is opt-in |
 | Claude Code guard hook | `.claude/hooks/canon-guard.mjs` | PreToolUse deny for `status.json` writes, piped `canon run` / `canon watch` and run-log polling, and every `gh pr merge` of a task PR (any strategy); registration snippet `RECOMMENDED_GUARD_HOOKS` in `src/cli/commands/doctor.ts` |

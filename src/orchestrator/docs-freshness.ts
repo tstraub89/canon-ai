@@ -127,11 +127,13 @@ type GlobToken = string | readonly (readonly string[])[];
 function tokenizeSegment(segment: string): GlobToken[] {
     // Code points throughout, so an astral character is one token and one
     // name position.
+    // oxlint-disable-next-line typescript/no-misused-spread -- code points are intended
     const chars = [...segment];
     const tokens: GlobToken[] = [];
     for (let i = 0; i < chars.length; i++) {
         const close = chars[i] === '{' ? chars.indexOf('}', i) : -1;
         if (close < 0) { tokens.push(chars[i]); continue; }
+        // oxlint-disable-next-line typescript/no-misused-spread -- code points are intended
         tokens.push(chars.slice(i + 1, close).join('').split(',').map(alt => [...alt]));
         i = close;
     }
@@ -150,6 +152,7 @@ function advance(token: string, from: ReadonlySet<number>, name: readonly string
     return next;
 }
 function matchesSegment(tokens: readonly GlobToken[], segmentName: string): boolean {
+    // oxlint-disable-next-line typescript/no-misused-spread -- code points are intended
     const name = [...segmentName];
     let offsets = new Set([0]);
     for (const token of tokens) {
