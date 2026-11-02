@@ -78,6 +78,11 @@ jobs:
       - run: npm run sync-templates:check
       - run: npm run docs-refs-check
       - run: npm run build
+      - name: Install shells for completion tests
+        run: sudo apt-get update && sudo apt-get install -y zsh fish tcsh
+      # The test shards skip this file so they don't each install the shells.
+      - name: Run completion tests
+        run: node --test --import ./tests/md-loader-register.mjs --import tsx tests/completion.test.ts
       - name: Verify committed dist/ matches a fresh build
         # We commit dist/ because `npm install -g <git-url>` cannot reliably
         # rebuild at install time (see npm/cli#8440). This step rebuilds and
@@ -145,10 +150,18 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build
-      - name: Install shells for completion tests
-        run: sudo apt-get update && sudo apt-get install -y zsh fish tcsh
       # Same command as package.json's `test` script, with the shard flag
       # placed before the file list: node ignores --test-shard after it, and
       # NODE_OPTIONS would leak the flag into the node processes tests spawn.
-      # Keep the two in sync.
-      - run: node --test --test-shard=${{ matrix.shard }}/3 --import ./tests/md-loader-register.mjs --import tsx tests/*.test.ts
+      # Keep the two in sync. completion.test.ts needs zsh/fish/tcsh, so it
+      # runs in the `checks` job instead of installing the shells here.
+      # --test-concurrency=4 uses all 4 vCPUs; node's default leaves one idle,
+      # and these tests mostly wait on git and child processes.
+      - name: Run test shard
+        run: |
+          files=()
+          for f in tests/*.test.ts; do
+            [ "$f" = tests/completion.test.ts ] || files+=("$f")
+          done
+          node --test --test-shard=${{ matrix.shard }}/3 --test-concurrency=4 \
+            --import ./tests/md-loader-register.mjs --import tsx "${files[@]}"
