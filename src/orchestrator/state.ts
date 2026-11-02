@@ -133,7 +133,7 @@ export function shellQuotePath(p: string): string {
 // Same, for a single argument such as a branch name: left bare when it holds
 // only characters the shell passes through literally, quoted otherwise.
 export function shellQuoteArg(arg: string): string {
-    return /^[A-Za-z0-9._\/@%+=:,-]+$/.test(arg) ? arg : shellQuotePath(arg);
+    return /^[A-Za-z0-9._/@%+=:,-]+$/.test(arg) ? arg : shellQuotePath(arg);
 }
 
 export function assertTaskWorktreeWithinRoot(taskId: string): void {
@@ -396,6 +396,7 @@ export function validateBranchField(value: string | undefined, taskId: string, f
     if (trimmed.startsWith('-')) {
         throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' looks like a flag, not a branch name. ${statusFieldFix(taskId, fieldName)}`);
     }
+    // oxlint-disable-next-line no-control-regex -- rejecting control characters is the point
     if (/[\x00-\x1F\x7F\s:]/.test(trimmed)) {
         throw new Error(`Invalid ${fieldName} in task '${taskId}': '${value}' contains control chars, whitespace, or refspec separator. ${statusFieldFix(taskId, fieldName)}`);
     }

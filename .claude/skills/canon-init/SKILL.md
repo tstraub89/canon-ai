@@ -28,7 +28,7 @@ Delegate codebase exploration to an Explore sub-agent via the Agent tool. Prompt
 - `package.json` (or equivalent build file): name, description, main dependencies, scripts
 - `README.md`: product description, setup summary
 - `src/` or equivalent source root: top-level directory structure with one-line descriptions per directory
-- Config files: `tsconfig.json`, `eslint.config.*`, `.env.example`, `Dockerfile`, `docker-compose.*`, `vercel.json`, any CI workflow files (`.github/workflows/`)
+- Config files: `tsconfig.json`, linter/formatter config (`eslint.config.*`, `.oxlintrc.json`, `biome.json`, etc.), `.env.example`, `Dockerfile`, `docker-compose.*`, `vercel.json`, any CI workflow files (`.github/workflows/`)
 - Test setup: runner, test file patterns, any global fixtures or helpers
 - Auth mechanism: how are users authenticated? (JWT, sessions, OAuth, Clerk, NextAuth, Passport, etc.)
 - Database / ORM: what data layer is used? (Prisma, Drizzle, TypeORM, raw SQL, none, etc.)

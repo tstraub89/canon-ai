@@ -28,17 +28,16 @@ updates:
     # Major npm bumps need real testing time a weekly bot cadence can't
     # provide, so upgrade them deliberately by hand. With a single
     # `patterns: ["*"]` group, one unmergeable major also strands every safe
-    # bump alongside it: `typescript` 5 -> 7 blocked four clean minor/patch
-    # updates because typescript-eslint still peers on `typescript <6.1.0`.
+    # bump alongside it: `typescript` 5 -> 7 once blocked four clean
+    # minor/patch updates because typescript-eslint peered on `typescript <6.1.0`.
     #
     # Two consequences of ignoring majors here:
     #   - `@types/node` no longer follows the runtime on its own. It must
     #     track `engines.node` (and the CI matrix) by hand — a types major
     #     ahead of the runtime describes APIs that aren't there, and one
     #     behind hides APIs that are.
-    #   - `typescript` stays on 5.x until typescript-eslint's peer range
-    #     admits the next major. TS 7 is the native port and has no
-    #     TypeScript API yet, which is what typescript-eslint needs.
+    #   - `typescript` majors (e.g. 5 -> 7, the native port) are a
+    #     deliberate manual upgrade like any other.
     ignore:
       - dependency-name: "*"
         update-types:

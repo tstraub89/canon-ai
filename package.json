@@ -22,19 +22,19 @@
     "sync-templates": "tsx scripts/sync-canon-templates.mjs",
     "sync-templates:check": "tsx scripts/sync-canon-templates.mjs --check",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint scripts/ tests/ src/",
+    "lint": "oxlint --type-aware --deny-warnings src tests scripts",
     "docs-refs-check": "node scripts/docs-refs-check.mjs"
   },
   "devDependencies": {
     "@types/mustache": "^4.2.6",
     "@types/node": "^24.13.3",
-    "eslint": "^10.10.0",
     "mustache": "^4.2.0",
+    "oxlint": "1.89.0",
+    "oxlint-tsgolint": "7.0.2003",
     "simple-git-hooks": "^2.14.0",
     "tsup": "^8.5.1",
     "tsx": "^4.23.13",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.70.0"
+    "typescript": "^5.9.3"
   },
   "simple-git-hooks": {
     "pre-commit": "npm run sync-templates -- --stage"

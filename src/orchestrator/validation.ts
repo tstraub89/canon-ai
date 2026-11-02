@@ -432,7 +432,7 @@ export function parseValidationOutcomeRows(handoffPath: string): ValidationOutco
 function cleanCitedPathToken(rawToken: string): string {
     return rawToken
         .trim()
-        .replace(/^[`'"\[({<]+/, '')
+        .replace(/^[`'"[({<]+/, '')
         .replace(/[>`'"\])}.,;]+$/, '');
 }
 
