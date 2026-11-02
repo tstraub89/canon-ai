@@ -1211,6 +1211,50 @@ void test('refactor correctness-audit guidance stays aligned across spec surface
     assert.ok(!goldens.promptSpecRevision?.includes(distinctive));
 });
 
+void test('judgment-call guidance stays aligned across spec surfaces', () => {
+    const worktreeRoot = process.cwd();
+    const readRepoFile = (relPath: string): string => fs.readFileSync(path.join(worktreeRoot, relPath), 'utf8');
+    const D = 'A judgment call is a choice between two or more defensible options where the choice changes behavior or scope.';
+    const S = 'A choice a project doc already settles is not a judgment call: follow the doc and cite it.';
+    const B = 'Name the call, a defensible alternative the spec does not record, and the AC or behavior that would differ under it; if you cannot name all three, do not raise it.';
+    const carriersWithDS = [
+        '.canon/templates/spec.md',
+        '.canon/templates/spec-review.md',
+        '.claude/skills/canon-spec/SKILL.md',
+        '.claude/skills/canon-spec-review/SKILL.md',
+        'src/orchestrator/prompts/templates/spec.md',
+        'src/orchestrator/prompts/templates/spec-revision.md',
+        'src/orchestrator/prompts/templates/spec-review.md',
+        'docs/pipeline-orchestrator.md',
+        'templates/.canon/templates/spec.md',
+        'templates/.canon/templates/spec-review.md',
+        'templates/.claude/skills/canon-spec/SKILL.md',
+        'templates/.claude/skills/canon-spec-review/SKILL.md',
+        'templates/docs/pipeline-orchestrator.md',
+    ];
+    const carriersWithB = [
+        'src/orchestrator/prompts/templates/spec-review.md',
+        '.claude/skills/canon-spec-review/SKILL.md',
+        'templates/.claude/skills/canon-spec-review/SKILL.md',
+    ];
+    for (const list of [carriersWithDS, carriersWithB]) {
+        assert.ok(list.length > 0);
+        for (const file of list) assert.ok(fs.existsSync(path.join(worktreeRoot, file)), `${file} does not exist`);
+    }
+    for (const file of carriersWithDS) {
+        const content = readRepoFile(file);
+        assert.ok(content.includes(D), `${file} is missing canonical definition D`);
+        assert.ok(content.includes(S), `${file} is missing canonical settled-choice rule S`);
+        assert.ok(content.includes(`${D} ${S}`), `${file} must state S immediately after D`);
+    }
+    for (const file of carriersWithB) {
+        assert.ok(readRepoFile(file).includes(B), `${file} is missing canonical review bar B`);
+    }
+
+    assert.ok(promptSpec(baseState).includes(D));
+    assert.ok(promptSpecReview(baseState).includes(B));
+});
+
 void test('interactive runClaude omits --max-budget-usd', { concurrency: false }, async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-claude-args-'));
     const binDir = path.join(tempDir, 'bin');

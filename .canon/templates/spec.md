@@ -13,6 +13,20 @@ What is broken, missing, or suboptimal? Be specific. Link to user feedback, bugs
 
 What are we building? Describe the behavior change, not implementation details.
 
+## Judgment Calls
+
+List each judgment call this spec makes. A judgment call is a choice between two or more defensible options where the choice changes behavior or scope. A choice a project doc already settles is not a judgment call: follow the doc and cite it.
+
+Decided by takes exactly one of two values:
+- `Human` — the human explicitly chose this option, during the question round or by redirecting at a spec gate. Approving the spec as a whole does not make a row `Human`.
+- `Author` — the author's recommendation, not explicitly chosen by the human. A revision that changes a row's chosen option resets that row to `Author`.
+
+If the spec makes no genuine calls, write `None — <reason>` instead of the table.
+
+| Call | Chosen | Strongest alternative | Why | Decided by |
+|---|---|---|---|---|
+| ... | ... | ... | ... | `Author` |
+
 ## Non-Goals
 
 What are we explicitly NOT doing in this task? This prevents scope creep.
@@ -105,3 +119,4 @@ Steps the human should perform to verify the feature works as intended. Written 
 - [ ] Validation Required has at least one entry marked `- [x]` (not `- [ ]`). `- [ ]` is a placeholder; the spec author flips required checks to `- [x]` before marking spec done. The orchestrator's code_review pre-flight blocks if no `[x]` items are present.
 - [ ] (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class (runtime-dependent mechanisms need executed confirmation), not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative
 - [ ] (Refactors; N/A for features/bug fixes) *Problem* records the correctness audit of each behavior declared preserved, with one outcome each (correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk) stated before any "preserve" AC
+- [ ] *Judgment Calls* lists every judgment call the spec makes, each with its strongest alternative and a Decided by value (`Human` or `Author`), or says `None — <reason>`

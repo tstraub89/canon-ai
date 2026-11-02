@@ -174,6 +174,7 @@ export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<str
             '- Validation Required has at least one entry marked `- [x]` (or a single checked `- [x] None - <reason>`); unchecked `- [ ]` placeholders block the code_review pre-flight',
             '- (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class (runtime-dependent mechanisms need executed confirmation), not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative',
             '- (Refactors; N/A for features/bug fixes) the spec records a correctness audit of each behavior declared preserved, with one outcome each: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk',
+            '- *Judgment Calls* lists every judgment call the spec makes, each with its strongest alternative and a Decided by value (`Human` or `Author`), or says `None — <reason>',
         ].filter(Boolean).join('\n'),
         phaseCommands: phaseCommands(tasks.map(t => t.taskId), 'spec', 'done'),
     });
