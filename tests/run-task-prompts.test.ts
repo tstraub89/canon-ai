@@ -1255,7 +1255,16 @@ void test('judgment-call guidance stays aligned across spec surfaces', () => {
     assert.ok(specOutput.includes(D));
     assert.ok(specOutput.includes('or says `None — <reason>`'));
     assert.ok(promptSpecRevision(specRevisionState).includes(D));
-    assert.ok(promptQa(baseState).includes('## Judgment Calls to Confirm'));
+    const confirmHeading = '## Judgment Calls to Confirm';
+    assert.ok(promptQa(baseState).includes(confirmHeading));
+    // The QA prompt and the done.md template must name the same section, in the same place.
+    for (const file of ['.canon/templates/done.md', 'templates/.canon/templates/done.md']) {
+        const content = readRepoFile(file);
+        const confirmAt = content.indexOf(`\n${confirmHeading}\n`);
+        const decisionsAt = content.indexOf('\n## Decisions Made\n');
+        assert.ok(confirmAt >= 0, `${file} is missing ${confirmHeading}`);
+        assert.ok(decisionsAt > confirmAt, `${file} must place ${confirmHeading} before ## Decisions Made`);
+    }
     assert.ok(promptSpecReview(baseState).includes(B));
 });
 
