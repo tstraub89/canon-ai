@@ -6,8 +6,9 @@ Tasks:
 {{{taskLines}}}
 
 For each task:
-1. **Use the Write tool** to create tasks/<id>/done.md — plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, decisions made, open questions.
+1. **Use the Write tool** to create tasks/<id>/done.md — plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, judgment calls to confirm, decisions made, open questions.
    ⚠️ CRITICAL: Use the `Write` tool — do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.
+   - **Judgment Calls to Confirm**: add the section immediately before `## Decisions Made`. List every `Author` row from the spec's *Judgment Calls* section (the call, chosen option, and strongest alternative), or write `None.` if there are no such rows or no section.
 2. Read the latest `## Validation Outcomes` table in `tasks/<id>/handoff.md`, including any later iteration `### Re-run validation` tables. If any check's latest result is `human_pending`, include a **Human Verification Required** section in done.md that lists each pending check and its Notes. If none remain, write `None.` in that section. Do not hide `human_pending` checks inside the generic Test Results table.
    - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.
    - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.
@@ -40,6 +41,7 @@ For each task:
    ## Notes for Reviewer
    Any context, caveats, or follow-up items.
    {{/prTemplate}}
+   For each `Author` row in the spec's *Judgment Calls* section, add a short note phrased in the engineer's voice as a call not explicitly confirmed during spec review. With no PR template, put the rows under "Notes for Reviewer". With a PR template, use its closest notes-like section, or append a short `Judgment calls` heading at the end if it has none. If there are no `Author` rows, add nothing to the PR body.
    ⚠️ Write as the human engineer who did the work — not as the AI or tool that produced it ({{toolExamples}}). ✅ e.g. "Fix the pagination off-by-one that dropped the last row." ❌ e.g. "🤖 Generated with Claude Code."
    Skip this step entirely for bundle tasks — per-task bodies are not combined for bundle PRs.
 
@@ -77,9 +79,10 @@ After writing all done.md files:
 2. Files changed
 3. How to test (product-level steps, not code)
 4. Test results table
-5. Decisions made during implementation
-6. Open questions needing human input
-7. Root cause of each blocking finding, reroute, or dropped AC (`## Root Cause`)
+5. Judgment calls to confirm (`## Judgment Calls to Confirm`)
+6. Decisions made during implementation
+7. Open questions needing human input
+8. Root cause of each blocking finding, reroute, or dropped AC (`## Root Cause`)
 
 **Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently — reference the symbol or path; do not restate the value.
 

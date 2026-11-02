@@ -39,6 +39,12 @@ Apply the project's changelog scope (`docs/decisions.md` §"Versioning and relea
 
 - (proposed bullet(s), in the changelog's voice)
 
+## Judgment Calls to Confirm
+
+List every row in the spec's *Judgment Calls* section whose Decided by value is `Author`: the call, the chosen option, and the strongest alternative. These are calls the human did not explicitly make. If there are no `Author` rows, or the spec has no such section, write "None."
+
+- (call — chosen option; alternative: …)
+
 ## Decisions Made
 
 Any choices that were made during implementation that you should be aware of.

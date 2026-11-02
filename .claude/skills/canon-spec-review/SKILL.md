@@ -57,7 +57,7 @@ This angle catches the highest-value class: a spec that assumes something exists
 
 #### Agent C — Spec-quality completeness
 
-Scope: audit against canon's spec-writing rules of thumb. Check these ten items:
+Scope: audit against canon's spec-writing rules of thumb. Check these eleven items:
 (1) **Name effects to DELETE** — when a change supersedes prior code, is it framed as a single replacement, not separate add/remove bullets?
 (2) **Prefer positive or structural assertions** — are load-bearing "must not" constraints backed by a grep AC or positive reframe, not just prose negation?
 (3) **Affected Files** — completeness only: it lists every file the change writes, including generated mirrors and rebuilt outputs, under `### Affected Files` in `## Design` or an amendment section; files only read for context stay out. A missing generated or rebuilt output is BLOCKING. Heading and row format is enforced when the spec is marked done, with a pre-flight backstop before planning and implementation.
@@ -68,6 +68,7 @@ Scope: audit against canon's spec-writing rules of thumb. Check these ten items:
 (8) **Symbols in ACs exist** — for any named function or symbol, has the author verified the return shape matches the spec's assumed data contract?
 (9) **Bug/flake-fix evidence** (N/A for features/refactors) — *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class: a deterministic mechanism may cite a trace with verified trigger values; a runtime-dependent mechanism needs executed confirmation (a throwaway prototype-fix spike or a deterministic forced repro). *Acceptance Criteria* includes a red-first regression-test AC or the explicit environment-bound-and-impractical escape with a named deterministic alternative. Missing or under-rung evidence, or a missing red-first AC without the escape, is BLOCKING.
 (10) **Refactor correctness audit evidence** (N/A for features/bug fixes) — does the spec record, for each behavior it declares preserved, whether it is correct today and one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk? A behavior confirmed correct needs only a one-line record. Missing audit evidence is STRONG, never BLOCKING.
+(11) **Unlisted judgment calls** — A judgment call is a choice between two or more defensible options where the choice changes behavior or scope. A choice a project doc already settles is not a judgment call: follow the doc and cite it. Does the spec make a judgment call that its *Judgment Calls* section does not list? Name the call, a defensible alternative the spec does not record, and the AC or behavior that would differ under it; if you cannot name all three, do not raise it. A missing or empty section is not, by itself, a finding. An unlisted call that meets this bar is STRONG.
 
 Constraints: stay structural/completeness. Don't second-guess shape (Agent A) or independently re-verify symbols against the codebase (Agent B's job). Check (8) audits whether the author verified before writing the AC.
 

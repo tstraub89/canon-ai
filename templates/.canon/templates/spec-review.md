@@ -10,6 +10,7 @@
 - Is the framing right? (Does the spec solve the stated problem, or one adjacent to it?)
 - Is there a materially simpler solution that changes the shape of the work?
 - Is the AC decomposition right? (Compound ACs, missing ACs, ACs solving symptoms not causes?)
+- Does the spec list every judgment call it makes? A judgment call is a choice between two or more defensible options where the choice changes behavior or scope. A choice a project doc already settles is not a judgment call: follow the doc and cite it.
 
 (no concerns / list items)
 
