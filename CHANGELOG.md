@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.17.0] — 2026-11-02
+
 ### Added
 
 - **Claude-only provider mode.** Set `CANON_PROVIDER=claude` and every phase runs on the Claude CLI; Codex is not required. Each task pins its provider at creation (`canon task set <id> provider claude|mixed` switches it). Code review runs an anchored and a spec-blind Claude reviewer, and a failed implement or spec-review run keeps its session so the next `canon run` resumes it. Mixed-provider bundles are refused, and `codex` is not accepted as a provider yet.
