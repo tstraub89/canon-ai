@@ -246,3 +246,11 @@ Teaching a shared section extractor to skip fenced code and HTML comments would 
 *(2026-11-01, source: adopter-bypass-guards)*
 
 A regex over a CLI's flags misses valid invocations and over-matches flag values. Two review rounds found bypasses the spec's AC list did not name: `gh -R owner/repo pr merge` (a global repo flag before the subcommand) skipped the merge rule, and Perl switch clusters were read as in-place edits because any `i` matched. Perl value-taking switches (`-M`, `-F`, `-C`, `-D`) consume their own text, so `-Fi` is a read, while `-lpi` and `-0777pi` are in-place. A fix that narrowed one pattern regressed another. Prevention: before writing a matcher for a CLI, read that CLI's option grammar (its `--help` or parser) and enumerate leading global flags, value-taking short flags, and clustered short flags. Add an allow case and a deny case for each form, and check the flag position as well as the subcommand.
+
+---
+
+### Restore side effects before `die()`, not in a `finally`
+
+*(date 2026-11-01, source: ship-merge-method)*
+
+`die()` calls `process.exit`, so a `try`/`finally` around a call that dies never runs its cleanup. Before this task, `shipTasks` backed up the supervising checkout's telemetry appends and then died on a failed merge, leaving the appends only in a temp backup. The fix is to have the failing step return a result so the caller restores the state and then dies. Canonical example: `mergeOpenPRsAndPull` in `src/orchestrator/main.ts` returns a failed result, and `shipTasks` restores the preserved dirt before it exits. Any new cleanup that must survive a failed irreversible step (a merge, a push) needs the same shape, and the test should seed the state and assert it is restored after a forced failure.

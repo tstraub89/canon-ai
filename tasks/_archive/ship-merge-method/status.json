@@ -1,9 +1,9 @@
 {
   "id": "ship-merge-method",
   "title": "Let --ship merge with the repo's configured method",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-01",
-  "updated": "2026-11-01",
+  "updated": "2026-11-02",
   "branch": "task/ship-merge-method",
   "base_branch": "main",
   "canon": {
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
