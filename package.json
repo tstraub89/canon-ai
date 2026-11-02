@@ -22,7 +22,7 @@
     "sync-templates": "tsx scripts/sync-canon-templates.mjs",
     "sync-templates:check": "tsx scripts/sync-canon-templates.mjs --check",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "lint": "oxlint --type-aware --deny-warnings src tests scripts",
+    "lint": "oxlint --type-aware --deny-warnings src tests scripts .claude/hooks templates",
     "docs-refs-check": "node scripts/docs-refs-check.mjs"
   },
   "devDependencies": {
