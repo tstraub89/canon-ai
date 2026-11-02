@@ -60,7 +60,7 @@ Clean, well-scoped implementation. The pre-flight ordering, tri-state lookup, an
 
 - `src/orchestrator/main.ts:2199-2204` (anchored lens; code-bug-free nit) — the `assertNoOpenPRForTask` hint says to "merge PR #n outside canon (any method)", but `canon-guard` denies squash/default `gh pr merge` on `task/*` PRs. Consider wording that points to re-running `--ship` and names `--rebase`/`--merge` as the hook-permitted manual path.
 - `src/orchestrator/main.ts:4214` (anchored lens) — `docsConfig.ok ? … : 'squash'` fallback is dead because the run already dies on `!docsConfig.ok`; defensive only.
-- `tests/run-task-ship.test.ts:~1450` (anchored lens) — the FETCH_HEAD no-fetch sentinel is asserted only for the disallowed-method scenario, not the AC-4 failure scenarios.
+- `tests/run-task-ship-docs-fold.test.ts` (anchored lens) — the FETCH_HEAD no-fetch sentinel is asserted only for the disallowed-method scenario, not the AC-4 failure scenarios.
 
 #### Spec Gaps
 

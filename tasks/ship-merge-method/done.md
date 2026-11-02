@@ -15,7 +15,7 @@
 - `.claude/hooks/canon-guard.mjs` and `templates/.claude/hooks/canon-guard.mjs` — PR-merge rule now denies every strategy (squash, rebase, merge commit) per the spec Amendment; deny reason explains `ship.merge_method`.
 - `tests/canon-guard.test.ts` — reason-text assertions updated.
 - `tests/docs-freshness.test.ts`, `tests/cli.test.ts` — config parsing and doctor cases.
-- `tests/run-task-ship.test.ts`, `tests/run-task-safety.test.ts` — per-method merge tests, pre-flight and restore tests, fake `gh` extended.
+- `tests/run-task-ship-docs-fold.test.ts`, `tests/run-task-ship-proof.test.ts`, `tests/run-task-ship-helpers.ts`, `tests/run-task-safety-helpers.ts` — per-method merge tests, pre-flight and restore tests, fake `gh` extended.
 - `.canon/README.md` and `templates/.canon/README.md` — documents `ship.merge_method`.
 - `docs/pipeline-orchestrator.md` and `templates/docs/pipeline-orchestrator.md` — merge-strategy note replaced with the setting, pre-flight order, and method-specific behavior.
 - `docs/decisions.md` — new entry: squash stays the default; other methods are a config key, not a flag.

@@ -23,8 +23,8 @@
 | `.claude/hooks/canon-guard.mjs`, `templates/.claude/hooks/canon-guard.mjs` | Updates the task-PR merge reason to direct users to the configured `--ship` method; template mirror synced. |
 | `tests/canon-guard.test.ts` | Updates assertions for the merge reason wording. |
 | `.canon/README.md`, `templates/.canon/README.md` | Documents `ship.merge_method` and its default; template mirror synced. |
-| `tests/run-task-ship.test.ts` | Covers each merge method, pre-flight failures/no-mutation guarantees, already-merged skip, and failed-merge telemetry restoration. Extends the fake `gh`. |
-| `tests/run-task-safety.test.ts` | Extends the second fake `gh` for allowed-method and open-list behavior; updates the stale merge-method comment. |
+| `tests/run-task-ship-docs-fold.test.ts`, `tests/run-task-ship-proof.test.ts`, `tests/run-task-ship-helpers.ts` | Covers each merge method, pre-flight failures/no-mutation guarantees, already-merged skip, and failed-merge telemetry restoration. Extends the fake `gh`. |
+| `tests/run-task-safety-helpers.ts`, `tests/run-task-safety-worktrees-pr.test.ts` | Extends the second fake `gh` for allowed-method and open-list behavior; updates the stale merge-method comment. |
 | `tests/docs-freshness.test.ts` | Covers valid methods, defaults, invalid values, independent validation without docs-freshness config, and unknown keys. |
 | `tests/cli.test.ts` | Covers doctor failure for invalid `ship.merge_method`. |
 | `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documents method selection, pre-flight order, method-specific behavior, and failure recovery; template mirror synced. |
@@ -68,7 +68,7 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 | AC | Status | Notes |
 |---|---|---|
 | AC-1 | Met | `src/orchestrator/docs-freshness.ts` returns the resolved method independently of `docs_freshness`; tests cover valid/invalid values, defaults, non-object `ship`, unknown keys, absent config, and doctor failure. |
-| AC-2 | Met | `tests/run-task-ship.test.ts` asserts exactly one anchored merge-method flag for default squash, rebase, and merge, with config loaded from the ship root. |
+| AC-2 | Met | `tests/run-task-ship-docs-fold.test.ts` asserts exactly one anchored merge-method flag for default squash, rebase, and merge, with config loaded from the ship root. |
 | AC-3 | Met | Pre-flight runs before the fetch that updates local Git state, telemetry preservation, and branch switching; the fixture asserts `FETCH_HEAD`, branch, telemetry, status, and task directory remain unchanged when the method is disallowed. |
 | AC-4 | Met | Listing exit/malformed failures and settings exit/malformed failures fail closed before the fetch. An already-merged/empty-listing test confirms the settings query is skipped. The check remains guarded by `ghAvailable`. |
 | AC-5 | Met | The red-first regression proves a failed open-PR merge restores the telemetry append and removes its backup. Message tests cover re-run guidance and the earlier-PR/base-not-pulled case. |
@@ -96,7 +96,7 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| AC-5 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='failed merge restores preserved telemetry dirt' tests/run-task-ship.test.ts` | `7c8e694ce043b648464c452004dbe93d9ce8e290` | Failed because the telemetry backup still existed after the command exited (`existsSync` was `true`, expected `false`). | The same focused test passed after restoration was added; the full `npm test` suite also passed. |
+| AC-5 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='failed merge restores preserved telemetry dirt' tests/run-task-ship.test.ts` (run at the pre-fix commit; the file was later split, and the test now lives in `tests/run-task-ship-docs-fold.test.ts`) | `7c8e694ce043b648464c452004dbe93d9ce8e290` | Failed because the telemetry backup still existed after the command exited (`existsSync` was `true`, expected `false`). | The same focused test passed after restoration was added; the full `npm test` suite also passed. |
 
 ## Validation Outcomes
 
