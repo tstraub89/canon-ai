@@ -1,0 +1,1 @@
+The changes fix the malformed inline-code span, clarify how revision rounds preserve or reset the Decided by value, and add rendered-prompt assertions for the affected guidance. I found no actionable regressions in the diff.

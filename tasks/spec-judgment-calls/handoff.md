@@ -1,25 +1,27 @@
 # Implementation Handoff: spec-judgment-calls
 
 > Author: implementer | Spec: `tasks/spec-judgment-calls/spec.md` | Plan: `tasks/spec-judgment-calls/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `.canon/templates/spec.md`, `templates/.canon/templates/spec.md` | Added the Judgment Calls section, its table and classification rules, and the checklist item. |
+| `.canon/templates/spec-review.md`, `templates/.canon/templates/spec-review.md` | Added the judgment-call question to the Shape Check. |
+| `.canon/templates/done.md`, `templates/.canon/templates/done.md` | Added Judgment Calls to Confirm before Decisions Made. |
+| `.claude/skills/canon-spec/SKILL.md`, `templates/.claude/skills/canon-spec/SKILL.md` | Added the author rule, self-check, grill counter-case, and spec-gate presentation instruction. |
+| `.claude/skills/canon-spec-review/SKILL.md`, `templates/.claude/skills/canon-spec-review/SKILL.md` | Added Agent C item (11) at STRONG with the concrete review bar. |
+| `.claude/skills/canon-pipeline/SKILL.md`, `templates/.claude/skills/canon-pipeline/SKILL.md` | Added the Author-row reminder at the human spec gate. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Added the judgment-call Shape Check question and canonical definitions. |
+| `src/orchestrator/prompts/index.ts` | Added the Judgment Calls requirement to the spec prompt self-check. |
+| `src/orchestrator/prompts/templates/spec.md` | Added the author obligation and fast-tier notice. |
+| `src/orchestrator/prompts/templates/spec-revision.md` | Added the author obligation and Author reset rule for changed choices. |
+| `src/orchestrator/prompts/templates/spec-review.md` | Added the Blocking check with bar B and the missing-section default. |
+| `src/orchestrator/prompts/templates/qa.md` | Added done.md and PR-body output guidance for Author rows. |
+| `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` | Added canonical-text parity coverage and regenerated the seven specified prompt snapshots. |
+| `dist/orchestrator/run-task.js` | Rebuilt the bundled prompt output. |
 
 ## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
 
 | Field | Source |
 |---|---|
@@ -31,107 +33,104 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Added consistent author, reviewer, gate, and QA guidance for judgment calls while keeping the new check in prompts and skills rather than parser or validation tooling. Canonical definitions D, S, and B are pinned across their required carriers by a regression test.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | The implementation follows the plan's specified surfaces and behavior. The repository's Node test invocation was used for the red-first check because it registers the Markdown loader required by prompt imports. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: Template section | Met | `## Judgment Calls` sits between Decision and Non-Goals in `.canon/templates/spec.md`; the table, Human/Author meanings, approval rule, revision reset, and `None — <reason>` are present. |
+| AC-2: Self-check parity | Met | The template checklist, `canon-spec` skill list, and `promptSpec` self-check all require each call's alternative and Decided by value. |
+| AC-3: Pipeline author rules | Met | The spec prompt carries D/S and the fast-tier-only-check clause; the revision prompt carries D/S and the changed-choice reset without a fast-tier clause. |
+| AC-4: Skill author rule | Met | The `canon-spec` rules of thumb carry the same author obligation, D/S, and fast-tier clause. |
+| AC-5: Grill rule | Met | The recommended-answer and Always take a position instructions remain; the grill also asks for the runner-up's strongest case and what would flip the call. |
+| AC-6: Gate presentation | Met | `canon-spec` asks the author to present Author rows or none; `canon-pipeline` asks the operator to review those rows at the human gate. |
+| AC-7: spec_review check | Met | The pipeline prompt applies B as a Blocking check, keeps the missing/empty-section default explicit, and leaves the silence paragraph unchanged. The template, pipeline guide, and Agent C item (11) carry the matching questions. |
+| AC-8: QA output | Met | `done.md` lists Author rows or `None.` before Decisions Made; single-task PR guidance places rows in a notes-like section or appends a Judgment calls heading. |
+| AC-9: Canonical-text test | Met | The test defines D/S/B once, checks non-empty existing carrier lists and rendered prompts, and enforces contiguous D/S. Base run failed on missing D in `.canon/templates/spec.md`; removing D from `src/orchestrator/prompts/templates/spec-revision.md` also failed with the carrier-specific assertion, and restoring it passed. |
+| AC-10: No tooling enforcement | Met | `grep -rn "Judgment Calls" src/` returned hits only under `src/orchestrator/prompts/`. Existing `tests/task-cli.test.ts:442-452` marks a fixture spec without the section done successfully. |
+| AC-11: Scope bound | Met | The current diff against the task base contains none of the prohibited review, reroute, canon-init, phase, or validation files. |
+| AC-12: Goldens and mirrors | Met | Golden comparison against the task base found exactly the seven named keys. `npm run sync-templates:check` passed. |
 
 ## Edge Cases Considered
 
-- ...
+- A missing or empty Judgment Calls section alone does not produce a finding; an unlisted call still does when it meets all parts of B.
+- A fast-tier task skips `spec_review`, so the author-facing spec prompt and skill make the author's own obligation explicit.
+- A changed chosen option in a revision resets that row to `Author`; approval of the spec as a whole does not mark it `Human`.
+- If no Author rows exist, or the spec has no section, QA writes `None.` in done.md and adds nothing to the PR body.
+- A template override that omits the section remains uncovered by the template, while the review prompt still checks calls meeting B.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- None.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-9 | `node --test --import ./tests/md-loader-register.mjs --import tsx tests/run-task-prompts.test.ts` | `972e468ca4c8dd4e5c0065183deabe4108ce3fc9` | The test reported `.canon/templates/spec.md`: missing canonical definition D. After implementation, temporarily removing D from `src/orchestrator/prompts/templates/spec-revision.md` failed with the expected carrier-specific assertion. | Restoring D made the targeted parity test pass; the full golden-update test run passed. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Completed with exit code 0. |
+| `npm run type-check` | Pass | Completed with exit code 0. |
+| `npm test` (`UPDATE_GOLDENS=1`) | Pass | Full suite: 2,067 passed, 1 skipped, 0 failed. The skipped linked-worktree test reports `.git/` writes are restricted in this sandbox. Golden-key comparison matched exactly the seven AC-12 keys. |
+| `npm run build` | Pass | Rebuilt `dist/orchestrator/run-task.js`; build completed successfully. |
+| `npm run sync-templates:check` | Pass | All canon-managed files are in sync. |
+| `npm run docs-refs-check` | Pass | All refs passed after the handoff was written. |
+| Canonical-text targeted test with D restored | Pass | The focused `judgment-call guidance stays aligned across spec surfaces` test passed. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
----
+## Iteration 2 — addressing review round 1
 
-<!--
-On revision rounds, append below this line:
+### Findings Addressed
 
-## Iteration N — addressing review round N-1
+- Fixed the unclosed inline-code span around `None — <reason>` in the `promptSpec` self-check (review round 1 correctness bug).
+- Clarified revision behavior: a row keeps its `Decided by` value when the chosen option is unchanged, and changing the option resets it to `Author`.
+- Strengthened rendered-prompt assertions for the spec self-check, revision prompt's D guidance, and QA's `Judgment Calls to Confirm` heading.
 
 ### Changes
 
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/prompts/index.ts` | Closed the `None — <reason>` inline-code span in the self-check. |
+| `src/orchestrator/prompts/templates/spec-revision.md` | Made the unchanged-choice `Decided by` preservation rule explicit. |
+| `tests/run-task-prompts.test.ts` | Added rendered-prompt assertions for the self-check code span, revision D guidance, and QA heading. |
+| `tests/run-task-prompts.golden.json` | Regenerated prompt snapshots; the changed keys remain exactly `promptSpec`, `promptSpec_withDocsMap`, `promptSpecRevision`, `promptSpecRevision_withDocsMap`, `promptSpecReview`, `promptQa`, and `promptQa_withTemplate`. |
+| `dist/orchestrator/run-task.js` | Rebuilt the bundled prompt output. |
 
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+### AC Deltas
 
-### Findings addressed
+- AC-2: corrected the self-check item's malformed inline-code span.
+- AC-3: revision guidance now says unchanged choices retain their `Decided by` value; changed choices reset to `Author`.
+- AC-8: the rendered QA prompt is asserted to include `## Judgment Calls to Confirm`.
+- AC-9: rendered-prompt assertions now cover the closed self-check code span and D in `promptSpecRevision`.
+- AC-12: golden comparison against `972e468ca4c8dd4e5c0065183deabe4108ce3fc9` still reports exactly the seven specified keys.
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Re-run validation (only checks that re-ran)
+### Validation Outcomes
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| Focused judgment-call prompt test | Pass | `node --test --test-name-pattern='judgment-call guidance stays aligned across spec surfaces' --import ./tests/md-loader-register.mjs --import tsx tests/run-task-prompts.test.ts` passed. |
+| `npm run lint` | Pass | Exit code 0. |
+| `npm run type-check` | Pass | Exit code 0. |
+| `UPDATE_GOLDENS=1 npm test` | Pass | Full suite: 2,067 passed, 1 skipped, 0 failed; the skipped linked-worktree test reports `.git/` writes are restricted in this sandbox. |
+| `npm run build` | Pass | Rebuilt `dist/orchestrator/run-task.js` successfully. |
+| `npm run docs-refs-check` | Pass | All refs passed after the iteration record was appended. |
+
+### Blockers
+
+- None.
