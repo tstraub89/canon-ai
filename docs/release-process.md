@@ -37,7 +37,7 @@ The version in `package.json` / `.canon/version` / `canon --version` reflects th
 
 ## Cutting a release
 
-When there's enough on `main` to ship, decide the tier (patch / minor / major) per [`decisions.md`](decisions.md) §"Versioning and release policy" — confirm with the product owner for anything but a patch. Then make the release commit on a short-lived branch off `main` and PR it:
+When there's enough on `main` to ship, decide the tier (patch / minor / major) per [`decisions.md`](decisions.md) §"Versioning and release policy" — confirm with the product owner for anything but a patch. Before a minor or major, run `/docs-audit` (a canon-ai-local skill) on `main` and land its fixes first. Then make the release commit on a short-lived branch off `main` and PR it:
 
 ```bash
 git checkout main && git pull origin main && git status --porcelain
