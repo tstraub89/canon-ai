@@ -549,7 +549,7 @@ The `/canon-spec-review` sub-agents now run under one read-only `spec-review-len
 
 ## `--ship` merge method is repo config, squash by default (2026-11)
 
-**Decision**: `ship.merge_method` in [.canon/config.json](.canon/config.json) selects `squash`, `rebase`, or `merge` for `--ship`; an absent setting means `squash`. The method is repository-level config, not a `canon run` flag.
+**Decision**: `ship.merge_method` in [.canon/config.json](../.canon/config.json) selects `squash`, `rebase`, or `merge` for `--ship`; an absent setting means `squash`. The method is repository-level config, not a `canon run` flag.
 
 **Why**: No decision selected squash; it carried over from the 2026-05-07 extraction. One repository has one merge convention, and a repository that allows several methods leaves automatic detection ambiguous. Explicit config makes `--ship` behavior readable from the repository, and the method does not vary per run.
 
