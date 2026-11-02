@@ -153,7 +153,7 @@ The bindings below say what each category means concretely for canon-ai. The uni
 
 CI is configured via `.github/workflows/ci.yml`.
 
-**Triggers**: push to `main`, plus all pull requests (the `pull_request` trigger has no branch filter). The path filters opt out of doc/task paths, then re-include root operator docs (`AGENTS.md`, `CLAUDE.md`). They also re-include canon-owned docs that should still run validation (`docs/pipeline-orchestrator.md`).
+**Triggers**: every pull request (no branch or path filter, so each PR reports the required checks), plus pushes to `main`. Push runs use path filters that opt out of doc/task paths, then re-include root operator docs (`AGENTS.md`, `CLAUDE.md`) and canon-owned docs that should still run validation (`docs/pipeline-orchestrator.md`).
 
 **Jobs**: Node 24.x only. Two jobs run in parallel:
 
@@ -164,7 +164,7 @@ Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-che
 
 **Concurrency**: runs on the same `github.ref` cancel in-flight runs when a new push lands.
 
-**To make CI a hard merge gate**: in GitHub → Settings → Branches, add a protection rule for `main` with required status checks `checks`, `test (shard 1/3)`, `test (shard 2/3)` and `test (shard 3/3)`. Until configured, CI is informational only.
+**Merge gate**: the `main` ruleset requires `checks`, `test (shard 1/3)`, `test (shard 2/3)` and `test (shard 3/3)` to pass before a PR merges (branches need not be up to date). Repository admins bypass the ruleset, which keeps canon's direct pushes to `main` (task scaffolds, archives, changelog bullets) working; for admins a red PR is a warning, not a block, and a bad direct push shows up as a red `main` run after it lands.
 
 ## Cross-Cutting Concerns
 

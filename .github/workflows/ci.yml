@@ -21,21 +21,9 @@ on:
       - '!.agent/**'
       - '!.github/**/*.md'
   pull_request:
-    # No `branches:` filter — CI is cheap for canon and we want coverage on
-    # PRs against every base (main, release/**, future-named integration
-    # branches). Path filters still apply so doc-only PRs skip CI.
-    paths:
-      - '**'
-      - '!AGENTS.md'
-      - '!CLAUDE.md'
-      - 'AGENTS.md'
-      - 'CLAUDE.md'
-      - '!docs/**'
-      - 'docs/pipeline-orchestrator.md'
-      - '!tasks/**'
-      - 'tasks/_templates/**'
-      - '!.agent/**'
-      - '!.github/**/*.md'
+    # No `branches:` or `paths:` filter — CI is cheap for canon, and the main
+    # ruleset requires `checks` and the `test` shards, so every PR must report
+    # them. A path-filtered PR would never report and stay blocked.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
