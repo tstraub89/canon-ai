@@ -164,7 +164,7 @@ This rule applies to mixed mode; see "Claude-provider review independence (2026-
 
 - **Changelog audience and scope**:
   - `CHANGELOG.md` lives on `main` and ships with the published `canon-ai` npm package.
-  - Audience is canon-ai contributors and adopters who want to know what changed between versions they install or upgrade to.
+  - Audience is adopters who want to know what changed between versions they install or upgrade to. Contributor-only changes (CI, linting, tests, release tooling) are left out.
   - Format follows Keep a Changelog conventions.
   - The repo is currently private; the package is published from `main`. A future public release would not change the changelog model — `CHANGELOG.md` stays in-tree.
 

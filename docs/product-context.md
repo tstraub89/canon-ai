@@ -111,7 +111,7 @@ Adopters of canon-ai add their own project-specific delicate domains to this lis
 
 - **Repo visibility**: canon-ai is a public GitHub repository (`tstraub89/canon-ai`). The `canon-ai` npm package ships from `main`.
 - **Branch policy**: canon-ai is **trunk-based** — task work accumulates on `main` (the source of the published `canon-ai` npm package), and a release is cut from `main` via a version-bump commit when there's enough to ship (see `docs/release-process.md`). There are no `dev` or `release/v*` branches.
-- **Changelog**: `CHANGELOG.md` lives on `main` and ships with the package. Audience is canon-ai contributors and adopters who want to know what changed between versions. Format follows Keep a Changelog conventions.
+- **Changelog**: `CHANGELOG.md` lives on `main` and ships with the package. Audience is adopters who want to know what changed between versions; contributor-only changes are left out. Format follows Keep a Changelog conventions.
 - **License**: MIT (`LICENSE` file at repo root).
 
 ## Voice & Tone

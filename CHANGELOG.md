@@ -15,6 +15,7 @@
 
 - **Role and vendor wording follows `CANON_PROVIDER`.** The README, CLI help, `canon doctor`, and the artifact templates name each role's holder: Codex in `mixed` (the default), Claude Code in `claude`.
 - **Error and recovery messages no longer tell you to hand-edit `status.json` or run `gh pr merge --squash`.** They name the canon command instead.
+- **`/canon-init` looks for any linter or formatter config.** Its codebase survey named only ESLint's config file; it now also covers oxlint, Biome, and similar tools.
 
 ### Fixed
 
