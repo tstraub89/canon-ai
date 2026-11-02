@@ -2025,7 +2025,7 @@ function checkTemplates(cwd) {
 }
 function checkCanonVersion(cwd) {
   const versionPath = join(cwd, ".canon", "version");
-  const installedVersion = "3.16.0";
+  const installedVersion = "3.17.0";
   if (!existsSync(versionPath)) {
     return { label: ".canon/version", status: "warn", detail: "missing \u2014 run `canon upgrade`" };
   }
@@ -2569,7 +2569,7 @@ function initCmd(args2) {
 }
 function writeCanonVersion(cwd) {
   const versionPath = join2(cwd, ".canon", "version");
-  const version = "3.16.0";
+  const version = "3.17.0";
   mkdirSync(dirname2(versionPath), { recursive: true });
   writeFileSync(versionPath, version + "\n");
 }
@@ -3649,7 +3649,7 @@ function isInstalledSourcePath(sourcePath) {
   return sourcePath.includes("/node_modules/") || sourcePath.includes("\\node_modules\\") || sourcePath.includes("/_npx/") || sourcePath.includes("\\_npx\\");
 }
 function resolveCanonVersion(explicit) {
-  return explicit ?? "3.16.0" ?? "dev";
+  return explicit ?? "3.17.0" ?? "dev";
 }
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
@@ -5957,7 +5957,7 @@ function currentPinFromManifest(manifest) {
   return "unknown";
 }
 function bakedVersion() {
-  return "3.16.0";
+  return "3.17.0";
 }
 function ownPackageName(pkgDir) {
   try {
@@ -6454,7 +6454,7 @@ function runUpgrade(cwd, pkgDir, options = {}) {
     cutoverWarnings.push(docsRefsCheckRel);
   }
   const versionPath = join5(cwd, ".canon", "version");
-  const newVersion = "3.16.0";
+  const newVersion = "3.17.0";
   const currentVersion = existsSync5(versionPath) ? readFileSync4(versionPath, "utf8").trim() : null;
   if (currentVersion !== newVersion) {
     pending.push({ rel: ".canon/version", projectPath: versionPath, content: newVersion + "\n" });
@@ -7073,7 +7073,7 @@ Global:
 Run 'canon <command> --help' for details.`);
 }
 function printVersion() {
-  console.log("3.16.0");
+  console.log("3.17.0");
 }
 switch (command) {
   case "doctor":
