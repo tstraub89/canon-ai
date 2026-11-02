@@ -4345,6 +4345,8 @@ void test('doctor docs freshness: source, validation, unknown keys, missing docs
         const cases = [
             ['{', 'fail', /config.json.*not valid JSON/],
             [JSON.stringify({ docs_freshness: { protected: [] } }), 'pass', /config.json: 0 protected, 0 mappings, 0 flag-only/],
+            [JSON.stringify({ ship: { merge_method: 'octopus' } }), 'fail', /ship\.merge_method.*"squash", "rebase" or "merge"/],
+            [JSON.stringify({ ship: { typo: true } }), 'warn', /unknown key.*ship\.typo/],
             [JSON.stringify({ typo: true, docs_freshness: { protected: [] } }), 'warn', /unknown key.*typo/],
             [JSON.stringify({ docs_freshness: { protected: ['missing.md'] } }), 'warn', /configured doc missing: missing.md/],
             [JSON.stringify({ docs_freshness: { protected: ['.canon'] } }), 'warn', /configured doc is a directory, not a file: .canon/],

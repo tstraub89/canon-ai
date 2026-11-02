@@ -60,7 +60,7 @@ export const TASK_USAGE = [
     '  set <TASK-ID> <field> <value>              Set task metadata',
     '  reset-spec-review <TASK-ID>                Reset an auto-blocked spec review',
     '  reset-code-review <TASK-ID>                Reset an auto-blocked code review',
-    '  post-merge-sync [<branch>]                 Reconcile local branch after squash merge',
+    '  post-merge-sync [<branch>]                 Reconcile local branch after a PR merge',
     '', "Run 'canon task <subcommand> --help' for details.",
 ].join('\n');
 export const TASK_ARGS: ArgDeclaration = { command: 'task', usage: TASK_USAGE, booleanFlags: [], valueFlags: [] };
@@ -74,7 +74,7 @@ export const TASK_SUBCOMMAND_ARGS: Readonly<Record<string, ArgDeclaration>> = {
     set: { command: 'task set', usage: `Usage: canon task set <TASK-ID> <field> <value>\n\nSettable fields: ${SETTABLE_FIELDS.join(', ')}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2], completion: { positionals: [{ kind: 'taskId' }, { kind: 'settableField' }, { kind: 'fieldValue' }] } },
     'reset-spec-review': { command: 'task reset-spec-review', usage: 'Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.', ...noTaskFlags, completion: { positionals: [{ kind: 'taskId' }] } },
     'reset-code-review': { command: 'task reset-code-review', usage: 'Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.', ...noTaskFlags, completion: { positionals: [{ kind: 'taskId' }] } },
-    'post-merge-sync': { command: 'task post-merge-sync', usage: 'Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.', ...noTaskFlags },
+    'post-merge-sync': { command: 'task post-merge-sync', usage: 'Usage: canon task post-merge-sync [<branch>]\n\nAfter a PR merge lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.', ...noTaskFlags },
 };
 function usage(): string { return TASK_USAGE; }
 
@@ -1402,7 +1402,7 @@ export function taskPostMergeSync(branchArg?: string): void {
             }
         }
         console.log(`→ ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch}, but only via`);
-        console.log('  pipeline telemetry / task-state edits that have been absorbed by squash merges.');
+        console.log('  pipeline telemetry / task-state edits that have been absorbed by PR merges.');
         console.log(`  Hard-resetting to origin/${targetBranch}...`);
         const reset = runGit(['reset', '--hard', `origin/${targetBranch}`], { stdio: 'inherit' });
         if (reset.error || reset.status !== 0) throw new Error(reset.error?.message ?? 'git reset failed');
@@ -1417,14 +1417,14 @@ export function taskPostMergeSync(branchArg?: string): void {
     console.log('');
     console.log('Refusing to hard-reset. Either push these commits to origin');
     console.log(`(\`git push origin ${targetBranch}\`) if they're real work, or rebase manually`);
-    console.log('if they conflict with the squash merge.');
+    console.log('if they conflict with the PR merge.');
     throw new Error('');
 }
 
 /**
  * After a successful post-merge-sync, surface any task that looks "merged but
  * not archived" — i.e., still at human_review locally, but its remote task
- * branch is gone (typical of a squash-merge with --delete-branch). Routes the
+ * branch is gone (typical of a PR merge with --delete-branch). Routes the
  * user to `canon run <id> --ship`, which is the canonical archive command.
  *
  * Intentionally silent on false negatives: we don't fail or warn if we can't

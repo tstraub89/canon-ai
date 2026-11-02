@@ -545,7 +545,13 @@ The `/canon-spec-review` sub-agents now run under one read-only `spec-review-len
 
 **Why**: Every non-full-send task otherwise needed a manual base push before opening its PR. This reverses the non-goal in `tasks/_archive/full-send-tail-push-and-watch/spec.md`, which treated `--full-send` as the only consent to push scaffold commits to base.
 
-**Rule**: The unchanged classifier and the all-or-nothing rule provide the safety: an operator commit prevents the entire push, and the push uses the checked tip SHA. Repos whose main accepts only PRs should use a pushable feature or integration branch as the task's base, or rely on `--allow-divergent-base` and the squash merge. That override tolerates a rejected scaffold push to an existing base; it cannot bypass a missing remote base. `--ship` does not push the scaffold to base.
+**Rule**: The unchanged classifier and the all-or-nothing rule provide the safety: an operator commit prevents the entire push, and the push uses the checked tip SHA. Repos whose main accepts only PRs should use a pushable feature or integration branch as the task's base, or rely on `--allow-divergent-base` and the PR merge. That override tolerates a rejected scaffold push to an existing base; it cannot bypass a missing remote base. `--ship` does not push the scaffold to base.
+
+## `--ship` merge method is repo config, squash by default (2026-11)
+
+**Decision**: `ship.merge_method` in [.canon/config.json](../.canon/config.json) selects `squash`, `rebase`, or `merge` for `--ship`; an absent setting means `squash`. The method is repository-level config, not a `canon run` flag.
+
+**Why**: No decision selected squash; it carried over from the 2026-05-07 extraction. One repository has one merge convention, and a repository that allows several methods leaves automatic detection ambiguous. Explicit config makes `--ship` behavior readable from the repository, and the method does not vary per run.
 
 ## Human reroute once implementation has begun (2026-10)
 
@@ -594,7 +600,7 @@ Provider selection and session safety are extended by "Per-task provider pins an
 
 ## Guard hooks: canon-managed script, recommend-only registration (2026-11)
 
-**What**: Canon ships `.claude/hooks/canon-guard.mjs` as a canon-managed file installed by `canon init` and refreshed by `canon upgrade`. When registered in Claude Code settings, its `PreToolUse` hook redirects three bypasses: direct task `status.json` writes to `canon task` commands or the human; piped `canon run` / `canon watch` and run-log polling to `canon watch`; and squash or default merges of `task/*` PRs to `canon run <id> --ship`. Registration is recommended through the canon-ai README, `canon doctor`, `canon upgrade`, and `/canon-init`; canon never writes `.claude/settings.json` or `settings.local.json`.
+**What**: Canon ships `.claude/hooks/canon-guard.mjs` as a canon-managed file installed by `canon init` and refreshed by `canon upgrade`. When registered in Claude Code settings, its `PreToolUse` hook redirects three bypasses: direct task `status.json` writes to `canon task` commands or the human; piped `canon run` / `canon watch` and run-log polling to `canon watch`; and every `gh pr merge` of a `task/*` PR (any strategy) to `canon run <id> --ship`, which merges with the configured `ship.merge_method`. Registration is recommended through the canon-ai README, `canon doctor`, `canon upgrade`, and `/canon-init`; canon never writes `.claude/settings.json` or `settings.local.json`.
 
 **Why**: Prose rules were repeatedly bypassed. A deny at the tool boundary with the next command in the reason is a cheap, deterministic redirect. This does not change the decision that canon ships zero owned content inside adopter `AGENTS.md` or `CLAUDE.md`: the hook is a canon-owned file under `.claude/hooks/`, while settings remain adopter-owned and registration stays opt-in. An agent-usable override was rejected because it could not apply consistently to Edit/Write tools and would train agents to prefix the bypass.
 

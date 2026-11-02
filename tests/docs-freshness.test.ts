@@ -92,10 +92,53 @@ void test('empty config and unknown-only config resolve defaults and return warn
     assert.ok(unknown.ok);
     assert.deepEqual(unknown.unknownKeys, ['docsFreshness', 'docs_freshness.protected_docs']);
 });
+void test('ship merge method parses independently from docs freshness and defaults to squash', () => {
+    for (const method of ['squash', 'rebase', 'merge'] as const) {
+        for (const includeDocsFreshness of [false, true]) {
+            const raw = JSON.stringify({
+                ship: { merge_method: method },
+                ...(includeDocsFreshness ? { docs_freshness: {} } : {}),
+            });
+            const loaded = parseDocsFreshnessConfig(raw);
+            assert.ok(loaded.ok, raw);
+            assert.equal(loaded.shipMergeMethod, method);
+            assert.deepEqual(loaded.unknownKeys, []);
+        }
+    }
+    for (const raw of ['{}', '{"ship":{}}']) {
+        const loaded = parseDocsFreshnessConfig(raw);
+        assert.ok(loaded.ok);
+        assert.equal(loaded.shipMergeMethod, 'squash');
+    }
+    const noFileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-freshness-ship-default-'));
+    try {
+        const loaded = loadDocsFreshnessConfig(noFileRoot);
+        assert.ok(loaded.ok);
+        assert.equal(loaded.shipMergeMethod, 'squash');
+    } finally { fs.rmSync(noFileRoot, { recursive: true, force: true }); }
+});
+void test('ship merge method rejects invalid values without docs freshness', () => {
+    for (const ship of [{ merge_method: 'octopus' }, { merge_method: 'Squash' }, { merge_method: 1 }, { merge_method: null }, 'x', [], null]) {
+        const loaded = parseDocsFreshnessConfig(JSON.stringify({ ship }));
+        assert.equal(loaded.ok, false, JSON.stringify(ship));
+        if (!loaded.ok) {
+            assert.match(loaded.message, /ship\.merge_method/);
+            assert.match(loaded.message, /"squash", "rebase" or "merge"/);
+        }
+    }
+});
+void test('ship unknown keys use the existing unknown-key warning path', () => {
+    const valid = parseDocsFreshnessConfig('{"ship":{"merge_method":"rebase"}}');
+    assert.ok(valid.ok);
+    assert.deepEqual(valid.unknownKeys, []);
+    const unknown = parseDocsFreshnessConfig('{"ship":{"typo":1}}');
+    assert.ok(unknown.ok);
+    assert.deepEqual(unknown.unknownKeys, ['ship.typo']);
+});
 void test('loader distinguishes absent file, unreadable config, and a later invalid edit', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-freshness-'));
     try {
-        assert.deepEqual(loadDocsFreshnessConfig(root), { ok: true, source: 'defaults', config: null, unknownKeys: [] });
+        assert.deepEqual(loadDocsFreshnessConfig(root), { ok: true, source: 'defaults', config: null, shipMergeMethod: 'squash', unknownKeys: [] });
         fs.mkdirSync(path.join(root, '.canon/config.json'), { recursive: true });
         assert.equal(loadDocsFreshnessConfig(root).ok, false);
         fs.rmdirSync(path.join(root, '.canon/config.json'));

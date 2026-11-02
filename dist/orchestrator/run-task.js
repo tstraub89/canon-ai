@@ -209,7 +209,8 @@ var RUN_USAGE = [
   "                      At --pr/--push, does not apply when origin has no <base> branch.",
   "                      Does NOT bypass the base-drift gate; use --force for that.",
   "                      Independent of --force \u2014 both may be needed to pass both gates.",
-  "  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear",
+  "  --ship              Merge the open PR with the configured method (squash by default; set",
+  "                      ship.merge_method in .canon/config.json), delete its remote branch, tear",
   "                      down the worktree, archive the task dir, and pull the base branch. Run",
   "                      after the PR is approved \u2014 do NOT merge the PR manually first. If you",
   "                      already merged externally, --ship detects the merged state and resumes",
@@ -2231,6 +2232,7 @@ function teardownWorktree(taskId) {
 
 // src/orchestrator/docs-freshness.ts
 var DOCS_FRESHNESS_CONFIG_PATH = ".canon/config.json";
+var SHIP_MERGE_METHODS = ["squash", "rebase", "merge"];
 var DEFAULT_PROTECTED_DOCS = [
   "docs/architecture.md",
   "docs/codebase-map.md",
@@ -2272,8 +2274,23 @@ function parseDocsFreshnessConfig(raw) {
     return invalid(`not valid JSON (${error instanceof Error ? error.message : String(error)}).`);
   }
   if (!isObject(value)) return invalid("the top level must be a JSON object.");
-  const unknownKeys = Object.keys(value).filter((key) => key !== "docs_freshness");
-  if (!Object.hasOwn(value, "docs_freshness")) return { ok: true, source: "file", config: null, unknownKeys };
+  const unknownKeys = Object.keys(value).filter((key) => !["docs_freshness", "ship"].includes(key));
+  let shipMergeMethod = "squash";
+  if (Object.hasOwn(value, "ship")) {
+    const ship = value.ship;
+    if (!isObject(ship)) {
+      return invalid('"ship.merge_method" must be "squash", "rebase" or "merge" ("ship" must be an object).');
+    }
+    unknownKeys.push(...Object.keys(ship).filter((key) => key !== "merge_method").map((key) => `ship.${key}`));
+    if (Object.hasOwn(ship, "merge_method")) {
+      const method = ship.merge_method;
+      if (typeof method !== "string" || !SHIP_MERGE_METHODS.includes(method)) {
+        return invalid('"ship.merge_method" must be "squash", "rebase" or "merge".');
+      }
+      shipMergeMethod = method;
+    }
+  }
+  if (!Object.hasOwn(value, "docs_freshness")) return { ok: true, source: "file", config: null, shipMergeMethod, unknownKeys };
   const docs = value.docs_freshness;
   if (!isObject(docs)) return invalid('"docs_freshness" must be an object.');
   unknownKeys.push(...Object.keys(docs).filter((key) => !["protected", "paths", "flag_only"].includes(key)).map((key) => `docs_freshness.${key}`));
@@ -2304,13 +2321,13 @@ function parseDocsFreshnessConfig(raw) {
     }
     config3.paths = mappings;
   }
-  return { ok: true, source: "file", config: config3, unknownKeys };
+  return { ok: true, source: "file", config: config3, shipMergeMethod, unknownKeys };
 }
 function loadDocsFreshnessConfig(root) {
   try {
     return parseDocsFreshnessConfig(fs8.readFileSync(path7.join(root, DOCS_FRESHNESS_CONFIG_PATH), "utf8"));
   } catch (error) {
-    if (isObject(error) && error.code === "ENOENT") return { ok: true, source: "defaults", config: null, unknownKeys: [] };
+    if (isObject(error) && error.code === "ENOENT") return { ok: true, source: "defaults", config: null, shipMergeMethod: "squash", unknownKeys: [] };
     return invalid(`could not be read (${error instanceof Error ? error.message : String(error)}).`);
   }
 }
@@ -6719,7 +6736,7 @@ var TASK_USAGE = [
   "  set <TASK-ID> <field> <value>              Set task metadata",
   "  reset-spec-review <TASK-ID>                Reset an auto-blocked spec review",
   "  reset-code-review <TASK-ID>                Reset an auto-blocked code review",
-  "  post-merge-sync [<branch>]                 Reconcile local branch after squash merge",
+  "  post-merge-sync [<branch>]                 Reconcile local branch after a PR merge",
   "",
   "Run 'canon task <subcommand> --help' for details."
 ].join("\n");
@@ -6741,7 +6758,7 @@ Verdicts: ${[...VALID_VERDICTS].join(" | ")}
 Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2], completion: { positionals: [{ kind: "taskId" }, { kind: "settableField" }, { kind: "fieldValue" }] } },
   "reset-spec-review": { command: "task reset-spec-review", usage: "Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
   "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
-  "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
+  "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a PR merge lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
 };
 function validateTaskId2(id) {
   if (isValidTaskId(id)) return;
@@ -7926,6 +7943,43 @@ function classifyMergeOutcome(opts) {
   if (opts.exitOk) return "tolerate";
   if (opts.mergeConfirmed) return "tolerate";
   return "fail";
+}
+var MERGE_FLAG = { squash: "--squash", rebase: "--rebase", merge: "--merge" };
+var MERGE_ALLOWED_FIELD = {
+  squash: "squashMergeAllowed",
+  rebase: "rebaseMergeAllowed",
+  merge: "mergeCommitAllowed"
+};
+function parseAllowedMergeMethods(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return { ok: false };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return { ok: false };
+  const record = parsed;
+  const allowed = {};
+  for (const method of Object.keys(MERGE_ALLOWED_FIELD)) {
+    const value = record[MERGE_ALLOWED_FIELD[method]];
+    if (typeof value !== "boolean") return { ok: false };
+    allowed[method] = value;
+  }
+  return { ok: true, allowed };
+}
+function formatMergeFailureMessage(options) {
+  const command = `canon run ${options.taskIds.map(shellQuoteArg).join(" ")} --ship`;
+  const reason = options.stderr.trim() || "unknown error";
+  const lines = [
+    `Failed to merge PR #${options.prNum}: ${reason}`,
+    `No local cleanup ran; fix the cause and re-run \`${command}\`.`
+  ];
+  if (options.mergedEarlier.length > 0) {
+    const earlier = options.mergedEarlier.map((number) => `#${number}`).join(", ");
+    const subject = options.mergedEarlier.length === 1 ? `PR ${earlier} already merged` : `PRs ${earlier} already merged`;
+    lines.push(`${subject}; the base branch has not been pulled yet.`);
+  }
+  return lines.join("\n");
 }
 var die2 = die;
 var info2 = info;
@@ -9418,13 +9472,14 @@ function establishMergeProof(taskId, branchName, localTip, baseBranch, cwd, pref
     reason: `gh CLI is not available; cannot verify merge proof. Re-run --ship when gh is reachable, or delete the local branch manually and re-run to take the no-branch archive path.`
   };
 }
-function assertNoOpenPRForTask(branchName, baseBranch, taskIds) {
+function assertNoOpenPRForTask(branchName, baseBranch, taskIds, mergeMethod) {
   const prNum = findOpenPRNumber(branchName, baseBranch);
   if (prNum !== null) {
     die(
       `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.
   This can happen during gh transient hiccups. Re-run \`canon run ${taskIds.map(shellQuoteArg).join(" ")} --ship\`; if it keeps failing,
-  the human can merge PR #${prNum} manually and re-run --ship.`
+  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks \`gh pr merge\` on task PRs) and re-run --ship, or fix the cause.
+  canon merges with \`ship.merge_method\` (currently ${mergeMethod}); set it to squash, rebase, or merge in .canon/config.json.`
     );
   }
 }
@@ -9432,45 +9487,51 @@ function findOpenPRNumber(branch, baseBranch) {
   if (!ghAvailable) return null;
   return findPRNumberExact(branch, baseBranch, "open");
 }
-function findPRNumberExact(branch, baseBranch, state) {
-  if (!ghAvailable) return null;
+function lookupPRNumberExact(branch, baseBranch, state) {
   const args = ["pr", "list", "--head", branch, "--state", state, "--limit", "1000", "--json", "number,headRefName"];
   if (baseBranch !== null) args.push("--base", baseBranch);
   const result = runCommand("gh", args);
-  if (!result.ok || !result.stdout.trim()) return null;
+  if (!result.ok) return { kind: "unreadable", reason: result.stderr.trim() || "gh pr list exited unsuccessfully" };
+  if (!result.stdout.trim()) return { kind: "unreadable", reason: "gh pr list returned empty output" };
   let parsed;
   try {
     parsed = JSON.parse(result.stdout);
   } catch {
-    return null;
+    return { kind: "unreadable", reason: "gh pr list returned malformed JSON" };
   }
-  if (!Array.isArray(parsed)) return null;
+  if (!Array.isArray(parsed)) return { kind: "unreadable", reason: "gh pr list did not return a JSON array" };
   for (const entry of parsed) {
     if (typeof entry !== "object" || entry === null) continue;
     const headRefName = entry.headRefName;
     const number = entry.number;
-    if (headRefName === branch && typeof number === "number") return number;
+    if (headRefName === branch && typeof number === "number") return { kind: "found", number };
   }
-  return null;
+  return { kind: "none" };
 }
-function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
+function findPRNumberExact(branch, baseBranch, state) {
+  if (!ghAvailable) return null;
+  const result = lookupPRNumberExact(branch, baseBranch, state);
+  return result.kind === "found" ? result.number : null;
+}
+function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId, openPRByBranch, mergeMethod) {
   const branches = [...new Set(taskIds.map((id) => {
     const branchName = branchByTaskId.get(id);
     if (!branchName) die(`Missing pre-switch branch snapshot for task '${id}'.`);
     return branchName;
   }))];
   let anyMerged = false;
+  const mergedEarlier = [];
   for (const branch of branches) {
-    const prNum = findOpenPRNumber(branch, baseBranch);
+    const prNum = openPRByBranch.get(branch);
     if (!prNum) continue;
-    info(`Merging PR #${prNum} (${branch} \u2192 ${baseBranch}) via squash...`);
-    const result = runCommand("gh", ["pr", "merge", String(prNum), "--squash"]);
+    info(`Merging PR #${prNum} (${branch} \u2192 ${baseBranch}) via ${mergeMethod}...`);
+    const result = runCommand("gh", ["pr", "merge", String(prNum), MERGE_FLAG[mergeMethod]]);
     const outcome = classifyMergeOutcome({
       exitOk: result.ok,
       mergeConfirmed: result.ok ? true : isPRMerged(prNum)
     });
     if (outcome === "fail") {
-      die(`Failed to merge PR #${prNum}: ${result.stderr}`);
+      return { failed: { prNum, stderr: result.stderr, mergedEarlier } };
     }
     if (!result.ok) {
       warn(`PR #${prNum} merged, but gh exited non-zero and was tolerated: ${result.stderr.trim() || "unknown error"}`);
@@ -9484,12 +9545,13 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId) {
       assertOriginTaskBranchAbsent(branch, baseBranch, taskIds);
     }
     anyMerged = true;
+    mergedEarlier.push(prNum);
   }
   if (anyMerged) {
     info(`Pulling ${baseBranch}...`);
     git("pull", "origin", baseBranch);
   }
-  return anyMerged;
+  return { merged: anyMerged };
 }
 function runPostMergeHook() {
   const hookPath = path23.join(REPO_ROOT2, ".canon/hooks/post-merge.sh");
@@ -9600,7 +9662,7 @@ function classifyAndPreserveSharedDocDirt() {
   }
   return preserved;
 }
-function shipTasks(taskIds) {
+function shipTasks(taskIds, mergeMethod) {
   const resolveShipCwd = (taskId) => {
     const tasksDirOverride2 = process.env.CANON_TASKS_DIR_OVERRIDE;
     if (tasksDirOverride2) {
@@ -9661,9 +9723,6 @@ function shipTasks(taskIds) {
       die(`--ship aborted for '${taskId}': ${gateResult.reason}`);
     }
   }
-  for (const taskId of taskIds) {
-    assertTaskBranchPushed(taskId, readShipBranchName(taskId));
-  }
   const taskSnapshots = /* @__PURE__ */ new Map();
   const branchByTaskId = /* @__PURE__ */ new Map();
   for (const taskId of taskIds) {
@@ -9681,6 +9740,36 @@ function shipTasks(taskIds) {
     if (!snapshot) die(`Missing pre-switch ship snapshot for task '${taskId}'.`);
     return snapshot;
   };
+  const openPRByBranch = /* @__PURE__ */ new Map();
+  if (ghAvailable) {
+    for (const branch of new Set(branchByTaskId.values())) {
+      const lookup2 = lookupPRNumberExact(branch, baseBranch, "open");
+      if (lookup2.kind === "unreadable") {
+        die(
+          `--ship aborted: could not read the open-PR listing for ${branch}: ${lookup2.reason}. Nothing was changed; re-running \`--ship\` is safe.`
+        );
+      }
+      if (lookup2.kind === "found") openPRByBranch.set(branch, lookup2.number);
+    }
+    if (openPRByBranch.size > 0) {
+      const result = runCommand("gh", ["repo", "view", "--json", Object.values(MERGE_ALLOWED_FIELD).join(",")]);
+      const parsed = result.ok ? parseAllowedMergeMethods(result.stdout) : { ok: false };
+      if (!parsed.ok) {
+        die(
+          `--ship aborted: could not read the repository's merge settings for ${mergeMethod} (\`ship.merge_method\` in \`.canon/config.json\`). Nothing was changed; re-running \`--ship\` is safe.`
+        );
+      }
+      if (!parsed.allowed[mergeMethod]) {
+        const allowed = SHIP_MERGE_METHODS.filter((method) => parsed.allowed[method]);
+        die(
+          `--ship aborted: the repository does not allow configured merge method '${mergeMethod}' (\`ship.merge_method\` in \`.canon/config.json\`). Allowed methods: ${allowed.length ? allowed.join(", ") : "none"}.`
+        );
+      }
+    }
+  }
+  for (const taskId of taskIds) {
+    assertTaskBranchPushed(taskId, readShipBranchName(taskId));
+  }
   let preservedSharedDocDirt = [];
   const restorePreservedSharedDocDirt = () => {
     for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
@@ -9733,10 +9822,21 @@ function shipTasks(taskIds) {
     }
     prefetchedPRHeads.set(prNum, materializePRHead(activeCwd, prNum, prHead) ? prHead : null);
   }
-  const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
+  const mergeResult = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId, openPRByBranch, mergeMethod);
+  if ("failed" in mergeResult) {
+    const failureMessage = formatMergeFailureMessage({ ...mergeResult.failed, taskIds });
+    try {
+      restorePreservedSharedDocDirt();
+    } catch (error) {
+      const backups = preservedSharedDocDirt.map(({ backupPath }) => backupPath).filter((backupPath) => fs25.existsSync(backupPath)).join(", ") || "none";
+      warn2(`Could not restore the telemetry notes set aside for this --ship (${error instanceof Error ? error.message : String(error)}). Backups that may remain: ${backups}`);
+    }
+    die(failureMessage);
+  }
+  const merged = mergeResult.merged;
   if (!merged) {
     assertLocalBaseInSyncWithOrigin(baseBranch);
-    for (const taskId of taskIds) assertNoOpenPRForTask(taskSnapshot(taskId).branch, baseBranch, taskIds);
+    for (const taskId of taskIds) assertNoOpenPRForTask(taskSnapshot(taskId).branch, baseBranch, taskIds, mergeMethod);
     for (const taskId of taskIds) assertOriginTaskBranchAbsent(taskSnapshot(taskId).branch, baseBranch, taskIds);
   }
   runPostMergeHook();
@@ -10824,7 +10924,7 @@ async function main() {
     die2("--pr requires the gh CLI, but it is not available.");
   }
   if (cliArgs.ship) {
-    shipTasks(cliArgs.taskIds);
+    shipTasks(cliArgs.taskIds, docsConfig.ok ? docsConfig.shipMergeMethod : "squash");
     return;
   }
   if (cliArgs.reroute) {

@@ -1,10 +1,10 @@
 {
   "id": "ship-merge-method",
   "title": "Let --ship merge with the repo's configured method",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-01",
   "updated": "2026-11-01",
-  "branch": "",
+  "branch": "task/ship-merge-method",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -66,7 +67,9 @@
   "escalations": [],
   "sessions": {
     "spec_reviewer": "01a195a9-431c-7231-839f-707554cac929",
-    "author": "df16e41e-5b8f-4002-ab8b-cffce78328f1"
+    "author": "df16e41e-5b8f-4002-ab8b-cffce78328f1",
+    "codex": "01a198dd-8bea-7a33-8ad3-015a8e459b71",
+    "claude_review": "1bef1122-ba91-49ed-abba-64640e0bafec"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",

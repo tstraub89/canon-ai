@@ -37,7 +37,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | State I/O and session storage | `src/orchestrator/state.ts` | `status.json`, backend-tagged session writes/clears and use-time compatibility, derived status, task/worktree path helpers; exports `validateStatus`, `readStatusFromPath`, and the `--reroute` admission predicate `isRerouteAdmitted` |
 | Shared run-context resolver | `src/orchestrator/run-context.ts` | Orphan-tolerant task-dir lookup, EPERM-tolerant PID probe, `gatherRunContext()` — consumed by `watch`, `doctor`, `stop`; injectable seams for tests |
 | Git plumbing and porcelain parsing | `src/orchestrator/git.ts` | Branch helpers, commits, porcelain parsers |
-| Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator, pure set resolver, dot-aware glob matcher |
+| Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator (also the `ship.merge_method` setting), pure set resolver, dot-aware glob matcher |
 | Worktree management | `src/orchestrator/worktree.ts` | Worktree lifecycle, cleanup/detect helpers, `findExistingWorktreeForBranch`, and pipeline file registries |
 | Validation gates and diff checks | `src/orchestrator/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
 | `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |
@@ -155,7 +155,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | ESLint flat config | `eslint.config.mjs` | `@typescript-eslint/recommendedTypeChecked`, `projectService: true` |
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `src/`, `tests/`, and the remaining `scripts/**/*.d.ts` tooling declaration |
 | Claude permissions, SessionStart and PreToolUse guard registration | `.claude/settings.json` | Auto-shows in-progress tasks at session start; guard registration is opt-in |
-| Claude Code guard hook | `.claude/hooks/canon-guard.mjs` | PreToolUse deny for `status.json` writes, piped `canon run` / `canon watch` and run-log polling, and squash/default merges of task PRs; registration snippet `RECOMMENDED_GUARD_HOOKS` in `src/cli/commands/doctor.ts` |
+| Claude Code guard hook | `.claude/hooks/canon-guard.mjs` | PreToolUse deny for `status.json` writes, piped `canon run` / `canon watch` and run-log polling, and every `gh pr merge` of a task PR (any strategy); registration snippet `RECOMMENDED_GUARD_HOOKS` in `src/cli/commands/doctor.ts` |
 | Codex sandbox baseline | `src/orchestrator/agents/codex.ts` | `--sandbox workspace-write` passed on fresh exec |
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
 | Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | none needed — task worktrees live in-repo under `.canon/worktrees/`, inside the session cwd |

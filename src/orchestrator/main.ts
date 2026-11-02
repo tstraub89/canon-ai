@@ -1,5 +1,6 @@
 import { AgentSessionError, isAgentSessionError } from './agents/errors.js';
-import { loadDocsFreshnessConfig, requireDocsFreshnessConfig, resolveDocsFreshness, formatUnknownKeysWarning } from './docs-freshness.js';
+import { loadDocsFreshnessConfig, requireDocsFreshnessConfig, resolveDocsFreshness, formatUnknownKeysWarning, SHIP_MERGE_METHODS } from './docs-freshness.js';
+import type { ShipMergeMethod } from './docs-freshness.js';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -105,6 +106,47 @@ export function classifyMergeOutcome(opts: { exitOk: boolean; mergeConfirmed: bo
     if (opts.exitOk) return 'tolerate';
     if (opts.mergeConfirmed) return 'tolerate';
     return 'fail';
+}
+
+const MERGE_FLAG: Record<ShipMergeMethod, string> = { squash: '--squash', rebase: '--rebase', merge: '--merge' };
+const MERGE_ALLOWED_FIELD: Record<ShipMergeMethod, string> = {
+    squash: 'squashMergeAllowed',
+    rebase: 'rebaseMergeAllowed',
+    merge: 'mergeCommitAllowed',
+};
+
+export function parseAllowedMergeMethods(stdout: string): { ok: true; allowed: Record<ShipMergeMethod, boolean> } | { ok: false } {
+    let parsed: unknown;
+    try { parsed = JSON.parse(stdout); } catch { return { ok: false }; }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ok: false };
+    const record = parsed as Record<string, unknown>;
+    const allowed = {} as Record<ShipMergeMethod, boolean>;
+    for (const method of Object.keys(MERGE_ALLOWED_FIELD) as ShipMergeMethod[]) {
+        const value = record[MERGE_ALLOWED_FIELD[method]];
+        if (typeof value !== 'boolean') return { ok: false };
+        allowed[method] = value;
+    }
+    return { ok: true, allowed };
+}
+
+export function formatMergeFailureMessage(options: {
+    prNum: number;
+    stderr: string;
+    mergedEarlier: number[];
+    taskIds: string[];
+}): string {
+    const command = `canon run ${options.taskIds.map(splitState.shellQuoteArg).join(' ')} --ship`;
+    const reason = options.stderr.trim() || 'unknown error';
+    const lines = [
+        `Failed to merge PR #${options.prNum}: ${reason}`,
+        `No local cleanup ran; fix the cause and re-run \`${command}\`.`,
+    ];
+    if (options.mergedEarlier.length > 0) {
+        const earlier = options.mergedEarlier.map(number => `#${number}`).join(', ');
+        const subject = options.mergedEarlier.length === 1 ? `PR ${earlier} already merged` : `PRs ${earlier} already merged`;
+        lines.push(`${subject}; the base branch has not been pulled yet.`);
+    }
+    return lines.join('\n');
 }
 
 // ── Output helpers ─────────────────────────────────────────────────────────
@@ -1838,7 +1880,7 @@ function assertLocalBaseInSyncWithOrigin(baseBranch: string): void {
  * No-op when the local branch doesn't exist (already cleaned up, or worktree mode
  * never used). Treats "origin/<branch> does not exist" as a soft signal: if we just
  * fetched and origin doesn't have the branch, either it was deleted post-merge
- * (fine; a successful prior --ship or PR squash-merge) or it was never pushed (bad).
+ * (fine; a successful prior --ship or PR merge) or it was never pushed (bad).
  * We can't tell which without more state, so we warn and continue rather than block
  * legitimate post-merge re-runs.
  */
@@ -2150,16 +2192,17 @@ function establishMergeProof(
 
 /**
  * Verify there is no open PR for the task's branch. Called after mergeOpenPRsAndPull
- * returned false (no PR was merged this run) — a defensive cross-check against gh
+ * reports that no PR was merged this run — a defensive cross-check against gh
  * transient issues that might have caused findOpenPRNumber to return null spuriously.
  */
-function assertNoOpenPRForTask(branchName: string, baseBranch: string, taskIds: string[]): void {
+function assertNoOpenPRForTask(branchName: string, baseBranch: string, taskIds: string[], mergeMethod: ShipMergeMethod): void {
     const prNum = findOpenPRNumber(branchName, baseBranch);
     if (prNum !== null) {
         splitCli.die(
             `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.\n` +
             `  This can happen during gh transient hiccups. Re-run \`canon run ${taskIds.map(splitState.shellQuoteArg).join(' ')} --ship\`; if it keeps failing,\n` +
-            `  the human can merge PR #${prNum} manually and re-run --ship.`,
+            `  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks \`gh pr merge\` on task PRs) and re-run --ship, or fix the cause.\n` +
+            `  canon merges with \`ship.merge_method\` (currently ${mergeMethod}); set it to squash, rebase, or merge in .canon/config.json.`,
         );
     }
 }
@@ -2177,7 +2220,7 @@ function assertNoOpenPRForTask(branchName: string, baseBranch: string, taskIds: 
  *
  * `baseBranch` is required (not nullable like findPRNumberExact's param):
  * every caller in this file operates on a specific task with a known
- * base, and skipping the base filter risks squash-merging a wrong-base
+ * base, and skipping the base filter risks merging a wrong-base
  * PR into the wrong base (e.g., an operator-opened PR targeting `main`
  * when canon expects `dev`). The symmetric base-filter in
  * findMergedPRNumber was added for exactly this reason on PR #77;
@@ -2202,26 +2245,34 @@ function findOpenPRNumber(branch: string, baseBranch: string): number | null {
  * dozens of open task/* PRs). At 1000+ similarly-prefixed PRs the prefix
  * match is the bigger problem. (Codex P2 on release PR #82.)
  */
-function findPRNumberExact(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): number | null {
-    if (!ghAvailable) return null;
+type ExactPRLookup = { kind: 'found'; number: number } | { kind: 'none' } | { kind: 'unreadable'; reason: string };
+
+function lookupPRNumberExact(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): ExactPRLookup {
     const args = ['pr', 'list', '--head', branch, '--state', state, '--limit', '1000', '--json', 'number,headRefName'];
     if (baseBranch !== null) args.push('--base', baseBranch);
     const result = splitGit.runCommand('gh', args);
-    if (!result.ok || !result.stdout.trim()) return null;
+    if (!result.ok) return { kind: 'unreadable', reason: result.stderr.trim() || 'gh pr list exited unsuccessfully' };
+    if (!result.stdout.trim()) return { kind: 'unreadable', reason: 'gh pr list returned empty output' };
     let parsed: unknown;
-    try { parsed = JSON.parse(result.stdout); } catch { return null; }
-    if (!Array.isArray(parsed)) return null;
+    try { parsed = JSON.parse(result.stdout); } catch { return { kind: 'unreadable', reason: 'gh pr list returned malformed JSON' }; }
+    if (!Array.isArray(parsed)) return { kind: 'unreadable', reason: 'gh pr list did not return a JSON array' };
     for (const entry of parsed) {
         if (typeof entry !== 'object' || entry === null) continue;
         const headRefName = (entry as { headRefName?: unknown }).headRefName;
         const number = (entry as { number?: unknown }).number;
-        if (headRefName === branch && typeof number === 'number') return number;
+        if (headRefName === branch && typeof number === 'number') return { kind: 'found', number };
     }
-    return null;
+    return { kind: 'none' };
+}
+
+function findPRNumberExact(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): number | null {
+    if (!ghAvailable) return null;
+    const result = lookupPRNumberExact(branch, baseBranch, state);
+    return result.kind === 'found' ? result.number : null;
 }
 
 /**
- * For each task branch with an open PR: squash-merge it, delete the remote
+ * For each task branch with an open PR: merge it using the configured method, delete the remote
  * branch, then pull the base branch. Returns true if any PR was merged.
  *
  * The merge does not pass `--delete-branch`: gh would also try to delete the
@@ -2232,7 +2283,9 @@ function mergeOpenPRsAndPull(
     taskIds: string[],
     baseBranch: string,
     branchByTaskId: ReadonlyMap<string, string>,
-): boolean {
+    openPRByBranch: ReadonlyMap<string, number>,
+    mergeMethod: ShipMergeMethod,
+): { merged: boolean } | { failed: { prNum: number; stderr: string; mergedEarlier: number[] } } {
     // Deduplicate branch names (bundles share one branch)
     const branches = [...new Set(taskIds.map(id => {
         const branchName = branchByTaskId.get(id);
@@ -2240,17 +2293,18 @@ function mergeOpenPRsAndPull(
         return branchName;
     }))];
     let anyMerged = false;
+    const mergedEarlier: number[] = [];
     for (const branch of branches) {
-        const prNum = findOpenPRNumber(branch, baseBranch);
+        const prNum = openPRByBranch.get(branch);
         if (!prNum) continue;
-        splitCli.info(`Merging PR #${prNum} (${branch} → ${baseBranch}) via squash...`);
-        const result = splitGit.runCommand('gh', ['pr', 'merge', String(prNum), '--squash']);
+        splitCli.info(`Merging PR #${prNum} (${branch} → ${baseBranch}) via ${mergeMethod}...`);
+        const result = splitGit.runCommand('gh', ['pr', 'merge', String(prNum), MERGE_FLAG[mergeMethod]]);
         const outcome = classifyMergeOutcome({
             exitOk: result.ok,
             mergeConfirmed: result.ok ? true : isPRMerged(prNum),
         });
         if (outcome === 'fail') {
-            splitCli.die(`Failed to merge PR #${prNum}: ${result.stderr}`);
+            return { failed: { prNum, stderr: result.stderr, mergedEarlier } };
         }
         if (!result.ok) {
             splitCli.warn(`PR #${prNum} merged, but gh exited non-zero and was tolerated: ${result.stderr.trim() || 'unknown error'}`);
@@ -2267,12 +2321,13 @@ function mergeOpenPRsAndPull(
             assertOriginTaskBranchAbsent(branch, baseBranch, taskIds);
         }
         anyMerged = true;
+        mergedEarlier.push(prNum);
     }
     if (anyMerged) {
         splitCli.info(`Pulling ${baseBranch}...`);
         splitGit.git('pull', 'origin', baseBranch);
     }
-    return anyMerged;
+    return { merged: anyMerged };
 }
 
 /**
@@ -2421,7 +2476,7 @@ export function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
     return preserved;
 }
 
-function shipTasks(taskIds: string[]): void {
+function shipTasks(taskIds: string[], mergeMethod: ShipMergeMethod): void {
     const resolveShipCwd = (taskId: string): string => {
         const tasksDirOverride = process.env.CANON_TASKS_DIR_OVERRIDE;
         if (tasksDirOverride) {
@@ -2511,24 +2566,11 @@ function shipTasks(taskIds: string[]): void {
         }
     }
 
-    // Pre-flight: every local task branch with unpushed commits is a hard abort.
-    // --ship later tears down the worktree and deletes the local branch; if local
-    // has commits not on origin, those commits are lost forever (gone from any
-    // ref the user can reach). Also covers the case where the PR-merge step below
-    // silently misses a PR for any reason — instead of trusting that flow alone,
-    // we independently verify origin has the local work before any destruction.
-    // Surfaced 2026-05-07 via canon-on-canon dogfood: the iteration-3 rename fix
-    // was committed locally, never pushed, then --ship deleted the branch; only
-    // the dangling commits in `git fsck` survived (with a partial subset of files).
-    for (const taskId of taskIds) {
-        assertTaskBranchPushed(taskId, readShipBranchName(taskId));
-    }
-
     // Snapshot only the values that are stable across the upcoming branch
     // switch + merge: `branch` is set at task creation, `worktree` likewise.
     // We deliberately do NOT capture the full `status` object — using a
     // pre-switch snapshot for the archive-loop write would overwrite fields
-    // that landed via the squash merge if local was behind origin (Codex P2
+    // that landed via the PR merge if local was behind origin (Codex P2
     // on PR #103). The archive loop reads status fresh post-merge instead.
     type ShipTaskSnapshot = { branch: string; worktree: boolean };
     const taskSnapshots = new Map<string, ShipTaskSnapshot>();
@@ -2548,6 +2590,53 @@ function shipTasks(taskIds: string[]): void {
         if (!snapshot) splitCli.die(`Missing pre-switch ship snapshot for task '${taskId}'.`);
         return snapshot;
     };
+
+    // Read-only pre-flight before shared-doc preservation, branch switches, or any merge.
+    const openPRByBranch = new Map<string, number>();
+    if (ghAvailable) {
+        for (const branch of new Set(branchByTaskId.values())) {
+            const lookup = lookupPRNumberExact(branch, baseBranch, 'open');
+            if (lookup.kind === 'unreadable') {
+                splitCli.die(
+                    `--ship aborted: could not read the open-PR listing for ${branch}: ${lookup.reason}. ` +
+                    'Nothing was changed; re-running `--ship` is safe.',
+                );
+            }
+            if (lookup.kind === 'found') openPRByBranch.set(branch, lookup.number);
+        }
+        if (openPRByBranch.size > 0) {
+            const result = splitGit.runCommand('gh', ['repo', 'view', '--json', Object.values(MERGE_ALLOWED_FIELD).join(',')]);
+            const parsed = result.ok ? parseAllowedMergeMethods(result.stdout) : { ok: false as const };
+            if (!parsed.ok) {
+                splitCli.die(
+                    `--ship aborted: could not read the repository's merge settings for ${mergeMethod} ` +
+                    `(\`ship.merge_method\` in \`.canon/config.json\`). Nothing was changed; re-running \`--ship\` is safe.`,
+                );
+            }
+            if (!parsed.allowed[mergeMethod]) {
+                const allowed = SHIP_MERGE_METHODS.filter(method => parsed.allowed[method]);
+                splitCli.die(
+                    `--ship aborted: the repository does not allow configured merge method '${mergeMethod}' ` +
+                    `(\`ship.merge_method\` in \`.canon/config.json\`). Allowed methods: ${allowed.length ? allowed.join(', ') : 'none'}.`,
+                );
+            }
+        }
+    }
+
+    // Refreshing origin/task refs below is a local git-state change. Keep it
+    // after the method pre-flight so rejected or unreadable settings stop first.
+    // This remains ahead of telemetry preservation, branch switching, and any
+    // operation that could delete task work.
+    // --ship later tears down the worktree and deletes the local branch; if local
+    // has commits not on origin, those commits are lost forever (gone from any
+    // ref the user can reach). The refresh also covers a PR-merge lookup that
+    // misses an open PR: verify origin has the local work before destruction.
+    // Surfaced 2026-05-07 via canon-on-canon dogfood: the iteration-3 rename fix
+    // was committed locally, never pushed, then --ship deleted the branch; only
+    // the dangling commits in `git fsck` survived (with a partial subset of files).
+    for (const taskId of taskIds) {
+        assertTaskBranchPushed(taskId, readShipBranchName(taskId));
+    }
 
     // Worktree-mode tasks should leave no REPO_ROOT task-state mirror dirty under
     // the worktree-canonical model. Classify shared-doc dirt before merge-time
@@ -2618,7 +2707,18 @@ function shipTasks(taskIds: string[]): void {
         prefetchedPRHeads.set(prNum, materializePRHead(activeCwd, prNum, prHead) ? prHead : null);
     }
     // Merge open PRs and pull; if none found, assert the base is already in sync.
-    const merged = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId);
+    const mergeResult = mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId, openPRByBranch, mergeMethod);
+    if ('failed' in mergeResult) {
+        const failureMessage = formatMergeFailureMessage({ ...mergeResult.failed, taskIds });
+        try {
+            restorePreservedSharedDocDirt();
+        } catch (error) {
+            const backups = preservedSharedDocDirt.map(({ backupPath }) => backupPath).filter(backupPath => fs.existsSync(backupPath)).join(', ') || 'none';
+            warn(`Could not restore the telemetry notes set aside for this --ship (${error instanceof Error ? error.message : String(error)}). Backups that may remain: ${backups}`);
+        }
+        splitCli.die(failureMessage);
+    }
+    const merged = mergeResult.merged;
     if (!merged) {
         // No PR was merged this run. That can mean either (a) PR was merged earlier
         // and the remote branch was already cleaned up by `--delete-branch` on the
@@ -2630,7 +2730,7 @@ function shipTasks(taskIds: string[]): void {
         // commits and leaving the base branch missing the task's content.
         // Independent verification here prevents that class of silent failure.
         assertLocalBaseInSyncWithOrigin(baseBranch);
-        for (const taskId of taskIds) assertNoOpenPRForTask(taskSnapshot(taskId).branch, baseBranch, taskIds);
+        for (const taskId of taskIds) assertNoOpenPRForTask(taskSnapshot(taskId).branch, baseBranch, taskIds, mergeMethod);
         // After mergeOpenPRsAndPull(), a successful merge would have invoked
         // --delete-branch and removed origin/task/<id>. If that branch still exists
         // here, no merge ever happened for it — abort. The earlier
@@ -2706,7 +2806,7 @@ function shipTasks(taskIds: string[]): void {
             //
             // By this point in `shipTasks`, `mergeOpenPRsAndPull` has succeeded
             // so the task's `status.json` exists either in the worktree (not yet
-            // torn down) or in REPO_ROOT (squashed-in on base) — both routes that
+            // torn down) or in REPO_ROOT (merged into base) — both routes that
             // `resolveTaskCwd` already handles. The original ENOENT this PR
             // exists to fix is bypassed because the merge has completed.
             const status = readShipStatus(taskId);
@@ -2771,7 +2871,7 @@ function shipTasks(taskIds: string[]): void {
         die(`--ship aborted: failed to commit archive changes: ${archiveCommit.stderr}${hint}`);
     }
 
-    // Delete local task branches (safe to force — squash-merged).
+    // Delete local task branches (safe to force — merge proof was established above).
     for (const branch of localBranchesToDelete) {
         const result = splitGit.gitSafe('branch', '-D', branch);
         if (result.ok) info(`Deleted local branch ${branch}.`);
@@ -4118,7 +4218,7 @@ export async function main(): Promise<void> {
     }
 
     if (cliArgs.ship) {
-        shipTasks(cliArgs.taskIds);
+        shipTasks(cliArgs.taskIds, docsConfig.ok ? docsConfig.shipMergeMethod : 'squash');
         return;
     }
 

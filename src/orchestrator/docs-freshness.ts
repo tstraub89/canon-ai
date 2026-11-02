@@ -4,6 +4,8 @@ import { die } from './cli.js';
 import { PIPELINE_TELEMETRY_FILES } from './worktree.js';
 
 export const DOCS_FRESHNESS_CONFIG_PATH = '.canon/config.json';
+export const SHIP_MERGE_METHODS = ['squash', 'rebase', 'merge'] as const;
+export type ShipMergeMethod = (typeof SHIP_MERGE_METHODS)[number];
 export const DEFAULT_PROTECTED_DOCS = [
     'docs/architecture.md', 'docs/codebase-map.md', 'docs/patterns.md',
     'docs/product-context.md', 'docs/decisions.md',
@@ -15,7 +17,7 @@ export interface DocsFreshnessConfig {
     flagOnly?: readonly string[];
 }
 export type DocsFreshnessLoad =
-    | { ok: true; source: 'defaults' | 'file'; config: DocsFreshnessConfig | null; unknownKeys: string[] }
+    | { ok: true; source: 'defaults' | 'file'; config: DocsFreshnessConfig | null; shipMergeMethod: ShipMergeMethod; unknownKeys: string[] }
     | { ok: false; message: string };
 
 function invalid(problem: string): DocsFreshnessLoad {
@@ -53,8 +55,23 @@ export function parseDocsFreshnessConfig(raw: string): DocsFreshnessLoad {
     try { value = JSON.parse(raw); }
     catch (error) { return invalid(`not valid JSON (${error instanceof Error ? error.message : String(error)}).`); }
     if (!isObject(value)) return invalid('the top level must be a JSON object.');
-    const unknownKeys = Object.keys(value).filter(key => key !== 'docs_freshness');
-    if (!Object.hasOwn(value, 'docs_freshness')) return { ok: true, source: 'file', config: null, unknownKeys };
+    const unknownKeys = Object.keys(value).filter(key => !['docs_freshness', 'ship'].includes(key));
+    let shipMergeMethod: ShipMergeMethod = 'squash';
+    if (Object.hasOwn(value, 'ship')) {
+        const ship = value.ship;
+        if (!isObject(ship)) {
+            return invalid('"ship.merge_method" must be "squash", "rebase" or "merge" ("ship" must be an object).');
+        }
+        unknownKeys.push(...Object.keys(ship).filter(key => key !== 'merge_method').map(key => `ship.${key}`));
+        if (Object.hasOwn(ship, 'merge_method')) {
+            const method = ship.merge_method;
+            if (typeof method !== 'string' || !SHIP_MERGE_METHODS.includes(method as ShipMergeMethod)) {
+                return invalid('"ship.merge_method" must be "squash", "rebase" or "merge".');
+            }
+            shipMergeMethod = method as ShipMergeMethod;
+        }
+    }
+    if (!Object.hasOwn(value, 'docs_freshness')) return { ok: true, source: 'file', config: null, shipMergeMethod, unknownKeys };
     const docs = value.docs_freshness;
     if (!isObject(docs)) return invalid('"docs_freshness" must be an object.');
     unknownKeys.push(...Object.keys(docs).filter(key => !['protected', 'paths', 'flag_only'].includes(key)).map(key => `docs_freshness.${key}`));
@@ -85,13 +102,13 @@ export function parseDocsFreshnessConfig(raw: string): DocsFreshnessLoad {
         }
         config.paths = mappings;
     }
-    return { ok: true, source: 'file', config, unknownKeys };
+    return { ok: true, source: 'file', config, shipMergeMethod, unknownKeys };
 }
 
 export function loadDocsFreshnessConfig(root: string): DocsFreshnessLoad {
     try { return parseDocsFreshnessConfig(fs.readFileSync(path.join(root, DOCS_FRESHNESS_CONFIG_PATH), 'utf8')); }
     catch (error) {
-        if (isObject(error) && error.code === 'ENOENT') return { ok: true, source: 'defaults', config: null, unknownKeys: [] };
+        if (isObject(error) && error.code === 'ENOENT') return { ok: true, source: 'defaults', config: null, shipMergeMethod: 'squash', unknownKeys: [] };
         return invalid(`could not be read (${error instanceof Error ? error.message : String(error)}).`);
     }
 }

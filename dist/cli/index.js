@@ -147,7 +147,8 @@ var RUN_USAGE = [
   "                      At --pr/--push, does not apply when origin has no <base> branch.",
   "                      Does NOT bypass the base-drift gate; use --force for that.",
   "                      Independent of --force \u2014 both may be needed to pass both gates.",
-  "  --ship              Merge the open PR (gh pr merge --squash), delete its remote branch, tear",
+  "  --ship              Merge the open PR with the configured method (squash by default; set",
+  "                      ship.merge_method in .canon/config.json), delete its remote branch, tear",
   "                      down the worktree, archive the task dir, and pull the base branch. Run",
   "                      after the PR is approved \u2014 do NOT merge the PR manually first. If you",
   "                      already merged externally, --ship detects the merged state and resumes",
@@ -708,6 +709,7 @@ var PIPELINE_TELEMETRY_FILES = [
 
 // src/orchestrator/docs-freshness.ts
 var DOCS_FRESHNESS_CONFIG_PATH = ".canon/config.json";
+var SHIP_MERGE_METHODS = ["squash", "rebase", "merge"];
 var DEFAULT_PROTECTED_DOCS = [
   "docs/architecture.md",
   "docs/codebase-map.md",
@@ -749,8 +751,23 @@ function parseDocsFreshnessConfig(raw) {
     return invalid(`not valid JSON (${error instanceof Error ? error.message : String(error)}).`);
   }
   if (!isObject(value)) return invalid("the top level must be a JSON object.");
-  const unknownKeys = Object.keys(value).filter((key) => key !== "docs_freshness");
-  if (!Object.hasOwn(value, "docs_freshness")) return { ok: true, source: "file", config: null, unknownKeys };
+  const unknownKeys = Object.keys(value).filter((key) => !["docs_freshness", "ship"].includes(key));
+  let shipMergeMethod = "squash";
+  if (Object.hasOwn(value, "ship")) {
+    const ship = value.ship;
+    if (!isObject(ship)) {
+      return invalid('"ship.merge_method" must be "squash", "rebase" or "merge" ("ship" must be an object).');
+    }
+    unknownKeys.push(...Object.keys(ship).filter((key) => key !== "merge_method").map((key) => `ship.${key}`));
+    if (Object.hasOwn(ship, "merge_method")) {
+      const method = ship.merge_method;
+      if (typeof method !== "string" || !SHIP_MERGE_METHODS.includes(method)) {
+        return invalid('"ship.merge_method" must be "squash", "rebase" or "merge".');
+      }
+      shipMergeMethod = method;
+    }
+  }
+  if (!Object.hasOwn(value, "docs_freshness")) return { ok: true, source: "file", config: null, shipMergeMethod, unknownKeys };
   const docs = value.docs_freshness;
   if (!isObject(docs)) return invalid('"docs_freshness" must be an object.');
   unknownKeys.push(...Object.keys(docs).filter((key) => !["protected", "paths", "flag_only"].includes(key)).map((key) => `docs_freshness.${key}`));
@@ -781,13 +798,13 @@ function parseDocsFreshnessConfig(raw) {
     }
     config3.paths = mappings;
   }
-  return { ok: true, source: "file", config: config3, unknownKeys };
+  return { ok: true, source: "file", config: config3, shipMergeMethod, unknownKeys };
 }
 function loadDocsFreshnessConfig(root) {
   try {
     return parseDocsFreshnessConfig(fs8.readFileSync(path7.join(root, DOCS_FRESHNESS_CONFIG_PATH), "utf8"));
   } catch (error) {
-    if (isObject(error) && error.code === "ENOENT") return { ok: true, source: "defaults", config: null, unknownKeys: [] };
+    if (isObject(error) && error.code === "ENOENT") return { ok: true, source: "defaults", config: null, shipMergeMethod: "squash", unknownKeys: [] };
     return invalid(`could not be read (${error instanceof Error ? error.message : String(error)}).`);
   }
 }
@@ -4454,7 +4471,7 @@ var TASK_USAGE = [
   "  set <TASK-ID> <field> <value>              Set task metadata",
   "  reset-spec-review <TASK-ID>                Reset an auto-blocked spec review",
   "  reset-code-review <TASK-ID>                Reset an auto-blocked code review",
-  "  post-merge-sync [<branch>]                 Reconcile local branch after squash merge",
+  "  post-merge-sync [<branch>]                 Reconcile local branch after a PR merge",
   "",
   "Run 'canon task <subcommand> --help' for details."
 ].join("\n");
@@ -4477,7 +4494,7 @@ Verdicts: ${[...VALID_VERDICTS].join(" | ")}
 Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon task phase/reset/accept; immutable fields are refused.`, ...noTaskFlags, freeTextSlots: [2], completion: { positionals: [{ kind: "taskId" }, { kind: "settableField" }, { kind: "fieldValue" }] } },
   "reset-spec-review": { command: "task reset-spec-review", usage: "Usage: canon task reset-spec-review <TASK-ID>\n\nClear state for a fresh spec-review pass after an auto-block. Zeroes iterations, clears verdict, archives prior spec-review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
   "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
-  "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a squash-merge PR lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
+  "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a PR merge lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
 };
 function usage() {
   return TASK_USAGE;
@@ -5432,7 +5449,7 @@ function taskPostMergeSync(branchArg) {
       }
     }
     console.log(`\u2192 ${targetBranch} is ${ahead} commit(s) ahead of origin/${targetBranch}, but only via`);
-    console.log("  pipeline telemetry / task-state edits that have been absorbed by squash merges.");
+    console.log("  pipeline telemetry / task-state edits that have been absorbed by PR merges.");
     console.log(`  Hard-resetting to origin/${targetBranch}...`);
     const reset = runGit(["reset", "--hard", `origin/${targetBranch}`], { stdio: "inherit" });
     if (reset.error || reset.status !== 0) throw new Error(reset.error?.message ?? "git reset failed");
@@ -5446,7 +5463,7 @@ function taskPostMergeSync(branchArg) {
   console.log("");
   console.log("Refusing to hard-reset. Either push these commits to origin");
   console.log(`(\`git push origin ${targetBranch}\`) if they're real work, or rebase manually`);
-  console.log("if they conflict with the squash merge.");
+  console.log("if they conflict with the PR merge.");
   throw new Error("");
 }
 function nudgeShippableTasks() {

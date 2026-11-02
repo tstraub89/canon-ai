@@ -9,7 +9,7 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 - Findings keep clustering in the same mechanism (try a size bump before another loop)
 - Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 - `--ship` refuses: wrong phase
-- Local branch diverged from origin after a squash-merge
+- Local branch diverged from origin after a squash or rebase merge
 - Parallel task PRs conflict on `tasks/<id>/*` at merge time
 - Agent auth 401 mid-pipeline
 
@@ -88,7 +88,7 @@ Fix: raise the cap and resume (see "Auto-block" above for the command). Never re
 
 ## `--ship` refuses: wrong phase
 
-Cause: squash-merge captured a pre-progression `status.json`.
+Cause: a squash or rebase merge captured a pre-progression `status.json`.
 
 Fix (artifacts are on disk — this is paperwork). Use the verdict actually checked in `tasks/<task-id>/review.md` (`approved` or `approved_with_nits`) — the phase gate rejects a verdict argument that doesn't match the artifact:
 ```bash
@@ -97,9 +97,9 @@ canon task phase <task-id> qa done
 canon run <task-id> --ship
 ```
 
-## Local branch diverged from origin after a squash-merge
+## Local branch diverged from origin after a squash or rebase merge
 
-Symptom: `git pull --ff-only origin main` fails. Local has pipeline-telemetry commits that the squash-merge absorbed.
+Symptom: `git pull --ff-only origin main` fails. Local has pipeline-telemetry commits that the squash or rebase merge absorbed.
 
 Fix:
 ```bash

@@ -186,9 +186,11 @@ void test('--ship proves pinned merged PR, fast-forwards, archives, and deletes 
         const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
             prNumbers: { [taskId]: 101 },
         });
+        const ghLog = path.join(dir, 'gh.log');
         assert.equal(fs.readFileSync(path.join(localDir, 'tasks', taskId, '.pr-number'), 'utf8'), '101');
 
         const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_LOG: ghLog,
             FAKE_GH_PR_STATE: 'MERGED',
             FAKE_GH_BASE_REF_NAME: 'main',
             FAKE_GH_HEAD_REF_OID: tip,
@@ -196,6 +198,7 @@ void test('--ship proves pinned merged PR, fast-forwards, archives, and deletes 
 
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /fast-forwarding/);
+        assert.doesNotMatch(fs.readFileSync(ghLog, 'utf8'), /repo view/);
         expectArchivedAndDeleted(localDir, taskId, branch);
     });
 });

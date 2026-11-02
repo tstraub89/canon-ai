@@ -7,7 +7,6 @@ import path from 'node:path';
 
 const WRAPPERS = new Set(['env', 'command', 'exec', 'time', 'nohup', 'npx', 'sudo']);
 const GH_VALUE_FLAGS = new Set(['-t', '--subject', '-b', '--body', '-F', '--body-file', '-A', '--author-email', '--match-head-commit']);
-const GH_VALUE_SHORTS = new Set(['t', 'b', 'F', 'A', 'R']);
 const PERL_VALUE_FLAGS = new Set(['M', 'm', 'I', 'e', 'E', 'F', 'x', 'V']);
 const PERL_DEBUG_FLAGS = new Set(['p', 's', 'l', 't', 'o', 'c', 'P', 'm', 'f', 'r', 'x', 'u', 'U', 'X', 'D', 'S', 'T', 'R', 'J', 'v', 'C', 'A', 'q', 'M', 'B', 'L', 'i', 'y']);
 const GH_TIMEOUT_MS = Number(process.env.CANON_GUARD_GH_TIMEOUT_MS) || 3000;
@@ -80,11 +79,14 @@ function foregroundReason(flag) {
 function mergeReason(taskId, taskIds = [taskId]) {
     const ids = taskIds.join(' ');
     const subject = taskIds.length > 1 ? `bundle tasks ${taskIds.join(', ')}` : 'the task';
-    return `canon guard: this PR's head is task/${taskId}, a canon task branch. Squash and default merges of task PRs go through ` +
-        `\`canon run ${ids} --ship\`, which squash-merges and then archives ${subject} and cleans up the worktree and branches. ` +
+    return `canon guard: this PR's head is task/${taskId}, a canon task branch. Merge task PRs through ` +
+        `\`canon run ${ids} --ship\`, which merges with the project's configured method and then archives ${subject} ` +
+        `and cleans up the worktree and branches; \`gh pr merge\` is blocked for every method. ` +
+        `To merge by rebase or merge commit instead of the default squash, set \`ship.merge_method\` to ` +
+        `\`"rebase"\` or \`"merge"\` in \`.canon/config.json\` (for example \`{ "ship": { "merge_method": "rebase" } }\`), ` +
+        `then ship. ` +
         `--ship archives only the task ids it is given, so name every task whose status.json records this branch. ` +
-        `If the project merges with rebase or merge commits, rerun this command with --rebase or --merge, then run ` +
-        `\`canon run ${ids} --ship\` for cleanup. Retry with \`canon run ${ids} --ship\`.`;
+        `Retry with \`canon run ${ids} --ship\`.`;
 }
 
 function isTaskStatusFile(filePath, cwd) {
@@ -519,7 +521,6 @@ function mergeRule(commands, cwd) {
         if (!parsed) continue;
 
         const { args, repo: globalRepo } = parsed;
-        if (hasNonSquashStrategy(args)) continue;
 
         const { ref, repo } = findPRReference(args, globalRepo);
         const head = ref === null ? lookupCurrentBranch(cwd) : lookupPRHead(ref, repo, cwd);
@@ -606,33 +607,6 @@ function parseGhRepoOption(args, index) {
     if (arg.startsWith('-R=')) return { nextIndex: index + 1, repo: arg.slice(3) };
     if (arg.startsWith('-R') && arg.length > 2) return { nextIndex: index + 1, repo: arg.slice(2) };
     return null;
-}
-
-// Walks gh's merge options the way gh parses them, so a flag value such as a
-// `-t -dr` title is never read as a strategy and `-rt subject` still counts.
-function hasNonSquashStrategy(args) {
-    for (let index = 0; index < args.length; index += 1) {
-        const arg = args[index];
-        if (/^--(rebase|merge)(=true)?$/.test(arg)) return true;
-        if (GH_VALUE_FLAGS.has(arg) || arg === '-R' || arg === '--repo') {
-            index += 1;
-            continue;
-        }
-        if (arg.startsWith('--') || !arg.startsWith('-')) continue;
-        const letters = arg.slice(1);
-        let booleans = '';
-        for (const [position, letter] of [...letters].entries()) {
-            if (GH_VALUE_SHORTS.has(letter)) {
-                if (position === letters.length - 1) index += 1;
-                break;
-            }
-            if (!'dsrm'.includes(letter)) break;
-            booleans += letter;
-        }
-        // gh refuses a cluster that mixes squash with another strategy.
-        if (/[rm]/.test(booleans) && !booleans.includes('s')) return true;
-    }
-    return false;
 }
 
 function findPRReference(args, initialRepo = null) {

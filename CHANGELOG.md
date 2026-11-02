@@ -7,7 +7,7 @@
 ### Added
 
 - **Claude-only provider mode.** Set `CANON_PROVIDER=claude` and every phase runs on the Claude CLI; Codex is not required. Each task pins its provider at creation (`canon task set <id> provider claude|mixed` switches it). Code review runs an anchored and a spec-blind Claude reviewer, and a failed implement or spec-review run keeps its session so the next `canon run` resumes it. Mixed-provider bundles are refused, and `codex` is not accepted as a provider yet.
-- **An opt-in Claude Code guard hook.** `canon init` installs `.claude/hooks/canon-guard.mjs`; canon never writes your Claude settings. Once registered, it refuses direct `status.json` edits, piping `canon run` or `canon watch`, polling the run log, and squash-merging a task PR with `gh pr merge`, and names the canon command to use instead. `canon doctor` warns when the hook is installed but not fully registered.
+- **An opt-in Claude Code guard hook.** `canon init` installs `.claude/hooks/canon-guard.mjs`; canon never writes your Claude settings. Once registered, it refuses direct `status.json` edits, piping `canon run` or `canon watch`, polling the run log, and merging a task PR with `gh pr merge` by any method (squash, rebase, or merge commit), and names the canon command to use instead. `canon doctor` warns when the hook is installed but not fully registered.
 - **Malformed Affected Files tables are rejected.** `canon task phase <id> spec done` lists every problem with its row and fix, and plan and implement auto-block on a malformed table before any agent runs (`--force` overrides with a warning).
 
 ### Changed

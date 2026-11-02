@@ -276,7 +276,7 @@ void test('monitoring rule denies piped run/watch and log polling but allows nei
     }
 });
 
-void test('task PR merge rule denies squash/default and allows other strategies and lookup failures', async t => {
+void test('task PR merge rule denies every merge strategy and allows lookup failures', async t => {
     await withCanonRepo(async fixture => {
         const binDir = path.join(fixture.root, 'bin');
         makeGhShim(binDir);
@@ -294,12 +294,23 @@ void test('task PR merge rule denies squash/default and allows other strategies 
             ['strategy-looking title after a clustered value flag', 'gh pr merge 12 -dt -r'],
             ['cluster mixing squash with rebase', 'gh pr merge 12 -sr'],
             ['rebase explicitly disabled', 'gh pr merge 12 --rebase=false'],
+            ['rebase merge', 'gh pr merge 12 --rebase'],
+            ['merge commit', 'gh pr merge 12 --merge'],
+            ['delete branch plus rebase short cluster', 'gh pr merge 12 -dr'],
+            ['delete branch plus merge-commit short cluster', 'gh pr merge 12 -dm'],
+            ['rebase cluster ending in a value flag', 'gh pr merge 12 -rt subject'],
+            ['explicit boolean rebase', 'gh pr merge 12 --rebase=true'],
+            ['explicit boolean merge commit', 'gh pr merge 12 --merge=true'],
+            ['merge-commit cluster ending in a value flag', 'gh pr merge 12 -mb body'],
         ] as const) {
             await t.test(name, () => {
                 const result = run(command);
                 assert.equal(result.denied, true, result.reason || command);
                 assert.match(result.reason, /canon run foo --ship/);
-                assert.match(result.reason, /--rebase or --merge/);
+                assert.match(result.reason, /ship\.merge_method/);
+                assert.match(result.reason, /"rebase"/);
+                assert.match(result.reason, /\.canon\/config\.json/);
+                assert.doesNotMatch(result.reason, /merge outside canon/);
             });
         }
         const repoFlagCases = [
@@ -350,14 +361,6 @@ void test('task PR merge rule denies squash/default and allows other strategies 
             assert.match(result.reason, /task\/foo/);
         });
         for (const [name, command] of [
-            ['rebase merge', 'gh pr merge 12 --rebase'],
-            ['merge commit', 'gh pr merge 12 --merge'],
-            ['delete branch plus rebase short cluster', 'gh pr merge 12 -dr'],
-            ['delete branch plus merge-commit short cluster', 'gh pr merge 12 -dm'],
-            ['rebase cluster ending in a value flag', 'gh pr merge 12 -rt subject'],
-            ['explicit boolean rebase', 'gh pr merge 12 --rebase=true'],
-            ['explicit boolean merge commit', 'gh pr merge 12 --merge=true'],
-            ['merge-commit cluster ending in a value flag', 'gh pr merge 12 -mb body'],
             ['non-task PR', 'gh pr merge 13 --squash'],
             ['create PR', 'gh pr create --head task/foo --title x'],
             ['edit PR', 'gh pr edit 12 --body x'],

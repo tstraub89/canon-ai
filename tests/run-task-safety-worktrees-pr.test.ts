@@ -1313,7 +1313,7 @@ void test('main --pr does NOT match an open PR on the wrong base (Codex P2 on re
     // open PR against an unrelated base ('release/v9') must not be picked
     // up as the "existing PR" for idempotent --pr. Before the fix,
     // findOpenPRNumber ignored --base entirely; the wrong-base PR's URL
-    // would be printed and (worse) mergeOpenPRsAndPull would squash-merge
+    // would be printed and (worse) mergeOpenPRsAndPull would merge it
     // it into the wrong base on --ship.
     withTempDir('run-task-wrong-base-pr-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
