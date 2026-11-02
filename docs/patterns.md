@@ -25,6 +25,7 @@ This is the project's hard-won implementation knowledge. It has two main section
 | Renaming or deleting tracked files | Rename-heavy tasks pass three path-reconciliation gates | `src/orchestrator/validation.ts`, `src/orchestrator/git.ts`, `scripts/docs-refs-check.mjs` |
 | Parsing git output, staging paths, or shelling out to npm | Git and npm behavior that specs get wrong | `src/orchestrator/git.ts`, `src/orchestrator/env.ts`, `src/cli/commands/update.ts` |
 | Editing operator-facing text (help, errors, banners, prompt lines) | Operator-facing text is often rendered by independently-authored duplicates | `src/cli/index.ts`, `src/orchestrator/cli.ts`, `src/orchestrator/prompts/index.ts` + `templates/` |
+| Adding or changing tests | Slow Test Discipline | `tests/run-task-*.test.ts`, `tests/*-helpers.ts` |
 
 ## Patterns
 
@@ -98,6 +99,16 @@ Suppressing lint or type errors is a last resort, not a convenience escape hatch
 **Lint suppression comments**: never add a suppression without a same-line justification explaining why the rule is wrong for this specific case. If you can't write that justification, the rule is right and the code needs to change.
 
 **`any` / dynamic typing**: `any` propagates silently — once it enters a call chain, every downstream consumer loses type safety. When the shape is truly unknown at the boundary (CLI subprocess output, JSON parsing of agent artifacts), type as `unknown` and narrow explicitly.
+
+### Slow Test Discipline
+
+**When to apply**: Adding a test that spawns a subprocess (`runNodeInline`, `runMainInline`, a fake agent CLI) or builds a real git fixture. Each costs 1–3s; unit tests cost milliseconds.
+
+**The pattern**:
+- Before adding one, find the existing test with the same fixture and scenario. If the new case checks the same outcome, add its assertions there, or add a row to a table-driven loop. Add a new test only for a distinct outcome: a different branch, error, or recovery path.
+- Keep each test file well under a minute. `node --test` runs a file's tests serially and CI shards by whole file, so one large file sets its shard's wall time. Split by scenario, with shared fixtures in a `*-helpers.ts` module.
+
+**Anti-pattern**: copying a neighbouring test and changing one assertion when the copy runs the same code path.
 
 ## Known Pitfalls
 
