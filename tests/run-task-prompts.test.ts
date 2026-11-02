@@ -1251,7 +1251,11 @@ void test('judgment-call guidance stays aligned across spec surfaces', () => {
         assert.ok(readRepoFile(file).includes(B), `${file} is missing canonical review bar B`);
     }
 
-    assert.ok(promptSpec(baseState).includes(D));
+    const specOutput = promptSpec(baseState);
+    assert.ok(specOutput.includes(D));
+    assert.ok(specOutput.includes('or says `None — <reason>`'));
+    assert.ok(promptSpecRevision(specRevisionState).includes(D));
+    assert.ok(promptQa(baseState).includes('## Judgment Calls to Confirm'));
     assert.ok(promptSpecReview(baseState).includes(B));
 });
 
