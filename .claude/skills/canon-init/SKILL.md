@@ -1,6 +1,6 @@
 ---
 name: canon-init
-description: Use right after running `canon init` on a fresh repo, or when canon's scaffold docs (`docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`) still contain `<placeholder>` text or "TBD" stubs. Triggers on "fill in the canon docs", "set up canon for this project", "go from scaffold to real content", or explicit `/canon-init` invocation. Run once per project lifecycle.
+description: Use right after running `canon init` on a fresh repo, or when canon's scaffold docs (`docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`) still contain `TODO[canon]` markers, `<placeholder>` text or "TBD" stubs. Triggers on "fill in the canon docs", "set up canon for this project", "go from scaffold to real content", or explicit `/canon-init` invocation. Run once per project lifecycle.
 argument-hint: ""
 allowed-tools: Read Glob Grep Write Edit Agent Bash(git add *) Bash(git status *)
 effort: high
@@ -103,7 +103,7 @@ Topics to cover — skip any that the codebase already answered:
 
 ## Phase 4 — Write the docs
 
-Write every stub doc with real, project-specific content. No placeholders. No "TBD". If you realize you're missing information for a section mid-write, ask one targeted question before writing that section.
+Write every stub doc with real, project-specific content. No placeholders. No "TBD". Delete every `TODO[canon]` blockquote and example row once its section is filled. If you realize you're missing information for a section mid-write, ask one targeted question before writing that section.
 
 For the section-by-section breakdown of what goes in each doc — `docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`, and `docs/lessons-learned.md` — see [write-guide.md](write-guide.md). Read it once at the start of Phase 4, then write each doc.
 

@@ -53,7 +53,7 @@ npm install --package-lock-only
 echo "X.Y.Z" > .canon/version
 
 # Rebuild dist/. The version string is baked into multiple call sites across
-# dist/. CI runs `git diff --exit-code -- dist/` on every PR to main and
+# dist/. CI runs `git diff --exit-code -- dist/` on every PR and every code push to main and
 # fails until dist matches the new version — rebuild AS PART OF the bump commit,
 # atomic with package.json. Don't skip even if dist looks clean locally: a fresh
 # tsup run may reorder output and a later PR will produce the spurious diff anyway.
@@ -75,7 +75,7 @@ git push -u origin release-vX.Y.Z
 gh pr create --base main --head release-vX.Y.Z --title "Release vX.Y.Z: <short theme>"
 ```
 
-**Wait for both**: (a) CI green on the PR, (b) Codex's post-PR review. CI green alone is not sufficient — the 1.1.3 picocolors bug was caught by Codex's PR review, not CI. Then **squash-merge** (repo settings enforce squash-only; the short-lived branch is deleted on merge). A release commit is operator-authored, so `gh pr merge --squash --delete-branch` is fine here.
+**Wait for both**: (a) CI green on the PR (the `checks` job and all three `test` shards, which the `main` ruleset requires; `npm audit --omit=dev` can fail a release PR on a new advisory with no code change), (b) Codex's post-PR review. CI green alone is not sufficient — the 1.1.3 picocolors bug was caught by Codex's PR review, not CI. Then **squash-merge** (repo settings enforce squash-only; the short-lived branch is deleted on merge). A release commit is operator-authored, so `gh pr merge --squash --delete-branch` is fine here.
 
 **Auto-release fires** on the push to `main`: it tags + publishes `vX.Y.Z` from the version-bump commit. No manual `git tag` / `gh release create`, and no "reset" step — the short-lived branch is gone and the next release branches fresh from `main`.
 
@@ -86,7 +86,7 @@ Implemented in `.github/workflows/auto-release.yml`. Triggered on push to `main`
 1. Reads `package.json` `version` and checks whether the GitHub release for `v<version>` already exists — if so, every later step is skipped, including the lockfile check, so ordinary pushes to `main` finish fast. Gating on the release object (not the tag) lets a prior run that created the tag but failed before publishing the release self-heal on the next push. This idempotency is also what makes accumulating further task commits on `main` after a bump safe: subsequent pushes don't re-release an already-published version.
 2. Verifies lockfile integrity (regenerates `package-lock.json` via `npm install --package-lock-only` and diffs against the checked-in file). Catches stale lockfiles + the 1.1.3 picocolors-style transitive corruption.
 3. Identifies the version-bump commit by blaming `package.json`'s `version` line. This SHA — not the SHA of whatever push triggered the run — is what gets tagged. A self-heal retry on a later push still tags the correct commit.
-4. Asserts `.canon/version` matches `package.json` `version` in the bump SHA's tree — fails the workflow if they diverge.
+4. Asserts `.canon/version` matches `package.json` `version` in the bump SHA's tree — fails the workflow if they diverge, if `.canon/version` is missing there, or if the version is not plain `X.Y.Z` semver.
 5. Extracts the `## [<version>] — <date>` CHANGELOG block **from the bump SHA's tree** (not the workflow's checkout) — when scope lands after the bump commit, the workflow's HEAD describes a different tree than the SHA being tagged, and reading from HEAD produces release notes that advertise fixes not in the tagged code (the 1.3.0 mismatch). Fails if the block is missing or still has the `unreleased` placeholder.
 6. Creates the tag on the version-bump commit with `git tag` + `git push` (or reuses it if it already exists there; refuses if it exists elsewhere), then creates the GitHub release against that tag with the extracted body. Tag-first because `gh release create --target <sha>` is rejected for `GITHUB_TOKEN` whenever `<sha>` is not the branch head (cli/cli#9514) — the exact shape of a self-heal push.
 7. **Post-publish verification**: re-extracts the CHANGELOG block from the published tag and diffs it byte-for-byte against the uploaded release notes. Fails if they disagree (regression guard for the 1.3.0 tag/notes mismatch).

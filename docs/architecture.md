@@ -22,14 +22,14 @@ Anything that would change if you migrated to a different framework belongs here
 - **Language**: TypeScript (strict, ES2022, ESM) — `tsconfig.json`
 - **Runtime**: Node.js 24.x — `package.json` `engines`
 - **Test runner**: Node built-in `node --test` with `tsx` import hook for direct TS execution
-- **Type checker**: `tsc --noEmit` for fast validation; `tsup` (via `npm run build`) emits the published CLI bundle in `dist/` from `src/`. Orchestrator scripts run directly via `tsx` without a build step.
+- **Type checker**: `tsc --noEmit` for fast validation; `tsup` (via `npm run build`) emits the published CLI bundle in `dist/` from `src/`. `canon run` spawns the built `dist/orchestrator/run-task.js`; `tsx` is used for tests and `scripts/sync-canon-templates.mjs`.
 - **Task management CLI**: `canon task` subcommands (`src/task/index.ts`) for status.json updates and phase transitions
 - **External CLIs the orchestrator drives**: `claude` (Anthropic CLI), `codex` (OpenAI Codex CLI, mixed mode), `git`, `gh`
 - **Persistence**: filesystem only — `status.json` files and markdown artifacts under `tasks/<id>/`
 - **State machine**: `status.json` per task, with phases as nodes (see `.canon/templates/status.json`)
 - **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
-- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests, runs on Node 24.x. A `checks` job runs `npm ci`, a lockfile regenerate-and-diff check, `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`, the shell-completion tests (after installing `zsh fish tcsh` via apt) and the packaging smoke tests; in parallel, three `test` shards each run a third of the remaining `npm test` files.
+- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests, runs on Node 24.x. A `checks` job runs `npm ci`, a lockfile regenerate-and-diff check, a CHANGELOG date check (PRs to `main` only), `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`, the shell-completion tests (after installing `zsh fish tcsh` via apt), a committed-`dist/` freshness check and the git-install smoke test; in parallel, three `test` shards each run a third of the remaining `npm test` files.
 
 ## High-Level Architecture
 
@@ -157,10 +157,12 @@ CI is configured via `.github/workflows/ci.yml`.
 
 **Jobs**: Node 24.x only. Two jobs run in parallel:
 
-- `checks` runs in order: `npm ci` → lockfile integrity (`npm install --package-lock-only` must leave `package-lock.json` unchanged) → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm run sync-templates:check` → `npm run docs-refs-check` → `npm run build` → apt install `zsh fish tcsh` → `tests/completion.test.ts` → committed-`dist/` freshness check → git-install smoke test.
+- `checks` runs in order: `npm ci` → lockfile integrity (`npm install --package-lock-only` must leave `package-lock.json` unchanged) → (PRs to `main` only) CHANGELOG date check (`CHANGELOG.md` must have a dated `## [<package.json version>]` block) → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm run sync-templates:check` → `npm run docs-refs-check` → `npm run build` → apt install `zsh fish tcsh` → `tests/completion.test.ts` → committed-`dist/` freshness check → git-install smoke test.
 - `test (shard N/3)` is a three-way matrix: `npm ci` → `npm run build` → the `npm test` command with `--test-shard=N/3` over every test file except `tests/completion.test.ts`. Node assigns whole test files to shards and runs a file's tests serially, so a very large test file becomes its shard's critical path; split it rather than letting it grow.
 
 Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-check` to their own GitHub Actions workflow file. canon does not ship `.github/workflows/` files to adopter repos, but `canon upgrade` does ship `scripts/docs-refs-check.mjs`, the adopter-owned `scripts/docs-refs-config.mjs` scaffold, and the npm script entry that invokes the checker.
+
+**Other workflows**: `.github/workflows/docs-refs-check.yml` runs `npm run docs-refs-check` on every PR that touches `AGENTS.md`, `CLAUDE.md`, `docs/**`, `tasks/**` or `.github/**/*.md`, whatever the base branch. `.github/workflows/auto-release.yml` cuts the tag, GitHub release and npm publish on push to `main` (see `docs/release-process.md`).
 
 **Concurrency**: runs on the same `github.ref` cancel in-flight runs when a new push lands.
 

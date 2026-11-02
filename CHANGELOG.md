@@ -16,6 +16,8 @@
 - **Role and vendor wording follows `CANON_PROVIDER`.** The README, CLI help, `canon doctor`, and the artifact templates name each role's holder: Codex in `mixed` (the default), Claude Code in `claude`.
 - **Error and recovery messages no longer tell you to hand-edit `status.json` or run `gh pr merge --squash`.** They name the canon command instead.
 - **`/canon-init` looks for any linter or formatter config.** Its codebase survey named only ESLint's config file; it now also covers oxlint, Biome, and similar tools.
+- **The spec self-check covers three more items.** The spec template's quality checklist and the pipeline's spec prompt now also ask for replacement framing ("replace X with Y; X must not exist after"), Non-Goals backed by a scope AC, and grep-verified symbols, matching `/canon-spec`. `/canon-spec` now also says Validation Required needs a checked `[x]` entry.
+- **The shipped skills and pipeline guide match current behavior.** `/canon-pipeline` covers `canon watch`, `canon stop`, and the `spec_gap` and `canon task accept` recovery paths. `/canon-changelog` finds archived tasks and canon's own commit subjects. `/canon-init` handles `TODO[canon]` markers and the versioning-policy entry. `/canon-inline-review` says what to do in `claude` mode. `docs/pipeline-orchestrator.md` documents `CANON_STOP_WAIT_MS`, `CANON_SKIP_PHASE_GATE`, `CANON_PATTERNS_MD_PATH`, and `canon upgrade`, `update` and `completion`.
 
 ### Fixed
 

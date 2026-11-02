@@ -56,7 +56,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 1. Install the package: `npm install -D canon-ai` (or global). This pulls in the `canon` CLI plus bundled templates, skills, and orchestrator scripts.
 2. Run `canon init` in the target repo. It scaffolds `.canon/` (templates, README), the canon-owned skills, and the `docs/` stubs with `TODO[canon]` markers.
 3. From Claude Code, run `/canon-init`. The skill grills on project context (stack, domain, delicate surfaces, voice) and fills the scaffolded `docs/` corpus with project-specific content. If you want agent files, generate them separately with the built-in `/init` in Claude Code or Codex.
-4. Create the first task: `canon task new <id> <title>`. Write a spec conversationally with Claude (or invoke `/spec`).
+4. Create the first task: `canon task new <id> <title>`. Write a spec conversationally with Claude (or invoke `/canon-spec`).
 5. Run the pipeline: `canon run <id>`.
 
 > Run `canon upgrade` periodically to sync canon-owned files (templates, skills, `.canon/README.md`) to the installed package version. Project-owned overrides in `tasks/_templates/` are preserved.
@@ -66,8 +66,8 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 1. **Human + conversational Claude** discuss the problem. Claude grills on shape and decomposition (full tier) or asks clarifying questions (fast tier), then writes `spec.md` in `tasks/<id>/`.
 2. **Human reads spec, approves at the spec gate.** Claude invokes `canon run <id>`.
 3. **Pipeline runs**: spec_review (full tier) → plan → implement → code_review → qa, with auto-reroute on `changes_requested` and auto-block on loop-cap hits.
-4. **Human tests against `done.md`**, marks `phases.human_review.status = "done"`.
-5. Task artifacts get archived; lessons distilled into `lessons-learned.md`.
+4. **Human tests against `done.md`**, then marks the phase done with `canon task phase <id> human_review done` (pending checks in `done.md` must be completed or waived with an `Acknowledged:` line).
+5. Open the draft PR with `canon run <id> --pr`; after approval, `canon run <id> --ship` merges it, tears down the worktree and archives the task. Lessons are distilled into `lessons-learned.md`.
 
 ### Flow 3: Recover from a stuck pipeline
 
@@ -94,7 +94,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 Canon's general definition: `delicate: true` is for surfaces where a regression has **unbounded blast radius** — an undetected bug is materially harder to recover from than a normal bug. The list below names the canon-ai-specific surfaces where this applies.
 
-- **Orchestrator phase-routing logic** (`src/orchestrator/main.ts`: `PHASE_ORDER`, `runPhase()`, `checkAndRoute()`). A bug here corrupts every task that runs after the change lands.
+- **Orchestrator phase-routing logic** (`src/orchestrator/types.ts`: `PHASE_ORDER`; `src/orchestrator/main.ts`: `runPhase()`, `checkAndRoute()`). A bug here corrupts every task that runs after the change lands.
 - **Auto-commit logic** (`autoCommitCode()`). Wrong files staged, missed handoff entries, or bypassed checks lead to invisible regressions in code review.
 - **Validation gates** (`validateHandoff()`, future pre-flight checks). A buggy gate either rejects valid work (blocking everyone) or accepts invalid work (silent corruption).
 - **Pipeline policy** (`src/lib/pipeline-policy.ts`). Wrong tier, wrong model, wrong loop cap — these affect cost, latency, and reliability for every subsequent task.
@@ -126,6 +126,6 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 
 - **Current state**: canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task, watch, stop, completion), bundled Claude Code skills, template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Development is trunk-based on `main`; releases are cut from `main` (see `docs/release-process.md`). Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the hardening pass.
 - **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon"). Mixed-mode cold review includes a cold-Codex third lens: `code_review` runs an orchestrator-owned `codex review` step followed by a Claude foreman over anchored-Claude, cold-Claude, and cold-Codex inputs. Claude mode uses the two Claude lenses only.
-- **Future**: Additional agent-CLI adapters (Gemini, Aider). Public release decision.
+- **Future**: Additional agent-CLI adapters (Gemini, Aider).
 
 (See `docs/pipeline-orchestrator.md` for orchestrator mechanics.)

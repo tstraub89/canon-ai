@@ -17,13 +17,13 @@ This is the project's hard-won implementation knowledge. It has two main section
 
 | Area touched | Section in this file | Key files |
 |---|---|---|
-| Adding/changing a pipeline phase | Phase Addition Discipline | `src/orchestrator/main.ts`, `src/lib/pipeline-policy.ts`, `src/task/index.ts`, `.canon/templates/status.json` |
+| Adding/changing a pipeline phase | Phase Addition Discipline | `src/orchestrator/types.ts`, `src/orchestrator/main.ts`, `src/lib/pipeline-policy.ts`, `src/task/index.ts`, `.canon/templates/status.json` |
 | Modifying `pipeline-policy.ts` | Pure Policy + Test Discipline | `src/lib/pipeline-policy.ts`, `tests/pipeline-policy.test.ts` |
-| Modifying `status.json` shape | State Schema Discipline | `.canon/templates/status.json`, parsers in `src/orchestrator/state.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts`, `src/task/index.ts` (`VALID_PHASES`, `assertValidPhase()`) |
+| Modifying `status.json` shape | State Schema Discipline | `.canon/templates/status.json`, parsers in `src/orchestrator/state.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts`, `src/task/index.ts` (`assertValidPhase()`) |
 | Adding/modifying a validation gate | Validation Gate Discipline | `src/orchestrator/validation.ts`, `src/orchestrator/git.ts`, `src/orchestrator/main.ts`, `tests/run-task-validation.test.ts` |
 | Lint / TS suppression / `any` | Lint & Type Safety Policy | `src/orchestrator/prompts/templates/implement.md` |
 | Renaming or deleting tracked files | Rename-heavy tasks pass three path-reconciliation gates | `src/orchestrator/validation.ts`, `src/orchestrator/git.ts`, `scripts/docs-refs-check.mjs` |
-| Parsing git output, staging paths, or shelling out to npm | Git and npm behavior that specs get wrong | `src/orchestrator/git.ts`, `src/orchestrator/env.ts`, `src/cli/commands/update.ts` |
+| Parsing git output, staging paths, or shelling out to npm | Git and npm behavior that specs get wrong | `src/orchestrator/git.ts`, `src/lib/project-root.ts`, `src/cli/commands/update.ts` |
 | Editing operator-facing text (help, errors, banners, prompt lines) | Operator-facing text is often rendered by independently-authored duplicates | `src/cli/index.ts`, `src/orchestrator/cli.ts`, `src/orchestrator/prompts/index.ts` + `templates/` |
 | Adding or changing tests | Slow Test Discipline | `tests/run-task-*.test.ts`, `tests/*-helpers.ts` |
 
@@ -48,29 +48,28 @@ This is the project's hard-won implementation knowledge. It has two main section
 
 **When to apply**: Anytime a new phase is added to the pipeline (e.g., a new validation gate that warrants its own phase rather than being a sub-step within an existing one).
 
-**The pattern**: Adding a phase touches the orchestrator's phase-aware switches in `src/orchestrator/main.ts`:
-1. `PHASE_ORDER` constant (defines the linear sequence)
-2. `runPhase()` switch (dispatches to the agent invocation)
-3. `checkAndRoute()` switch (decides what happens after the phase completes)
+**The pattern**: Adding a phase starts from `PHASE_ORDER` in `src/orchestrator/types.ts`, which defines the linear sequence; `main.ts`, `src/task/index.ts` (`VALID_PHASES`), `watch.ts`, and `completion.ts` all derive from it. It then touches the phase-aware switches in `src/orchestrator/main.ts`:
+1. `runPhase()` switch (dispatches to the agent invocation)
+2. `checkAndRoute()` switch (decides what happens after the phase completes)
 
 Plus:
-5. `src/task/index.ts` `VALID_PHASES` set and `assertValidPhase()` (so the helper accepts the new phase name)
-6. `.canon/templates/status.json` (add the new phase entry with a default `status` and `agent`)
-7. If the phase has model/effort needs distinct from existing phases: add it to the matrices in `pipeline-policy.ts` and `tests/pipeline-policy.test.ts`
-8. Document in `docs/pipeline-orchestrator.md` (handoff sequence + workflow diagram) and any conversational-operator implications in `CLAUDE.md`
+3. `src/task/index.ts` `VALID_PHASES` is derived from `PHASE_ORDER`, so nothing to edit there; grep the other consumers of `PHASE_ORDER` (`watch.ts`, `completion.ts`) for phase-specific logic
+4. `.canon/templates/status.json` (add the new phase entry with a default `status` and `agent`)
+5. If the phase has model/effort needs distinct from existing phases: add it to the matrices in `pipeline-policy.ts` and `tests/pipeline-policy.test.ts`
+6. Document in `docs/pipeline-orchestrator.md` (handoff sequence + workflow diagram) and any conversational-operator implications in `CLAUDE.md`
 
 **Anti-pattern**: updating only one or two of the switch statements. Missing one produces silent skipping (the orchestrator routes past the phase without running it) or inconsistent routing state.
 
 ### State Schema Discipline
 
-**Files**: `.canon/templates/status.json`, parsers in `src/orchestrator/state.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts`, `src/task/index.ts` (`VALID_PHASES`, `assertValidPhase()`)
+**Files**: `.canon/templates/status.json`, parsers in `src/orchestrator/state.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts`, `src/task/index.ts` (`assertValidPhase()`)
 
 **When to apply**: Adding a new field to `status.json`, renaming an existing field, or changing the type/shape of a field.
 
 **The pattern**: A status.json change must update three locations atomically:
 1. `.canon/templates/status.json` — the schema source of truth (and what new tasks are scaffolded from)
 2. Parsers in `src/orchestrator/state.ts`, `src/orchestrator/git.ts`, and `src/orchestrator/validation.ts` — anything that reads or writes the field. The orchestrator and `parseStatus()`-style helpers both need updates.
-3. `src/task/index.ts` `VALID_PHASES` — if the field affects phase transitions, the helper needs to know about it.
+3. `src/task/index.ts` — if the field affects phase transitions, check `assertValidPhase()` and the `canon task phase` / `canon task accept` helpers.
 
 For breaking changes (renames, type changes), also: add a migration shim that detects the old shape and either fails loudly or transforms it. Tasks may be in flight when the change lands.
 
@@ -116,7 +115,7 @@ Suppressing lint or type errors is a last resort, not a convenience escape hatch
 
 ### Adding a phase that updates only some switch statements is a silent-skip footgun.
 
-`src/orchestrator/main.ts` has the phase-aware switches (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`). All of them must gain a case for the new phase. Missing `runPhase()` → the phase appears in order but nothing runs. Missing `checkAndRoute()` → the orchestrator can't decide what comes next. **The failure modes are subtle** — the pipeline may appear to make progress while silently skipping the new phase. Use the Phase Addition Discipline checklist above; reviewers should grep for the phase name across the switches in `main.ts` before approving.
+`src/orchestrator/main.ts` has the phase-aware switches (`runPhase()`, `checkAndRoute()`; the sequence itself is `PHASE_ORDER` in `src/orchestrator/types.ts`). All of them must gain a case for the new phase. Missing `runPhase()` → the phase appears in order but nothing runs. Missing `checkAndRoute()` → the orchestrator can't decide what comes next. **The failure modes are subtle** — the pipeline may appear to make progress while silently skipping the new phase. Use the Phase Addition Discipline checklist above; reviewers should grep for the phase name across the switches in `main.ts` before approving.
 
 ### Modifying `pipeline-policy.ts` without a matching test row is silent coverage drift.
 
@@ -207,7 +206,7 @@ When an irreversible operation (PR merge) is followed by a cleanup step (remote 
 
 ### Use the attempted `prNum` to confirm merge — not the branch name
 
-When tolerating a `gh pr merge` failure, confirm the **specific PR number** that was just attempted (`isPRMerged(prNum)` — `gh pr view <prNum> --json state`), never a branch-based query like `findMergedPRNumber(branch, baseBranch)`. The branch-based query returns the most-recent merged PR for that branch/base combination: if a branch name was reused after an earlier merged PR, the query falsely confirms the *current* (failed) merge as succeeded, hiding a real merge failure. With a prNum-specific query, the only failure mode is a gh transient error returning false on a genuinely merged PR — that case `die()`s and reverts to today's behavior (fails safe). Canonical implementation: `mergeOpenPRsAndPull` in `src/orchestrator/main.ts`, introduced by base-divergence-gate AC-14 after the spec's Codex spec-review round surfaced the branch-reuse trap.
+When tolerating a `gh pr merge` failure, confirm the **specific PR number** that was just attempted (`isPRMerged(prNum)` — `gh pr view <prNum> --json state`), never a branch-based query like `findMergedPRNumber(branch, baseBranch)`. The branch-based query returns the most-recent merged PR for that branch/base combination: if a branch name was reused after an earlier merged PR, the query falsely confirms the *current* (failed) merge as succeeded, hiding a real merge failure. With a prNum-specific query, the only failure mode is a gh transient error returning false on a genuinely merged PR — that case is reported as a failed result and `shipTasks` dies (restoring preserved state first), reverting to today's behavior (fails safe). Canonical implementation: `mergeOpenPRsAndPull` in `src/orchestrator/main.ts`, introduced by base-divergence-gate AC-14 after the spec's Codex spec-review round surfaced the branch-reuse trap.
 
 ### Orchestrator survives supervising-shell death; the stall timer still detects hangs
 
@@ -292,7 +291,7 @@ When a task updates a piece of operator-facing or agent-facing text (CLI help, e
 
 | I want to... | Section above | Start at |
 |---|---|---|
-| Add a new pipeline phase | Phase Addition Discipline | `src/orchestrator/main.ts` `PHASE_ORDER` |
+| Add a new pipeline phase | Phase Addition Discipline | `src/orchestrator/types.ts` `PHASE_ORDER` |
 | Change which model a phase uses | Pure Policy + Test Discipline | `src/lib/pipeline-policy.ts` |
 | Add a new per-task validation check at code_review entry | Validation Gate Discipline | `src/orchestrator/validation.ts` `validateHandoff()` |
 | Add a new bundle-wide validation check at code_review entry | Validation Gate Discipline | `src/orchestrator/validation.ts` `verifyHandoffAgainstDiff()` (canonical sibling example) |

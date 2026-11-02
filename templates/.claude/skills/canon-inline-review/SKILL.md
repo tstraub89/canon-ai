@@ -17,6 +17,8 @@ Use this skill to drive an independent second-model review of below-pipeline wor
 
 Claude never self-reviews its own inline code. Use this skill to invoke Codex as the independent reviewer.
 
+This skill needs the Codex CLI. If the project runs `CANON_PROVIDER=claude` and has no Codex, review below-pipeline work in a separate Claude session (fresh context, diff only) instead.
+
 Scope bound: this catches correctness and quality bugs across models. It is not a spec-compliance gate; anything with acceptance criteria goes through `canon run` / `--reroute`, not this skill.
 
 ## Target-selection contract

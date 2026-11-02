@@ -1,7 +1,7 @@
 ---
 name: canon-pipeline
 description: Use when an existing canon task needs the pipeline driven forward — invoking `canon run`, advancing a single phase, opening the draft PR, shipping a merged task, or recovering from a snag (auto-block hit, phase mismatch, post-merge branch divergence, agent auth failure). Also for release and shipping operations: finalization, hotfix absorption, and any release model (release-branch, trunk, tag, or no-versioning). Don't use to author a new spec (use `/canon-spec`) or check pipeline status (use `/canon-status`).
-allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(git *) Bash(gh *)
+allowed-tools: Read Glob Grep Bash(canon task *) Bash(canon run *) Bash(canon watch *) Bash(canon stop *) Bash(git *) Bash(gh *)
 effort: medium
 ---
 
@@ -46,6 +46,8 @@ canon run <task-id>
 ```
 
 Add `--step --expect <phase>` if you want one phase at a time with a guard. Add `MAX_REVIEW_LOOPS=N` when the default loop cap is too low for a complex spec.
+
+In Claude Code `canon run` detaches after about a second and prints a PID and log path. Run `canon watch <task-id>` (do not pipe it, do not tail the log) to wait for the run to settle. It prints one summary line and exits 0 on a healthy stop, 3 on an auto-block, 4 on death, 5 on timeout. `canon stop <task-id>` terminates a detached run. `--step`, `--pr` and `--ship` run in the foreground and need no watch.
 
 **What happens after `canon run` (full-tier, no `--full-send`):** the pipeline runs the spec reviewer *first*, then **halts at the human spec gate after the spec reviewer approves the spec** (before `plan`). In mixed mode Codex is the spec reviewer; in `claude` mode that role runs on Claude Code. `human_spec_gate` is a single-use latch that fires *after* `spec_review`, never before it — so seeing the run go straight into `spec_review` with the gate still `true` is correct, not a skipped gate. Review `spec.md` + `spec-review.md`, then re-run `canon run <id>` to pass the gate into `plan`. **Under `--full-send` there is no halt:** the gate is pre-cleared, so the pipeline flows `spec_review → plan → … → draft PR` uninterrupted (on a `delicate` task `--full-send` also needs `--force`). (Fast-tier without full-send: the gate sits at `spec_review` entry and is usually pre-cleared during plan-writing. Full mechanics: `docs/pipeline-orchestrator.md` §"Spec gate is a single-use latch".)
 

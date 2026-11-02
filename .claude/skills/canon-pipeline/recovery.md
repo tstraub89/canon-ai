@@ -5,6 +5,7 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 ## Contents
 
 - Auto-block on `spec_review` or `code_review` (loop cap hit)
+- Code review halted on `spec_gap`
 - Code review stopped without a verdict (reviewer-set `blocked`)
 - Findings keep clustering in the same mechanism (try a size bump before another loop)
 - Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
@@ -17,7 +18,7 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 
 ## Auto-block on `spec_review` or `code_review` (loop cap hit)
 
-When the loop cap is hit, the pipeline writes an `escalations[]` entry and stops. Three paths for a `code_review` block; a `spec_review` block has only A and B:
+When the loop cap is hit, the pipeline writes an `escalations[]` entry and stops. Four paths for a `code_review` block; a `spec_review` block has A, B and D:
 
 **Path A — authorize more loops (simple cap bump):**
 ```bash
@@ -42,13 +43,19 @@ MAX_REVIEW_LOOPS=6 canon run <task-id>
 canon run <task-id> --reroute
 ```
 
-A `spec_review` loop-cap block is not admitted by `--reroute`. Revise the spec normally and resume through A or B instead.
+**Path D — human sanction** (a human decides; the agent does not run it unprompted): `canon task accept <task-id> spec_review|code_review --reason "<why>"` accepts the blocked review as-is; it does not amend the spec.
+
+A `spec_review` loop-cap block is not admitted by `--reroute`. Revise the spec normally and resume through A, B or D instead.
 
 Stop the reviewer loop once findings turn wording-only. Self-grep for flagged phrases in the current spec/code before running another expensive review pass.
 
 **Never reset the iteration counter** to bypass the cap. Counter is durable signal of how many review rounds the task has burned — losing it hides cost from future operators.
 
 ---
+
+## Code review halted on `spec_gap`
+
+The whole bundle blocks. Both commands below name every task in the blocked bundle (`<ids>`), not only the `spec_gap` ones. If the spec is wrong, append `## Amendment` (or `## Amendment Round N`) to each `spec_gap` task's `spec.md` (siblings without a gap need none) and run `canon run <ids> --reroute`. To accept the implementation as-is, a human runs `canon task accept <ids> code_review --reason "<why>"`; that does not amend the spec.
 
 ## Code review stopped without a verdict (reviewer-set `blocked`)
 

@@ -2,7 +2,7 @@
 
 What to fill in each scaffold doc during Phase 4 of `/canon-init`. Use this as the section-by-section reference while writing — every bullet describes a section that should land in the final file (or be explicitly removed when not applicable).
 
-Rule of thumb: real content for every section that applies; remove the section entirely if the project has no use for it. Never leave `<placeholder>` text or "TBD". If you discover mid-write that you're missing information for a section, ask one targeted question before writing it.
+Rule of thumb: real content for every section that applies; remove the section entirely if the project has no use for it. Never leave `<placeholder>` text or "TBD". Delete every `TODO[canon]` blockquote and example row once its section is filled. If you discover mid-write that you're missing information for a section, ask one targeted question before writing it.
 
 ## Contents
 
@@ -49,7 +49,7 @@ Rule of thumb: real content for every section that applies; remove the section e
 
 ## `docs/decisions.md`
 
-At least 3–5 entries covering major settled decisions: why this stack, why this auth approach, key architectural choices. Include the rationale, not just the decision.
+At least 3–5 entries covering major settled decisions: why this stack, why this auth approach, key architectural choices. Include the rationale, not just the decision. Also fill the "Versioning and release policy" entry (SemVer interpretation, agent authorization per tier, changelog audience and scope); canon's release prompts and `/canon-changelog` read it.
 
 ## `docs/patterns.md`
 

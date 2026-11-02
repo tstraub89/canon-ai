@@ -43,6 +43,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |
 | `canon stop` command | `src/cli/commands/stop.ts` | Gracefully terminates detached run; SIGTERM → SIGKILL; CASE A–D pid selection |
 | `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, task-quality-log header, and canon discovery nudge (warns when neither file exists or neither mentions canon) |
+| `canon init` / `canon upgrade` | `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts` | Scaffold and refresh `CANON_OWNED` files, the `.gitignore` block and npm script entries |
 | Canon runtime `.gitignore` block | `src/lib/canon-block.ts`, `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts`, `src/cli/commands/doctor.ts` | canon manages a `# canon:start`/`# canon:end` block in `.gitignore`; `canon upgrade` refreshes it. |
 | CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()` (command summary only; each command's usage lives with its declaration), top-level `switch` dispatch for all `canon` commands |
 | Shell completion | `src/cli/commands/completion.ts` | `canon completion`, completion model builder, and bash/zsh/fish/tcsh renderers |
@@ -54,7 +55,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Task management helper (status.json updates, phase transitions) | `src/task/index.ts` | `taskCmd()` implementation; `src/cli/commands/task.ts` is the thin CLI wrapper |
 | `canon run` CLI dispatch wrapper | `src/cli/commands/run-task.ts` | Spawns the compiled `dist/orchestrator/run-task.js` via `spawnSync`; the installed-package entry point for `canon run` |
 | `canon update` command | `src/cli/commands/update.ts` | Resolves the running install's root (`local`/`global`/`npx`, realpath-canonicalized); gates on manifest presence + `canon-ai` dependency listing; installs the latest final release from npm after resolving and verifying its tag, or installs a labeled `main`/ref/SHA development build from GitHub; writes `provenance.json` in `.canon` (write-only — no reader yet) |
-| Phase routing logic (phase order, transitions) | `src/orchestrator/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) | |
+| Phase routing logic (phase order, transitions) | `src/orchestrator/main.ts` (`runPhase()`, `checkAndRoute()`) | `PHASE_ORDER` is defined in `src/orchestrator/types.ts`; `main.ts` aliases it |
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `src/orchestrator/main.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts` | |
 | Pre-flight gate before code review (validation outcomes, AC coverage) | `src/orchestrator/validation.ts` | |
 | Handoff Changes-table parser | `src/orchestrator/validation.ts` | Extracts comma-separated backtick-path / markdown-link tokens per cell |
@@ -82,6 +83,12 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | Startup and headless strings, `implementationStartup(provider)`, `PHASE_ARTIFACT_COMPLETION`, `toResumePrompt()` |
 | Agent stream handler | `src/orchestrator/agents/stream.ts` | Child process stdout/stderr muxer with stall detection and graceful kill; shared by `claude.ts` and `codex.ts` |
 | Scaffold destination safety | `src/lib/scaffold-paths.ts` | Rejects symlinks in init/upgrade destination paths before writes, including dangling links and parent directories |
+| Telemetry writer | `src/orchestrator/metrics.ts` | Per-task metrics fragment |
+| Telemetry fold on ship | `src/orchestrator/telemetry-fold.ts` | Folds fragments into `docs/pipeline-invocations.md`, `docs/task-quality-log.md` and `docs/lessons-learned.md` |
+| Review archive | `src/orchestrator/review-archive.ts` | Archives prior `review.md` and cold-Codex runs before re-scaffold |
+| Review loop cap | `src/orchestrator/review-loop.ts` | Loop-count result (`evaluateSpecReviewLoop`, `evaluateCodeReviewLoop`) used by `autoBlockPhase()` |
+| Task artifact templates | `src/task/templates.ts` | Shared resolver and scaffolder for `canon task new` and review re-scaffold |
+| Agent session errors | `src/orchestrator/agents/errors.ts` | `AgentSessionError`; phase runners must not catch it |
 | Canon-managed files whitelist | `src/lib/canon-owned.ts` | `CANON_OWNED` and `DELIMITED` lists — authoritative source for which files `canon upgrade` controls |
 
 Prompt-template content notes:
@@ -105,7 +112,7 @@ Every task lives in `tasks/<TASK-ID>/`. Templates live in `.canon/templates/`.
 
 ## Protected Docs (Institutional Memory)
 
-QA’s protected set is configurable via .canon/config.json; canon-ai’s own config keeps `docs/pipeline-orchestrator.md` in it.
+QA’s protected set is configurable via .canon/config.json; canon-ai’s own config keeps `docs/pipeline-orchestrator.md` in it (the protected set is architecture, codebase-map, patterns, product-context, decisions, pipeline-orchestrator; the last three rows below are `--ship` fold targets, not protected).
 
 These must stay current — the pipeline reads the protected `docs/*` corpus at session start, and phase-specific rules arrive just in time via prompt templates and skills.
 
@@ -142,6 +149,13 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | Heartbeat tests | `tests/heartbeat.test.ts` | Write intervals, stale-detection thresholds |
 | Markdown table parser tests | `tests/markdown-table.test.ts` | Escaped pipes, empty cells, malformed rows |
 | `canon stop` command tests | `tests/stop.test.ts` | CASE A–D pid selection, SIGTERM → SIGKILL sequencing |
+| Prompt rendering and golden tests | `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` | Regenerate the golden when prompt templates change |
+| Safety, worktree and PR gate tests | `tests/run-task-safety-*.test.ts` | Shared setup in `tests/run-task-safety-helpers.ts` |
+| Ship and telemetry fold tests | `tests/run-task-ship-*.test.ts` | Shared setup in `tests/run-task-ship-helpers.ts` |
+| Guard hook tests | `tests/canon-guard.test.ts` | PreToolUse deny rules |
+| Docs-freshness tests | `tests/docs-freshness.test.ts` | Protected-set resolution and glob matching |
+| Validation matrix sync | `tests/validation-matrix-sync.test.ts` | |
+| Completion golden | `tests/completion.golden.json` | Regenerate when CLI declarations change |
 
 Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test files import orchestrator modules directly from `src/orchestrator/`.
 
@@ -149,9 +163,15 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 
 | What | Where | Notes |
 |---|---|---|
-| Node/TS project metadata, npm scripts | `package.json` | `test`, `type-check`, `task`, `run-task` scripts |
+| Node/TS project metadata, npm scripts | `package.json` | `build`, `test`, `type-check`, `lint`, `sync-templates[:check]`, `docs-refs-check`, `hooks` scripts |
 | Pre-commit sync hook | `package.json` | `simple-git-hooks` config plus `sync-templates` scripts |
 | GitHub Actions CI workflow | `.github/workflows/ci.yml` | Triggers, matrix, audit, lint, type-check, test; see `docs/architecture.md` `## CI` |
+| Release automation | `.github/workflows/auto-release.yml` | Tag, GitHub release and npm publish on push to `main`; see `docs/release-process.md` |
+| Docs-refs PR gate | `.github/workflows/docs-refs-check.yml` | Runs `npm run docs-refs-check` on docs/task PRs that the `ci.yml` push filter skips |
+| Build config | `tsup.config.ts` | Entries `cli/index` and `orchestrator/run-task`; bundles prompt `.md` files as text |
+| Committed build output | `dist/` | Must match `npm run build`; CI diffs it |
+| Review lens agents | `.claude/agents/*.md` | `code_review` anchored and cold lenses and the spec-review lens |
+| Skills | `.claude/skills/*/SKILL.md` | `CANON_OWNED` skills plus the canon-ai-local `docs-audit` |
 | oxlint config | `.oxlintrc.json` | The former ESLint `recommendedTypeChecked` rule set (type-aware via `oxlint-tsgolint`), plus oxlint's `correctness` category |
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `src/`, `tests/`, and the remaining `scripts/**/*.d.ts` tooling declaration |
 | Claude permissions, SessionStart and PreToolUse guard registration | `.claude/settings.json` | Auto-shows in-progress tasks at session start; guard registration is opt-in |
@@ -175,7 +195,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > Common changes that touch multiple files. Use as starting checklists, not exhaustive.
 
 **Add a new pipeline phase**:
-> `src/lib/pipeline-policy.ts` (if it has model/effort needs) → `src/orchestrator/main.ts` (`PHASE_ORDER`, `runPhase()`, `checkAndRoute()`) → `src/task/index.ts` (`VALID_PHASES`, `assertValidPhase()`) → `.canon/templates/status.json` → `docs/pipeline-orchestrator.md`
+> `src/lib/pipeline-policy.ts` (if it has model/effort needs) → `src/orchestrator/types.ts` (`PHASE_ORDER`; `VALID_PHASES` in `src/task/index.ts` derives from it) → `src/orchestrator/main.ts` (`runPhase()`, `checkAndRoute()`) → `src/orchestrator/phases/<phase>.ts` + prompt template → `.canon/templates/status.json` → `tests/completion.golden.json` (regenerate) → `docs/pipeline-orchestrator.md`
 
 **Add a new validation check (handoff or pre-flight gate)**:
 > `src/orchestrator/validation.ts` (or new validator function) → relevant test in `tests/run-task-validation.test.ts` → `.canon/templates/handoff.md` (if it adds a new section) → `docs/patterns.md` (Known Pitfalls if motivated by a real incident)
@@ -187,7 +207,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `src/lib/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
 
 **Add a new review verdict**:
-> `src/orchestrator/types.ts` (`Verdict` union) → `src/task/index.ts` (`VALID_VERDICTS` + `assertValidVerdict()` — the runtime validator diverges from the type union by design; `task phase` usage renders the verdict list) → `src/orchestrator/validation.ts` (`extractCheckedVerdict()` regex) — all three. TypeScript compiles cleanly with only the first; `canon task phase … <new_verdict>` then fails at runtime with "unknown verdict".
+> `src/orchestrator/types.ts` (`Verdict` union) → `src/task/index.ts` (`VALID_VERDICTS` + `assertValidVerdict()` — `VALID_VERDICTS` is a second hand-maintained list of the same values (`_VERDICT_VALUES` in `src/orchestrator/types.ts`); `task phase` usage renders the verdict list) → `src/orchestrator/validation.ts` (`extractCheckedVerdict()` regex) — all three. TypeScript compiles cleanly with only the first; `canon task phase … <new_verdict>` then fails at runtime with "unknown verdict".
 
 **Add a new task-template field or section**:
 > `.canon/templates/<file>.md` → orchestrator parser if structured (e.g., `parseHandoffFiles()` in `src/orchestrator/validation.ts`) → per-phase prompt templates in `src/orchestrator/prompts/templates/`

@@ -17,7 +17,7 @@ git log --oneline -12
 
 **Orient from the above + your tools.** Do **not** use shell `case`/`if`/loops or `node -e` for orientation — Claude Code blocks unparseable control structures, and this skill's `allowed-tools` is `git` + Read/Glob/Grep/Edit/Write. Gather the rest by reasoning:
 
-- **Version** — Read the project's version source if it has one (canon-ai uses `package.json` → `version`).
+- **Version** — Read the project's version source if it has one (for example `package.json` → `version` in a Node project).
 - **CHANGELOG state** — Read `CHANGELOG.md`: note the heading format it actually uses and whether an in-progress / unreleased block is present. If `CHANGELOG.md` is missing, stop and create it (see *Prerequisites*).
 - **Base for the "commits ahead" range** — identify the point the unreleased work sits on top of, by where you're running. Never use the branch's own tracking ref (`@{upstream}`): once pushed it's `origin/<branch>` and yields an empty range. The base depends on context:
   - **On a task branch**: the current task's `base_branch` (from its `status.json`) — the authoritative per-task base, correct for any release model.
@@ -42,7 +42,7 @@ This skill requires `CHANGELOG.md` to exist. If it doesn't, treat it as a greenf
 - Initial entry.
 ```
 
-If the project has a `## Release Rules` section, use it for audience and user-facing scope guidance. If it doesn't, read `docs/product-context.md` for context and use judgment.
+If `docs/decisions.md` has a "Versioning and release policy" entry, use it for audience and user-facing scope. If it doesn't, read `docs/product-context.md` for context and use judgment.
 
 ### When sources are absent
 
@@ -54,7 +54,7 @@ If the project has a `## Release Rules` section, use it for audience and user-fa
 
 ## Mode detection
 
-> Detect and match your project's existing format. Read `CHANGELOG.md` and derive the title line (`# Changelog`, `# What's New`, etc.), the version-heading pattern (e.g. `## [X.Y.Z] — unreleased` for canon-ai, `## vX.Y - unreleased` for a v-prefixed project, `## [Unreleased]` for Keep-a-Changelog generic), the category/subheading structure including emoji (e.g. `### Added` / `### Fixed` or `### 🚀 Improvements` / `### 🐞 Fixes`), and the insertion point. The existing format is the source of truth; do not impose canon-ai's bracketed form on a project that uses a different one. canon-ai's own format is one valid example.
+> Detect and match your project's existing format. Read `CHANGELOG.md` and derive the title line (`# Changelog`, `# What's New`, etc.), the version-heading pattern (e.g. `## [X.Y.Z] — unreleased` for a bracketed-version project, `## vX.Y - unreleased` for a v-prefixed project, `## [Unreleased]` for Keep-a-Changelog generic), the category/subheading structure including emoji (e.g. `### Added` / `### Fixed` or `### 🚀 Improvements` / `### 🐞 Fixes`), and the insertion point. The existing format is the source of truth.
 >
 > **"Active unreleased block" = the topmost section whose header marks it unreleased.** Recognize any project-specific unreleased marker (`unreleased`, `Unreleased`, `UNRELEASED`, a future-date placeholder, etc.).
 
@@ -73,9 +73,7 @@ Confirm the detected mode before proceeding. If multiple modes seem plausible, a
 
 ### Phase 1 — Find tasks on this branch
 
-Parse the commit log against the detected base to extract task IDs. Two patterns:
-1. `[TASK-ID]` at end of a commit line: `Fix frame clipping [feat-frame-fix]`
-2. `chore: add task artifacts for TASK-ID`
+Parse the commit log against the detected base to extract task IDs. Canon's own commits carry them: `task(<id>): commit artifacts pre-pipeline`, `chore: QA artifacts for <id>`, `chore: add task artifacts for <id>`, `chore: archive <id>`. Also accept any `[<id>]` or `(<id>)` convention the project's own commits use.
 
 Deduplicate. This is your **candidate set**.
 
@@ -91,11 +89,11 @@ If no task IDs found (or all already in the block), stop and say so. In finalize
 
 For each task in the working set:
 
-1. Read `tasks/<id>/status.json` — only tasks with `qa.status = "done"` can be included.
-2. Read `tasks/<id>/done.md`:
+1. Read `tasks/<id>/status.json` (shipped tasks are under `tasks/_archive/<id>/`) — only tasks with `qa.status = "done"` can be included.
+2. Read `tasks/<id>/done.md` (or its `tasks/_archive/<id>/` copy):
    - Find the **"Proposed Changelog"** section (written by the QA pipeline). This is raw material — not boilerplate to paste verbatim. Rewrite it in your own voice calibrated to the project's changelog audience.
    - If no Proposed Changelog section exists, use the **"What Changed"** section as raw material.
-3. Read `tasks/<id>/spec.md` for the problem statement and task scope.
+3. Read `tasks/<id>/spec.md` (or its `tasks/_archive/<id>/` copy) for the problem statement and task scope.
 
 Build a per-task record: task ID, title, raw changelog source, one-sentence user-impact summary.
 
@@ -118,7 +116,7 @@ Before drafting bullets, look at the full working set as one release, not a list
 **Find non-entries**: apply your project's "would a user notice" test (from `docs/decisions.md §"Versioning and release policy"` if present, otherwise infer from `CHANGELOG.md` and `docs/product-context.md`). Omit: pure refactors, test changes, pipeline infra, dev tooling, lint cleanup, invisible implementation details. List skipped tasks explicitly in Phase 4 so the human can see your omit decisions.
 
 **Bullet format** — match your project's existing CHANGELOG exactly:
-> *Example only (canon-ai's bracketed form). Match your project's actual title, version-heading, and category style — including emoji categories — per the formatting rules below.*
+> *Example only (a bracketed-version form). Match your project's actual title, version-heading, and category style — including emoji categories — per the formatting rules below.*
 ```
 ## [X.Y.Z] — unreleased
 
@@ -136,7 +134,7 @@ Before drafting bullets, look at the full working set as one release, not a list
 ```
 
 Formatting rules:
-- Use the version-heading pattern derived in Mode detection (e.g. `## [X.Y.Z] — unreleased` for canon-ai's format, `## vX.Y - unreleased` for a v-prefixed project, or the project's own equivalent).
+- Use the version-heading pattern derived in Mode detection (e.g. `## [X.Y.Z] — unreleased` for a bracketed-version project, `## vX.Y - unreleased` for a v-prefixed project, or the project's own equivalent).
 - Use the category headings your CHANGELOG already has (e.g. `### Added`, `### 🚀 Improvements`, or whatever the project uses). Create a new category heading only if it matches an existing category type in the file.
 - User-facing language only — no file names, no internal jargon, no implementation mechanics
 - Bold the entry title
@@ -166,7 +164,7 @@ Wait for approval. The user may adjust wording or version. Incorporate edits, th
 
 **Fresh release mode** (main, no active unreleased block):
 1. Insert a new section using the version-heading pattern derived in Mode detection immediately before the first existing version block in the project's own format (or create the first section if the file is otherwise empty, after the greenfield confirmation step above).
-2. Update the project's version files when it tracks version there (for canon-ai, `package.json` and `package-lock.json` if present).
+2. Update the project's version files when it tracks version there (for a Node project, `package.json` and `package-lock.json` if present).
 
 **In-progress append mode** (release branch):
 1. Append bullets under the matching category heading from the project's existing CHANGELOG (derived in Mode detection). Create a new category heading only if the file already uses that category type.
@@ -176,7 +174,7 @@ Wait for approval. The user may adjust wording or version. Incorporate edits, th
 
 **Finalize mode**:
 1. Identify whether the active unreleased block's heading carries a version:
-   - **Version-carrying** (e.g. `## [X.Y.Z] — unreleased` for canon-ai, `## vX.Y - unreleased` for a v-prefixed project): replace the "unreleased" placeholder with today's date, preserving the heading pattern exactly (e.g. `## [X.Y.Z] — YYYY-MM-DD`, `## vX.Y - YYYY-MM-DD`). Do **not** inject a new `## [Unreleased]` block — this project doesn't use that convention.
+   - **Version-carrying** (e.g. `## [X.Y.Z] — unreleased` for a bracketed-version project, `## vX.Y - unreleased` for a v-prefixed project): replace the "unreleased" placeholder with today's date, preserving the heading pattern exactly (e.g. `## [X.Y.Z] — YYYY-MM-DD`, `## vX.Y - YYYY-MM-DD`). Do **not** inject a new `## [Unreleased]` block — this project doesn't use that convention.
    - **Version-less** (`## [Unreleased]` — the Keep-a-Changelog generic form, including the skill's own greenfield default): insert the version proposed/approved in Phase 4, converting to `## [<version>] — YYYY-MM-DD`. Then recreate a fresh empty `## [Unreleased]` section above the finalized block (per Keep-a-Changelog convention for this form).
 2. Apply any polish edits approved in Phase 4.
 3. Do NOT touch the project's version files.

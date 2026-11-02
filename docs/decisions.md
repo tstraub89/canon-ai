@@ -126,7 +126,7 @@ This rule applies to mixed mode; see "Claude-provider review independence (2026-
 
 **Decision**: Tier detection, sizing, model/effort selection, and loop-cap defaults live in a pure side-effect-free module (`src/lib/pipeline-policy.ts`). The orchestrator passes resolved config in; the policy returns decisions out.
 
-**Why**: Routing logic was originally spread across `run-task.ts` as inline conditionals. The drift was real — multiple `if (size === 'XL' || delicate) ...` checks that diverged subtly over time. Extracting into a pure module gave us **(1)** a single place to change routing, **(2)** table-driven tests in `tests/pipeline-policy.test.ts` covering every cell of the size × phase matrix, and **(3)** a clean boundary between "what does the env say?" (resolved in `run-task.ts`) and "what should we do?" (decided in `pipeline-policy.ts`). The cost of extraction (one extra import, slightly more ceremony) is paid back the first time a routing rule changes.
+**Why**: Routing logic was originally spread across `run-task.ts` as inline conditionals. The drift was real — multiple `if (size === 'XL' || delicate) ...` checks that diverged subtly over time. Extracting into a pure module gave us **(1)** a single place to change routing, **(2)** table-driven tests in `tests/pipeline-policy.test.ts` covering every cell of the size × phase matrix, and **(3)** a clean boundary between "what does the env say?" (resolved in `src/orchestrator/policy.ts`) and "what should we do?" (decided in `pipeline-policy.ts`). The cost of extraction (one extra import, slightly more ceremony) is paid back the first time a routing rule changes.
 
 **Rule**: Any new routing decision (model choice, effort, tier, loop cap) goes in `pipeline-policy.ts`. Add a row to `pipeline-policy.test.ts`. Do not write inline routing in `src/orchestrator/main.ts` or the phase modules.
 
@@ -166,7 +166,7 @@ This rule applies to mixed mode; see "Claude-provider review independence (2026-
   - `CHANGELOG.md` lives on `main` and ships with the published `canon-ai` npm package.
   - Audience is adopters who want to know what changed between versions they install or upgrade to. Contributor-only changes (CI, linting, tests, release tooling) are left out.
   - Format follows Keep a Changelog conventions.
-  - The repo is currently private; the package is published from `main`. A future public release would not change the changelog model — `CHANGELOG.md` stays in-tree.
+  - The repo is public (since the 2026-09 open-source launch); the package is published from `main` and `CHANGELOG.md` ships in the npm package (`package.json` `files`).
 
 - **Release mechanics**: How to actually execute a release (version bump commands, lockfile refresh, tag-and-publish flow, hotfix path, auto-release workflow) lives in [`release-process.md`](release-process.md). That doc is the source of truth for *how*; this entry is the source of truth for *what counts as a bump and who authorizes it*. Notable rule from `release-process.md`: never use `sed` to bump versions in `package.json` or `package-lock.json` — use `npm version --no-git-tag-version` + `npm install --package-lock-only`. The 1.1.3 picocolors lockfile incident was caused by exactly that footgun.
 
@@ -239,7 +239,7 @@ _Generation: Opus 4.8 / Sonnet 4.6 / GPT-5.5._
 - Rerouted tasks average ~3.7x more code_review rounds than non-rerouted ones (4.39 vs 1.19) — reroute status, not size, is the dominant cost driver. And M's rerouted tasks were the worst of any size band (avg 5.15, vs. L's 4.83, S's 3.45). This is a correlational read, not a controlled isolation — M and L also differ in loop cap, budget, and QA effort, so `spec_review` effort is the leading **hypothesis** for M's worse reroute severity, not a proven sole cause. It's the one difference that plausibly acts *before* implementation (catching scope gaps pre-reroute) and it lines up with the effort-curve evidence below, which is why it's the lever this decision changes first — not because the other confounds have been ruled out.
 - External corroboration: a practitioner study running GPT-5.5-driven Codex across 26 real tasks on an open-source repo found `medium → high` is the single largest quality jump (test-pass 81%→96%, review-pass doubles) for a modest cost increase (+43%), while `high → xhigh` shows diminishing-to-negative returns (test-pass regresses, cost nearly doubles again) — the OpenAI-guidance overthinking pattern already cited for the `implement` XL/delicate `xhigh` decision above, independently reproduced at the `medium`/`high` boundary this change touches.
 
-**Rule**: `spec_review` M now runs `mini/high`, identical to L on both `spec_review` and `implement`. M and L still differ on `MAX_REVIEW_LOOPS` (3 vs. 5) and Claude `qa` effort (`medium` vs. `high` per `claudeMatrix()`'s `buildMedium`) — those are unchanged by this decision and are blast-radius/patience knobs rather than Codex model-capability tuning. (`CLAUDE_BUDGET` was also in this category but was equalized to $10 for both M and L on 2026-07-11 — M's review-heavy reroutes were plausibly bumping the old $5 cap; see `CLAUDE_BUDGET` in `docs/pipeline-orchestrator.md`. This equalization was later superseded by a phase-aware split — see "`CLAUDE_BUDGET` becomes phase-aware, not just size-aware (2026-07)" below.) Re-measure M vs. L reroute rate and severity after this ships across enough tasks to be meaningful; if they converge, that's evidence (not yet proof) that `spec_review` effort was the load-bearing difference, and the remaining QA-effort gap becomes the next thing worth questioning. Do not chase a Codex model-family upgrade (e.g. GPT-5.6 Luna/Sol) for M or L on the strength of the pre-correction iteration data — that data pointed at a spec_review effort gap, not a model-capability gap.
+**Rule**: `spec_review` M now runs `mini/high`, identical to L on both `spec_review` and `implement`. M and L still differ on `MAX_REVIEW_LOOPS` (3 vs. 5) and Claude `qa` effort (`medium` vs. `high` per `CLAUDE_CELLS` in `src/lib/pipeline-policy.ts`) *(superseded: Claude `qa` is `medium` at every size; see "Model-generation re-baseline (2026-09): Claude defaults → 5.5 generation")* — those are unchanged by this decision and are blast-radius/patience knobs rather than Codex model-capability tuning. (`CLAUDE_BUDGET` was also in this category but was equalized to $10 for both M and L on 2026-07-11 — M's review-heavy reroutes were plausibly bumping the old $5 cap; see `CLAUDE_BUDGET` in `docs/pipeline-orchestrator.md`. This equalization was later superseded by a phase-aware split — see "`CLAUDE_BUDGET` becomes phase-aware, not just size-aware (2026-07)" below.) Re-measure M vs. L reroute rate and severity after this ships across enough tasks to be meaningful; if they converge, that's evidence (not yet proof) that `spec_review` effort was the load-bearing difference, and the remaining QA-effort gap becomes the next thing worth questioning. Do not chase a Codex model-family upgrade (e.g. GPT-5.6 Luna/Sol) for M or L on the strength of the pre-correction iteration data — that data pointed at a spec_review effort gap, not a model-capability gap.
 
 ---
 
@@ -266,10 +266,10 @@ _Generation: Opus 4.8 / Sonnet 4.6 / GPT-5.5._
 
 ## Declared Canon vs Executable Canon as a recurring audit lens
 
-**Decision**: When reviewing canon's own changes (its harness, policy, templates, or rule files), the explicit framing is "does the executable behavior match the declared behavior?" Drift between the two — `AGENTS.md` / `CLAUDE.md` / docs promising one rule while `src/orchestrator/`, `scripts/task.sh`, or templates enforce something weaker, different, or stale — is its own bug class and gets called out as such.
+**Decision**: When reviewing canon's own changes (its harness, policy, templates, or rule files), the explicit framing is "does the executable behavior match the declared behavior?" Drift between the two — `AGENTS.md` / `CLAUDE.md` / docs promising one rule while `src/orchestrator/`, `src/task/index.ts`, or templates enforce something weaker, different, or stale — is its own bug class and gets called out as such.
 
 **Why**: TokenAnxiety's first dogfood report (discussion #27, 2026-05-10) surfaced multiple findings that all reduced to declared/executable drift, not philosophical objections to canon:
-- `task.sh` resets `iterations` to 0 on approval — telemetry promised cumulative count, code provides loop-local count. ([scripts/task.sh:344](scripts/task.sh#L344))
+- `task.sh` resets `iterations` to 0 on approval — telemetry promised cumulative count, code provides loop-local count. (historical: the old `scripts/task.sh`, since replaced by `canon task`)
 - `code-review.ts` and `plan.ts` reject template-unfilled artifacts; `spec-review.ts` (until commit 27463ce) didn't — the rule was declared uniformly but enforced asymmetrically.
 - `human_review: done` can flip true with unresolved `human_pending` validations — the declared "done means done" contract isn't enforced.
 
@@ -312,7 +312,7 @@ Periodic application: when running an audit on canon (TokenAnxiety-style dogfood
 
 ## Validation runs inside agent phases (supersedes orchestrator-run `runtime_validation`)
 
-**Decision**: Validation execution lives inside agent phases — Codex runs project-specific checks during `implement`; Claude verifies in Stage 1 code review by reading the outcomes table critically and re-running selectively when anything looks off. The orchestrator does not run independent validation checks. The `runtime_validation` phase as currently shipped (orchestrator-run smoke plus a planned project-policy loader extension point) is being retired as a consequence; that retirement work has its own task.
+**Decision**: Validation execution lives inside agent phases — Codex runs project-specific checks during `implement`; Claude verifies in Stage 1 code review by reading the outcomes table critically and re-running selectively when anything looks off. The orchestrator does not run independent validation checks. The `runtime_validation` phase as currently shipped (orchestrator-run smoke plus a planned project-policy loader extension point) was retired as a consequence (task `retire-runtime-validation`).
 
 **Why**: The earlier model treated the orchestrator as an independent witness against agents hallucinating Pass results. Two findings collapse that thesis:
 
@@ -335,7 +335,7 @@ What the orchestrator does uniquely (and these stand): routes between phases and
 
 3. **The orchestrator pre-computes `affectedFiles` and injects it into the implement prompt.** Predicate gating (e.g., "run e2e only if `src/` changed") moves into prompt-shaped logic inside Codex's implement session. The orchestrator already knows the committed-file set; injecting it once eliminates the need for project-side TS predicates to re-derive it.
 
-4. **`runtime_validation` is retired.** Drop it from `PHASE_ORDER`, the dispatch switches, `task.sh` validation, `status.json` schema, and the handoff template's Runtime Validation Outcomes section. The smoke echo in `RUNTIME_CHECKS` goes with it. This is a separate task; this entry authorizes the change.
+4. **`runtime_validation` is retired.** Drop it from `PHASE_ORDER`, the dispatch switches, `canon task` phase validation, `status.json` schema, and the handoff template's Runtime Validation Outcomes section. The smoke echo in `RUNTIME_CHECKS` goes with it. Done in `retire-runtime-validation`.
 
 5. **The validation-authority boundary in `AGENTS.md` is removed by the retirement task.** Going forward there is one validation outcomes section, authored by Codex during implement. There is no separate orchestrator-authored counterpart.
 
@@ -385,7 +385,7 @@ Each successful cold-Codex invocation writes a numbered `tasks/<id>/review-cold-
 
 **Why**: Previously, every phase auto-loaded all rules through `AGENTS.md` / `CLAUDE.md`. That meant code-review lenses carried spec-writing guidance they never use, and the implement prompt carried QA rules. Scoping each rule to the specific phase that consumes it shrinks each phase's prompt to its own job and reduces cross-rule attention dilution.
 
-**Rule**: Pipeline-facing operating rules need a surviving JIT home in the consuming phase's prompt, charter, or skill. `AGENTS.md` / `CLAUDE.md` may still exist as operator-facing context and project additions, but they must not be the sole home for a rule required by a pipeline phase. The vacate task removes the now-redundant canon-block copies.
+**Rule**: Pipeline-facing operating rules need a surviving JIT home in the consuming phase's prompt, charter, or skill. `AGENTS.md` / `CLAUDE.md` may still exist as operator-facing context and project additions, but they must not be the sole home for a rule required by a pipeline phase. The v2.0.0 vacate removed the canon-block copies.
 
 ---
 

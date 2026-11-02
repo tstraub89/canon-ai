@@ -117,7 +117,7 @@ Multiple task IDs in one invocation activates **bundle mode** — `canon run id1
 - **git**
 - **Claude Code (≥ 2.1.72)** — `npm install -g @anthropic-ai/claude-code`
 - **Codex CLI** (required for the default `mixed` provider and for `/canon-inline-review` under either provider; `CANON_PROVIDER=claude` pipeline runs don't need it, and Claude Code's `/code-review` covers inline review without it) — `npm install -g @openai/codex`
-- **gh** (optional, for `--pr` / `--push`) — `brew install gh && gh auth login`
+- **gh** (needed for `--pr`, `--push` and `--ship`; not for plain `canon run`) — `brew install gh && gh auth login`
 
 ### Install
 
@@ -339,7 +339,10 @@ Run canon on repositories where you would be comfortable running your test suite
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
 | `canon task phase <id> <phase> <status>` | Advance a task phase manually |
-| `canon task accept <id...> implement [--force]` | Accept a manually-committed `implement` phase outside the pipeline (e.g. after a manual recovery commit). `implement` is the only supported phase today — for other phases use `canon task phase`. |
+| `canon task accept <id...> <phase> [--reason "<text>"] [--force]` | Accept a manually-committed `implement` phase outside the pipeline (e.g. after a manual recovery commit), or sanction a `spec_review` / `code_review` verdict with an audit reason (`--reason` is required for those two). `--force` bypasses the missing-verdict and dirty-tree guards. |
+| `canon task set <id> <field> <value>` | Set task metadata (`title`, `task_size`, `delicate`, `worktree`, `base_branch`, `human_spec_gate`, `provider`). |
+| `canon task reset-spec-review <id>` / `canon task reset-code-review <id>` | Reset an auto-blocked review loop. |
+| `canon task post-merge-sync [<branch>]` | Reconcile the local branch after a PR merge. |
 | `canon run <id>` | Run the full pipeline for a task. Auto-detaches into its own session when stdout is not a TTY (so harness/process-group kills don't take it down); opt out with `CANON_NO_DETACH=1`. |
 | `canon run <id> --step --expect <phase>` | Run one phase then stop, with a phase-mismatch guard |
 | `canon run <id> --pr` | Push branch and open a draft PR (at `human_review`) |
@@ -348,6 +351,7 @@ Run canon on repositories where you would be comfortable running your test suite
 | `canon run <id> --full-send` | Skip the spec gate and auto-open a draft PR after clean QA |
 | `canon run <id> --ship` | After PR approval: merge with the configured method (squash by default; see `ship.merge_method`), delete branch, tear down worktree, archive the task, pull base branch. Don't merge the PR manually first. |
 | `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |
+| `canon watch <id> [--until <phase>] [--timeout <dur>] [--follow]` | Block on a detached run until it settles, then print one summary line (exit 0 healthy stop, 3 auto-block, 4 death, 5 timeout). |
 | `canon stop <id>` | Stop a detached canon run (SIGTERM → SIGKILL after 10s). Waits up to 30s — override via `CANON_STOP_WAIT_MS` — for the orchestrator's first heartbeat to verify the PID before signaling. |
 | `canon upgrade` | Sync vendored canon-owned files to match the installed version. It does not touch adopter-owned `AGENTS.md` or `CLAUDE.md`. Refuses to overwrite canon-owned targets that are locally modified, untracked but present, or whose git state cannot be verified unless `--force` is set. Symlinks at destination files or parent directories are refused even with `--force`; replace them with regular files/directories first. Use `--check` (or `--dry-run`) to preview, `--no-stage` to skip the auto-`git add`. |
 | `canon update` | Update the canon-ai package itself. Targets the install's own root (never the invocation directory) and installs the latest final release from npm by default. `--channel main` / `--ref <ref\|sha>` install a pinned GitHub development commit instead. Writes `provenance.json` in `.canon` after a successful install — recorded for future tooling, nothing reads it yet. |
@@ -449,10 +453,10 @@ Drop this into any repo and you have:
 
 ✅ **Built and working:**
 
-- `canon` CLI — `init`, `doctor`, `run`, `stop`, `task`, `update`, `upgrade`
+- `canon` CLI — `init`, `doctor`, `run`, `watch`, `stop`, `task`, `update`, `upgrade`, `completion`
 - Full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`. Bundled into `dist/orchestrator/run-task.js` and invoked via `canon run`.
 - Pure routing policy module (tier/sizing/model/effort matrix), table-tested.
-- `canon task` lifecycle CLI (new / list / status / phase / accept / reset-spec-review / post-merge-sync), in-process TS.
+- `canon task` lifecycle CLI (new / list / status / phase / accept / set / reset-spec-review / reset-code-review / post-merge-sync), in-process TS.
 - `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
 - Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`src/orchestrator/prompts/templates/`) and the `/canon-*` skills; adopters generate their own `AGENTS.md` / `CLAUDE.md` with the built-in `/init`
 - `docs/` — knowledge corpus templates with detailed scaffolding
