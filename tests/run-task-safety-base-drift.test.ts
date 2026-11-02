@@ -339,33 +339,7 @@ void test('commitHumanReviewFiles base-drift allows another task artifacts on th
     });
 });
 
-void test('commitHumanReviewFiles aborts on a real conflict and undoes its human_review commit', () => {
-    withTempDir('run-task-base-drift-conflict-', dir => {
-        const fixture = makeBaseDriftFixture(dir, {
-            seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
-            taskFiles: { 'docs/patterns.md': 'TASK\nb\nc\n' },
-            declared: ['`docs/patterns.md`'],
-        });
-        fixture.thirdParty(baseDir => fs.writeFileSync(path.join(baseDir, 'docs/patterns.md'), 'BASE\nb\nc\n', 'utf8'));
-        fs.mkdirSync(path.join(fixture.localDir, 'tasks/task-a'), { recursive: true });
-        fs.writeFileSync(path.join(fixture.localDir, 'tasks/task-a/done.md'), 'done\n', 'utf8');
-        const pre = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim();
-        const result = runNodeInline([
-            `import(${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)})`,
-            ".then(m => { process.argv = ['node', 'canon', 'task-a', '--push']; return m.main(); })",
-            '.catch(err => { console.error(err); process.exit(1); });',
-        ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
-        assert.notEqual(result.status, 0);
-        assert.match(combinedOutput(result), /conflicts with origin\/main/);
-        assert.match(combinedOutput(result), /docs\/patterns\.md/);
-        assert.match(combinedOutput(result), /git rebase origin\/main/);
-        assert.match(combinedOutput(result), /human_review commit was undone/);
-        assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
-        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
-    });
-});
-
-void test('commitHumanReviewFiles reports conflict and scope drift together', () => {
+void test('commitHumanReviewFiles aborts a real conflict, undoes its commit, and reports scope drift alongside', () => {
     withTempDir('run-task-base-drift-conflict-scope-', dir => {
         const fixture = makeBaseDriftFixture(dir, {
             seedFiles: { 'docs/patterns.md': 'a\nb\nc\n' },
@@ -383,8 +357,12 @@ void test('commitHumanReviewFiles reports conflict and scope drift together', ()
         ].join('\n'), baseDriftEnv(dir, fixture.tasksRoot), fixture.localDir);
         assert.notEqual(result.status, 0);
         assert.match(combinedOutput(result), /conflicts with origin\/main/);
+        assert.match(combinedOutput(result), /docs\/patterns\.md/);
+        assert.match(combinedOutput(result), /git rebase origin\/main/);
+        assert.match(combinedOutput(result), /human_review commit was undone/);
         assert.match(combinedOutput(result), /not in the spec's Affected Files[\s\S]*src\/extra\.ts/);
         assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.localDir, encoding: 'utf8' }).trim(), pre);
+        assert.equal(execFileSync('git', ['ls-remote', '--heads', fixture.originDir, 'task/demo'], { encoding: 'utf8' }).trim(), '');
     });
 });
 
