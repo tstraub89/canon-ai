@@ -1530,3 +1530,16 @@
 | 2026-11-01T22:48:16.218Z | ship-merge-method | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 52.1s | 575437 | ok |
 | 2026-11-01T22:49:26.991Z | ship-merge-method | qa | claude | claude-haiku-5-5 | 0 | 70.8s | 986790 | ok |
 | 2026-11-01T22:49:38.436Z | ship-merge-method | qa_fixup | claude | claude-haiku-5-5 | - | 11.0s | 343285 | ok |
+| 2026-11-02T04:32:02.756Z | spec-judgment-calls | spec_review | codex | gpt-6-luna | 0 | 54.5s | 921241 | ok |
+| 2026-11-02T04:36:15.820Z | spec-judgment-calls | plan | claude | opus | 0 | 189.6s | 2347998 | ok |
+| 2026-11-02T04:45:54.175Z | spec-judgment-calls | implement | codex | gpt-6-luna | 0 | 577.6s | 11177604 | ok |
+| 2026-11-02T04:46:20.503Z | spec-judgment-calls | code_review | codex | gpt-6-luna | 0 | 25.2s | - | ok |
+| 2026-11-02T04:48:51.304Z | spec-judgment-calls | code_review | claude | opus | 0 | 150.8s | 879130 | ok |
+| 2026-11-02T04:48:51.308Z | spec-judgment-calls | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 69.2s | 986033 | ok |
+| 2026-11-02T04:48:51.310Z | spec-judgment-calls | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 71.0s | 1028106 | ok |
+| 2026-11-02T04:53:50.234Z | spec-judgment-calls | implement | codex | gpt-6-luna | 1 | 298.9s | 14283145 | ok |
+| 2026-11-02T04:54:20.151Z | spec-judgment-calls | code_review | codex | gpt-6-luna | 1 | 28.6s | - | ok |
+| 2026-11-02T04:55:39.834Z | spec-judgment-calls | code_review | claude | opus | 1 | 79.7s | 538439 | ok |
+| 2026-11-02T04:55:39.838Z | spec-judgment-calls | code_review | claude:code-review-anchored | claude-opus-5-5 | 1 | 34.4s | 353727 | ok |
+| 2026-11-02T04:55:39.840Z | spec-judgment-calls | code_review | claude:code-review-cold | claude-opus-5-5 | 1 | 34.6s | 446875 | ok |
+| 2026-11-02T04:56:35.594Z | spec-judgment-calls | qa | claude | claude-haiku-5-5 | 0 | 55.7s | 621055 | ok |

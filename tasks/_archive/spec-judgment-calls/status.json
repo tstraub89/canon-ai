@@ -1,7 +1,7 @@
 {
   "id": "spec-judgment-calls",
   "title": "Surface judgment calls in specs",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-02",
   "updated": "2026-11-02",
   "branch": "task/spec-judgment-calls",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
