@@ -276,7 +276,7 @@ function resolveRepoRelative(repoRoot, relPath) {
 
 function isPlaceholderTarget(target) {
     if (target.includes('...')) return true;
-    if (/[<>\[\]\*\?]/.test(target)) return true;
+    if (/[<>[\]*?]/.test(target)) return true;
     if (target.endsWith('/')) return true;
 
     const segments = target.split('/').filter(Boolean);
