@@ -14,7 +14,7 @@ A claim-level audit: parallel read-only agents check what each doc *says* agains
 
 ## 1. Audit (read-only, parallel)
 
-Launch one **Sonnet** agent per group, in the background, in one message. Every brief says: the repo path and branch; READ-ONLY (no edits, no commits, never `cd` into `.canon/worktrees`); verify each factual claim against `src/`, `scripts/`, `.github/workflows/`, `package.json`, and `CHANGELOG.md` (newest entries are current behavior), and `tasks/_archive/<id>/` when needed; flag omissions an agent starting work would need; don't flag style, wording, or claims it couldn't check; for any doc with a `templates/` mirror, also flag adopter-facing text that breaks AGENTS.md §"Adopter Scope".
+Launch one **Sonnet** agent per group, in the background, in one message. Every brief says: the repo path and branch; READ-ONLY (no edits, no commits, never `cd` into `.canon/worktrees`); verify each factual claim against `src/`, `scripts/`, `.github/workflows/`, `package.json`, and `CHANGELOG.md` (newest entries are current behavior), and `tasks/_archive/<id>/` when needed; flag omissions an agent starting work would need; flag terminology collisions (a term used in a sense that differs from `docs/product-context.md` §"Core Concepts & Terminology" or from another doc, or two terms naming one concept) because ambiguous terms send agents down competing paths; don't flag style, wording, or claims it couldn't check; for any doc with a `templates/` mirror, also flag adopter-facing text that breaks AGENTS.md §"Adopter Scope".
 
 | Group | Docs |
 |---|---|
@@ -30,7 +30,7 @@ Required return format, most important first, under ~1200 words:
 
 ```
 - doc file:line — the claim (short quote)
-- verdict: WRONG | STALE | MISSING | OBSOLETE | DUPLICATE <doc:line> | CONTRADICTS <doc:line> | CODE DIVERGES | ADOPTER SCOPE
+- verdict: WRONG | STALE | MISSING | OBSOLETE | DUPLICATE <doc:line> | CONTRADICTS <doc:line> | CODE DIVERGES | ADOPTER SCOPE | TERM <doc:line or glossary entry>
 - evidence: source file + symbol (or command output)
 - proposed fix: exact replacement text, or "delete"
 ```
@@ -41,7 +41,7 @@ Save each report to the Claude session's scratchpad directory (never `tasks/`) a
 
 ## 2. Triage with Tim
 
-Present one table (group, count, most serious items), recommend applying every WRONG / STALE / MISSING / DUPLICATE / ADOPTER SCOPE finding, and raise only real judgment calls (typically: archiving a superseded doc, a code-vs-doc conflict where the code may be the bug, removing dead code a doc describes). Code changes are never part of this pass: note them as follow-ups (an issue, or a `/canon-spec` task).
+Present one table (group, count, most serious items), recommend applying every WRONG / STALE / MISSING / DUPLICATE / ADOPTER SCOPE finding (TERM findings too, unless which meaning wins is a product call), and raise only real judgment calls (typically: archiving a superseded doc, a code-vs-doc conflict where the code may be the bug, removing dead code a doc describes). Code changes are never part of this pass: note them as follow-ups (an issue, or a `/canon-spec` task).
 
 ## 3. Apply (parallel, file-disjoint)
 

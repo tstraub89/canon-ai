@@ -46,3 +46,7 @@ Any choices that were made during implementation that you should be aware of.
 ## Open Questions
 
 Anything that still needs your input or a follow-up task.
+
+## Root Cause
+
+One line per blocking review finding, reroute, or dropped AC: `- <class>: <one-line cause>`, where class is `context-missing`, `context-conflicting`, `spec-gap`, `plan-error`, `execution`, or `unrequested-change`. If there were none, write "None."

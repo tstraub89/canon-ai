@@ -63,6 +63,8 @@ After writing all done.md files:
 
   On a re-upsert after a reroute, only fill in cells that changed or that you are correcting — an omitted cell keeps its previously recorded value. In particular, do not overwrite an already-recorded `Spec verdict` with the current status.json verdict; that column means the first spec_review verdict, and status.json only retains the latest.
 
+- Add a `## Root Cause` section to done.md, after `## Quality Log`. It stays in done.md and is not copied to the quality log. For each blocking review finding, reroute, or dropped AC this task had, write one line `- <class>: <one-line cause>`, where class is one of `context-missing` (a doc or spec lacked a fact the agent needed), `context-conflicting` (docs, spec, or code said two different things, or a term was ambiguous), `spec-gap`, `plan-error`, `execution` (the context was adequate and the agent still got it wrong), or `unrequested-change` (the implementer changed or reinterpreted something the spec did not ask for). If the task had none, write `None.`
+
 **Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):
 - [ ] Version correct (per project policy; skip if unversioned)
 - [ ] Changelog updated if needed (per project policy; skip if unversioned)
@@ -77,6 +79,7 @@ After writing all done.md files:
 4. Test results table
 5. Decisions made during implementation
 6. Open questions needing human input
+7. Root cause of each blocking finding, reroute, or dropped AC (`## Root Cause`)
 
 **Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently — reference the symbol or path; do not restate the value.
 
