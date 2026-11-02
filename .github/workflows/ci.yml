@@ -45,17 +45,16 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: test (${{ matrix.node-version }})
+  # Static checks and packaging smoke tests. The test suite runs in the
+  # sharded `test` job below, in parallel with this one.
+  checks:
+    name: checks
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: ['24.x']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: '24.x'
           cache: 'npm'
       - run: npm ci
       - name: Verify CHANGELOG date on release PRs to main
@@ -81,7 +80,9 @@ jobs:
       - run: npm run build
       - name: Install shells for completion tests
         run: sudo apt-get update && sudo apt-get install -y zsh fish tcsh
-      - run: npm test
+      # The test shards skip this file so they don't each install the shells.
+      - name: Run completion tests
+        run: node --test --import ./tests/md-loader-register.mjs --import tsx tests/completion.test.ts
       - name: Verify committed dist/ matches a fresh build
         # We commit dist/ because `npm install -g <git-url>` cannot reliably
         # rebuild at install time (see npm/cli#8440). This step rebuilds and
@@ -130,3 +131,35 @@ jobs:
           PATH="$SHIM_DIR" canon task new test-task "Test"
           test -f tasks/test-task/status.json
           node -e "JSON.parse(require('fs').readFileSync('tasks/test-task/status.json','utf8'))"
+
+  # The suite is split across parallel runners with node's --test-shard, which
+  # assigns whole test files to shards. Within a file tests run serially, so
+  # keep any single test file small enough not to dominate its shard.
+  test:
+    name: test (shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      # Same command as package.json's `test` script, with the shard flag
+      # placed before the file list: node ignores --test-shard after it, and
+      # NODE_OPTIONS would leak the flag into the node processes tests spawn.
+      # Keep the two in sync. completion.test.ts needs zsh/fish/tcsh, so it
+      # runs in the `checks` job instead of installing the shells here.
+      - name: Run test shard
+        run: |
+          files=()
+          for f in tests/*.test.ts; do
+            [ "$f" = tests/completion.test.ts ] || files+=("$f")
+          done
+          node --test --test-shard=${{ matrix.shard }}/3 \
+            --import ./tests/md-loader-register.mjs --import tsx "${files[@]}"
