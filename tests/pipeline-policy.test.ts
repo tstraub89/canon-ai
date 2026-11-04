@@ -250,8 +250,8 @@ const CODEX_MATRIX: CodexRow[] = [
     { phase: 'code_review', size: 'XS', expected: { model: 'mini', effort: 'high' } },
     { phase: 'code_review', size: 'S',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'code_review', size: 'M',  expected: { model: 'mini', effort: 'high' } },
-    { phase: 'code_review', size: 'L',  expected: { model: 'mini', effort: 'high' } },
-    { phase: 'code_review', size: 'XL', expected: { model: 'mini', effort: 'high' } },
+    { phase: 'code_review', size: 'L',  expected: { model: 'full', effort: 'high' } },
+    { phase: 'code_review', size: 'XL', expected: { model: 'full', effort: 'high' } },
 ];
 
 for (const row of CODEX_MATRIX) {
@@ -265,8 +265,18 @@ void test('codex matrix: delicate M uses XL row (effective size)', () => {
     const p = getPipelinePolicy([s('M', true)], TEST_CONFIG);
     assert.deepEqual(p.codex('implement'), { model: 'full', effort: 'high' });
     assert.deepEqual(p.codex('spec_review'), { model: 'full', effort: 'high' });
-    assert.deepEqual(p.codex('code_review'), { model: 'mini', effort: 'high' });
+    assert.deepEqual(p.codex('code_review'), { model: 'full', effort: 'high' });
 });
+
+for (const { name, tasks, model } of [
+    { name: '[S, L]', tasks: [s('S'), s('L')], model: 'full' },
+    { name: '[S, S-delicate]', tasks: [s('S'), s('S', true)], model: 'full' },
+    { name: '[XS, M]', tasks: [s('XS'), s('M')], model: 'mini' },
+]) {
+    void test(`codex matrix: bundle ${name} cold lens → ${model}/high`, () => {
+        assert.deepEqual(getPipelinePolicy(tasks, TEST_CONFIG).codex('code_review'), { model, effort: 'high' });
+    });
+}
 
 // ── Claude model/effort matrix ──────────────────────────────────────────────
 

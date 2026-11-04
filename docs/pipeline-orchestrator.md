@@ -197,7 +197,7 @@ Set by `canon task new` at task creation; change them with `canon task set <id> 
 | Field | Values | Purpose |
 |---|---|---|
 | `task_size` | `XS \| S \| M \| L \| XL` | Drives the pipeline tier and effective-size model/effort cells for Codex-held roles in mixed mode and Claude roles. XS is fast-tier; S+ runs the full pipeline (including spec review). |
-| `delicate` | `true \| false` | Forces the XL bucket (in mixed mode the full Codex model; high Claude spec/plan/code-review effort, and in `claude` mode high Claude spec-review and implement effort too) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
+| `delicate` | `true \| false` | Forces the XL bucket (in mixed mode the full Codex model, including the cold-Codex review lens; high Claude spec/plan/code-review effort, and in `claude` mode high Claude spec-review and implement effort too) regardless of nominal size. Set when an undetected bug has materially harder-to-recover blast radius than a normal bug — common examples: auth, payments, premium gating, persistent storage migrations, security-sensitive cryptography. Project-specific surfaces also qualify (medical PHI, scientific reproducibility, regulated data). The bar is *blast radius*, not difficulty. |
 | `human_spec_gate` | `true \| false` | **Single-use latch**, not a persistent toggle. `true` arms a one-time halt after `spec_review`, before planning (default: `true`). A human can re-arm it with `canon task set <id> human_spec_gate true`; setting it `false` on a delicate task is refused. The orchestrator flips it to `false` *at the moment it halts*, but a human can also disarm it, so `false` means "fired, pre-cleared, or disarmed," not proof the gate fired. See [Spec gate is a single-use latch](#spec-gate-is-a-single-use-latch). |
 | `worktree` | `true \| false` | Worktree isolation. `canon task new` scaffolds this to `true`, so worktree mode is the effective default for every scaffolded task — run `canon task set <id> worktree false` to opt out and run in the main checkout. The orchestrator treats an *absent* field as `false`, but that fallback only applies to hand-rolled `status.json` files. See Worktree Isolation below. |
 | `base_branch` | string (default `"main"`) | Branch the task branches off and PRs against. Auto-set by `canon task new` from the current git checkout at task creation. |
@@ -218,7 +218,7 @@ Set by `canon task new` at task creation; change them with `canon task set <id> 
 
 Canon's recommended starting policy for when to scope a task as `delicate: true`: *require evidence of real production impact, not theoretical correctness.*
 
-A `delicate` task carries meaningful regression risk on a security-sensitive surface and promotes spec review and implementation to their XL cells (in mixed mode, the full Codex model), alongside stronger Claude review. In `claude` mode it also raises Claude spec-review and implementation effort. "It's technically wrong" is not sufficient justification on its own — a hardening pass on auth/payments/storage that no user has ever hit can take significant pipeline time, introduce regression risk, and produce zero customer-visible value. Before scoping any task as `delicate: true`, require at least one confirmed production incident or a concrete upcoming flow that depends on the fix. Note the incident in the spec's *Problem* section.
+A `delicate` task carries meaningful regression risk on a security-sensitive surface and promotes spec review, implementation, and, in mixed mode, the cold-Codex review lens to their XL cells (in mixed mode, the full Codex model), alongside stronger Claude review. In `claude` mode it also raises Claude spec-review and implementation effort. "It's technically wrong" is not sufficient justification on its own — a hardening pass on auth/payments/storage that no user has ever hit can take significant pipeline time, introduce regression risk, and produce zero customer-visible value. Before scoping any task as `delicate: true`, require at least one confirmed production incident or a concrete upcoming flow that depends on the fix. Note the incident in the spec's *Problem* section.
 
 This is a default — your project can adopt a stricter or looser bar in `docs/decisions.md` if it has different risk tolerance (e.g., a medical-data project with regulatory exposure may want proactive hardening).
 
@@ -232,11 +232,11 @@ Codex model and effort come from a fixed phase × size matrix:
 |---|---|---|---|---|---|
 | `spec_review` | — (skipped) | mini / high | mini / high | mini / high | full / high |
 | `implement`   | mini / xhigh | mini / xhigh | mini / max | mini / max | full / high |
-| `code_review` (cold lens) | mini / high | mini / high | mini / high | mini / high | mini / high |
+| `code_review` (cold lens) | mini / high | mini / high | mini / high | full / high | full / high |
 
-Codex is tuned for token efficiency — the mini model handles most phases; the full model only comes out for XL or delicate work. Effort comes only from this matrix; there is no Codex effort environment override. M/L implement runs use Luna at `max`, while XL/delicate runs use Sol at `high`: delicate work already gets the stronger model, and Sol at `xhigh` costs about 1.5–2× Sol at `high`.
+Codex is tuned for token efficiency — the mini model handles most phases; the full model runs XL or delicate work and the cold-Codex review lens at L. Effort comes only from this matrix; there is no Codex effort environment override. M/L implement runs use Luna at `max`, while XL/delicate runs use Sol at `high`: delicate work already gets the stronger model, and Sol at `xhigh` costs about 1.5–2× Sol at `high`.
 
-In mixed mode the cold-Codex `code_review` lens is deliberately flat: as a mandatory hard-fail gate, it runs at `high` effort and stays on the mini model at every size, including XL/delicate.
+In mixed mode the mandatory cold-Codex `code_review` lens runs at `high` effort at every size: the mini model at XS, S and M, and the full model at L and XL/delicate. `CODEX_MODEL_FULL` therefore also steers the lens at L and XL/delicate, and `CODEX_MODEL_MINI` steers it at XS–M. A bundle runs one cold review at its effective size, so one L, XL, or delicate member puts the whole bundle's cold review on the full model.
 
 `spec_review` runs at `high` at every size that runs it; `xhigh` and `max` cost 3–5× `high`'s output tokens for marginal gain.
 
@@ -307,8 +307,8 @@ Codex model overrides:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CODEX_MODEL_MINI` | `gpt-6-luna` | Codex model for XS/S/M/L non-delicate phases. |
-| `CODEX_MODEL_FULL` | `gpt-6.1-sol` | Codex model for XL or delicate phases. |
+| `CODEX_MODEL_MINI` | `gpt-6-luna` | Codex model for non-delicate `spec_review` and `implement` at XS–L, and the non-delicate cold-Codex review lens at XS–M. |
+| `CODEX_MODEL_FULL` | `gpt-6.1-sol` | Codex model for XL or delicate phases, and the cold-Codex review lens at L. |
 | `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for XS/S/M, 5 for L/XL by nominal `task_size` (`delicate` does not raise it). A non-integer or negative value warns and falls back to the default. |
 
 `CODEX_MODEL_DEFAULT` and `CODEX_MODEL_DELICATE` are deprecated fallbacks for `CODEX_MODEL_MINI` / `CODEX_MODEL_FULL`; canon warns when they are set. `CODEX_EFFORT_DEFAULT` / `CODEX_EFFORT_DELICATE` are ignored with a warning.
@@ -498,7 +498,7 @@ PIPELINE_STALL_TIMEOUT_MS=1800000 canon run <id>
 
 ## Code Review Diff Injection
 
-In mixed mode, code review starts with a cold-Codex diff review run by the orchestrator in the active worktree: `codex exec review --json -c model_reasoning_effort=<effort> --base <reviewBase> -m <miniModel>`, where canon resolves `<miniModel>` and `<effort>` through the `code_review` policy row (mini / `high` at every size). The captured findings are written verbatim to `tasks/<id>/review-cold-codex.md` for every task in the invocation. Bundles run this once over the combined branch diff, and the same findings reach every member.
+In mixed mode, code review starts with a cold-Codex diff review run by the orchestrator in the active worktree: `codex exec review --json -c model_reasoning_effort=<effort> --base <reviewBase> -m <model>`, where canon resolves `<model>` and `<effort>` through the `code_review` policy row (mini / `high` at XS–M, full / `high` at L and XL/delicate). The captured findings are written verbatim to `tasks/<id>/review-cold-codex.md` for every task in the invocation. Bundles run this once over the combined branch diff, and the same findings reach every member.
 
 The review base is the task's base branch for Round 1, effective XL or delicate tasks, an absent or unusable previous-round archive, a delta touching a path outside the previous change set, or a delta over 400 added and deleted lines. Otherwise the base is the reviewed SHA in the newest archive for round N−1. Both path sets include both sides of renames; task artifacts and telemetry do not count toward the path or line triggers. Missing, unresolvable, non-ancestor, or HEAD-equal previous SHAs force a full review, as does a failed delta path or line-stat probe. Mixed-mode invocations add `tasks/<id>/review-cold-codex-run-N.md` with a header recording round, reviewed SHA, scope, base, and reason; the unnumbered file retains only the latest verbatim findings. Claude-mode invocations add `tasks/<id>/review-round-N.md` with the same header and no lens findings, and remove any stale unnumbered findings file. Each family numbers independently using numeric max+1, regardless of the header's round. The round N−1 lookup reads both families, choosing the highest-numbered matching header within each family. If both families match but disagree on the reviewed SHA, the next round runs full scope; if the SHAs agree, either record is usable. The malformed-record check also reads both families.
 
