@@ -236,7 +236,7 @@ Codex model and effort come from a fixed phase × size matrix:
 
 Codex is tuned for token efficiency — the mini model handles most phases; the full model runs XL or delicate work and the cold-Codex review lens at L. Effort comes only from this matrix; there is no Codex effort environment override. M/L implement runs use Luna at `max`, while XL/delicate runs use Sol at `high`: delicate work already gets the stronger model, and Sol at `xhigh` costs about 1.5–2× Sol at `high`.
 
-In mixed mode the mandatory cold-Codex `code_review` lens runs at `high` effort at every size: the mini model at XS, S and M, and the full model at L and XL/delicate. `CODEX_MODEL_FULL` therefore also steers the lens at L and XL/delicate, and `CODEX_MODEL_MINI` steers it at XS–M. A bundle runs one cold review at its effective size, so one L, XL, or delicate member puts the whole bundle’s cold review on the full model.
+In mixed mode the mandatory cold-Codex `code_review` lens runs at `high` effort at every size: the mini model at XS, S and M, and the full model at L and XL/delicate. `CODEX_MODEL_FULL` therefore also steers the lens at L and XL/delicate, and `CODEX_MODEL_MINI` steers it at XS–M. A bundle runs one cold review at its effective size, so one L, XL, or delicate member puts the whole bundle's cold review on the full model.
 
 `spec_review` runs at `high` at every size that runs it; `xhigh` and `max` cost 3–5× `high`'s output tokens for marginal gain.
 
@@ -307,7 +307,7 @@ Codex model overrides:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CODEX_MODEL_MINI` | `gpt-6-luna` | Codex model for non-delicate `spec_review` and `implement` at XS–L, and the cold-Codex review lens at XS–M. |
+| `CODEX_MODEL_MINI` | `gpt-6-luna` | Codex model for non-delicate `spec_review` and `implement` at XS–L, and the non-delicate cold-Codex review lens at XS–M. |
 | `CODEX_MODEL_FULL` | `gpt-6.1-sol` | Codex model for XL or delicate phases, and the cold-Codex review lens at L. |
 | `MAX_REVIEW_LOOPS` | _size-aware_ | Max `spec_review` and `code_review` iterations before auto-block. Unset → 3 for XS/S/M, 5 for L/XL by nominal `task_size` (`delicate` does not raise it). A non-integer or negative value warns and falls back to the default. |
 

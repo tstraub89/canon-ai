@@ -6,7 +6,7 @@
 
 ### Changed
 
-- **The mixed-mode cold-Codex review lens uses the full Codex model on L and XL/delicate tasks.** XS, S and M tasks keep the mini model; effort stays `high` everywhere. `CODEX_MODEL_FULL` now also steers the lens on L, XL and delicate tasks, so a custom full-model override reaches it. A bundle containing an L, XL, or delicate member runs its single cold review on the full model. To restore the mini model at every size, install the previous canon release; there is no per-phase Codex override.
+- **The mixed-mode cold-Codex review lens uses the full Codex model on L and XL/delicate tasks.** XS, S and M tasks keep the mini model; effort stays `high` everywhere. `CODEX_MODEL_FULL` (or its deprecated fallback `CODEX_MODEL_DELICATE`) now also steers the lens on L, XL and delicate tasks, so a custom full-model override reaches it. A bundle containing an L, XL, or delicate member runs its single cold review on the full model. To restore the mini model at every size, install the previous canon release; there is no per-phase Codex override.
 
 ## [3.17.0] — 2026-11-02
 
