@@ -1781,6 +1781,58 @@ console.log(JSON.stringify({type:'turn.completed'}));
     });
 }
 
+void test('cold lens model follows effective size: L and delicate use CODEX_MODEL_FULL, M uses CODEX_MODEL_MINI', { concurrency: false }, async () => {
+    await withTempTasksAsync(async (tasksRoot, activeCwd) => {
+        const log = path.join(activeCwd, 'capture.jsonl');
+        await fs.promises.writeFile(path.join(activeCwd, 'codex'), `#!${process.execPath}
+const fs = require('fs');
+fs.appendFileSync(process.env.REVIEW_PARITY_LOG, JSON.stringify({binary:'codex',argv:process.argv.slice(2),cwd:process.cwd()})+'\\n');
+console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'clean review'}}));
+console.log(JSON.stringify({type:'turn.completed'}));
+`, { mode: 0o755 });
+        // Model overrides freeze at import time, so resolve the real backend in a fresh process.
+        const script = `
+            import { agentBackendFor } from ${JSON.stringify(path.join(process.cwd(), 'src/orchestrator/agents/backend.ts'))};
+            import { MIXED_ROLE_ASSIGNMENT } from ${JSON.stringify(path.join(process.cwd(), 'src/lib/pipeline-policy.ts'))};
+            const backend = agentBackendFor('cold_reviewer', MIXED_ROLE_ASSIGNMENT);
+            for (const status of [
+                { task_size: 'L', delicate: false },
+                { task_size: 'M', delicate: true },
+                { task_size: 'M', delicate: false },
+            ]) {
+                const result = await backend.coldReview({
+                    role: 'cold_reviewer', phase: 'code_review', tasks: [{ taskId: 'model-review', status }],
+                    baseBranch: 'main', cwd: process.env.COLD_LENS_CWD,
+                });
+                if (!result.success) throw new Error('cold review failed: ' + JSON.stringify(status));
+            }
+        `;
+        const result = spawnSync(process.execPath, [
+            '--import', path.join(process.cwd(), 'tests/md-loader-register.mjs'),
+            '--import', import.meta.resolve('tsx'), '--input-type=module', '-e', script,
+        ], {
+            cwd: process.cwd(), encoding: 'utf8',
+            env: {
+                ...process.env,
+                PATH: `${activeCwd}${path.delimiter}${process.env.PATH ?? ''}`,
+                REVIEW_PARITY_LOG: log, CANON_TASKS_DIR_OVERRIDE: tasksRoot, COLD_LENS_CWD: activeCwd,
+                CODEX_MODEL_MINI: 'cold-lens-test-mini', CODEX_MODEL_FULL: 'cold-lens-test-full',
+            },
+        });
+        assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+        const captures = fs.readFileSync(log, 'utf8').trim().split('\n')
+            .map(line => JSON.parse(line) as { binary: string; argv: string[]; cwd: string });
+        assert.equal(captures.length, 3);
+        for (const [index, model] of ['cold-lens-test-full', 'cold-lens-test-full', 'cold-lens-test-mini'].entries()) {
+            assert.equal(captures[index].binary, 'codex');
+            assert.deepEqual(captures[index].argv, [
+                'exec', 'review', '--json', '-c', 'model_reasoning_effort=high', '--base', 'main', '-m', model,
+            ]);
+            assert.equal(fs.realpathSync(captures[index].cwd), fs.realpathSync(activeCwd));
+        }
+    });
+});
+
 void test('Claude provider skips orchestrator cold lens, removes stale findings and preserves delta round records', { concurrency: false }, async () => {
     await withTempTasksAsync(async (tasksRoot, activeCwd) => {
         const id = 'claude-review';

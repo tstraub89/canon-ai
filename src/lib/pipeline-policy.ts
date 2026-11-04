@@ -228,8 +228,11 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //                stronger choice for delicate work, and its xhigh effort
     //                costs about 1.5–2× high; re-evaluating its effort curve
     //                remains a separate follow-up.
-    //   code_review: the mandatory cold-Codex lens stays on mini at every
-    //                size and uses flat high effort, including XL/delicate.
+    //   code_review: the mandatory cold-Codex lens uses high effort at every
+    //                size: mini at XS/S/M, full at L and XL/delicate (2026-11).
+    //                A full-model replay recovered P1s missed by mini on a
+    //                delicate task; L has the highest post-PR defect-fix rate
+    //                in the adopter sample (see decisions.md).
     //
     // The `XS` row under spec_review is unused in practice (XS fast tier skips
     // Codex spec review entirely) but kept for completeness and testability.
@@ -253,8 +256,8 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
             XS: { model: config.codexModelMini, effort: 'high' },
             S:  { model: config.codexModelMini, effort: 'high' },
             M:  { model: config.codexModelMini, effort: 'high' },
-            L:  { model: config.codexModelMini, effort: 'high' },
-            XL: { model: config.codexModelMini, effort: 'high' },
+            L:  { model: config.codexModelFull, effort: 'high' },
+            XL: { model: config.codexModelFull, effort: 'high' },
         },
     };
 }

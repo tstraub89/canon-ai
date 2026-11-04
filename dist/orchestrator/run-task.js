@@ -762,8 +762,8 @@ function codexMatrix(config3) {
       XS: { model: config3.codexModelMini, effort: "high" },
       S: { model: config3.codexModelMini, effort: "high" },
       M: { model: config3.codexModelMini, effort: "high" },
-      L: { model: config3.codexModelMini, effort: "high" },
-      XL: { model: config3.codexModelMini, effort: "high" }
+      L: { model: config3.codexModelFull, effort: "high" },
+      XL: { model: config3.codexModelFull, effort: "high" }
     }
   };
 }

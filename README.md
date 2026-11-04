@@ -64,7 +64,7 @@ Canon is what happens when you treat those failure modes as engineering problems
 | Agent forgets a past mistake | **`docs/lessons-learned.md`** — distilled cross-task wisdom that promotes into permanent rules over time |
 | Reviews loop forever on the same disagreement | **Auto-block on runaway review loops** — per-size caps (see `pipeline-policy.ts`), escalation to human after the cap |
 | Spec drift between conversation and pipeline | **File-based handoff protocol** — every artifact lives in `tasks/<id>/`, no copy-pasting |
-| Sensitive surfaces (auth, payments) get refactored on theoretical grounds | **`delicate: true` flag** that moves spec review and implementation to the XL cells (the full Codex model in mixed mode) and triggers extra review discipline |
+| Sensitive surfaces (auth, payments) get refactored on theoretical grounds | **`delicate: true` flag** that moves spec review, implementation, and (in mixed mode) the cold-Codex review lens to the XL cells (the full Codex model in mixed mode) and triggers extra review discipline |
 
 ## How it works
 
@@ -97,7 +97,7 @@ The pipeline supports two tiers:
 - **Fast tier** (XS tasks): spec + plan in one Claude session; skip the `spec_review` phase, and the human gate replaces it.
 - **Full tier** (S / M / L / XL / delicate tasks): every phase runs separately, and the spec reviewer checks specs before they reach the human.
 
-`delicate: true` promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus moves spec review and implementation to their XL cells (in mixed mode, the full Codex model); QA and, in mixed mode, the cold-Codex review lens stay on their regular cells. Set it with `canon task set <task-id> delicate true`. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
+`delicate: true` promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus moves spec review, implementation, and, in mixed mode, the cold-Codex review lens to their XL cells (in mixed mode, the full Codex model); QA stays on its regular cells. Set it with `canon task set <task-id> delicate true`. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
 
 A single command runs a task end-to-end:
 
