@@ -1,7 +1,7 @@
 {
   "id": "cold-lens-full-model-l-xl",
   "title": "Cold-Codex review lens uses the full model at L and XL/delicate",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-04",
   "updated": "2026-11-04",
   "branch": "task/cold-lens-full-model-l-xl",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

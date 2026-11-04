@@ -1543,3 +1543,11 @@
 | 2026-11-02T04:55:39.838Z | spec-judgment-calls | code_review | claude:code-review-anchored | claude-opus-5-5 | 1 | 34.4s | 353727 | ok |
 | 2026-11-02T04:55:39.840Z | spec-judgment-calls | code_review | claude:code-review-cold | claude-opus-5-5 | 1 | 34.6s | 446875 | ok |
 | 2026-11-02T04:56:35.594Z | spec-judgment-calls | qa | claude | claude-haiku-5-5 | 0 | 55.7s | 621055 | ok |
+| 2026-11-04T04:01:34.119Z | cold-lens-full-model-l-xl | spec_review | codex | gpt-6.1-sol | 0 | 112.6s | 1541257 | ok |
+| 2026-11-04T15:03:47.386Z | cold-lens-full-model-l-xl | plan | claude | opus | 0 | 201.2s | 2911021 | ok |
+| 2026-11-04T15:09:50.564Z | cold-lens-full-model-l-xl | implement | codex | gpt-6.1-sol | 0 | 362.1s | 1878888 | ok |
+| 2026-11-04T15:10:18.279Z | cold-lens-full-model-l-xl | code_review | codex | gpt-6-luna | 0 | 26.5s | - | ok |
+| 2026-11-04T15:14:07.900Z | cold-lens-full-model-l-xl | code_review | claude | opus | 0 | 229.6s | 893520 | ok |
+| 2026-11-04T15:14:07.906Z | cold-lens-full-model-l-xl | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 118.8s | 1960599 | ok |
+| 2026-11-04T15:14:07.910Z | cold-lens-full-model-l-xl | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 147.3s | 2491342 | ok |
+| 2026-11-04T15:15:27.063Z | cold-lens-full-model-l-xl | qa | claude | claude-haiku-5-5 | 0 | 79.1s | 951560 | ok |
