@@ -1,0 +1,1 @@
+The policy routes the cold-Codex review to the full model at L and effective XL/delicate sizes, while preserving mini at XS–M. The bundle behavior, model overrides, generated output, tests, and documentation are consistent with that change.

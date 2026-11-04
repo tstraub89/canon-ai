@@ -1,10 +1,10 @@
 {
   "id": "cold-lens-full-model-l-xl",
   "title": "Cold-Codex review lens uses the full model at L and XL/delicate",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-04",
   "updated": "2026-11-04",
-  "branch": "",
+  "branch": "task/cold-lens-full-model-l-xl",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,13 +66,17 @@
   },
   "escalations": [],
   "sessions": {
-    "spec_reviewer": "01a1a4b6-6f14-7d40-a1e5-bf00a2033e0e"
+    "spec_reviewer": "01a1a4b6-6f14-7d40-a1e5-bf00a2033e0e",
+    "implementer": "01a1a716-73fb-70a3-ba47-792789150abb",
+    "reviewer": "ad889014-e40f-4e39-a90b-b77c9f82d0a4"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
   "provider": "mixed",
   "session_backends": {
-    "spec_reviewer": "codex"
+    "spec_reviewer": "codex",
+    "implementer": "codex",
+    "reviewer": "claude"
   }
 }
