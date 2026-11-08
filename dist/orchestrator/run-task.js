@@ -5142,7 +5142,7 @@ function tokensFromBodies(bodies) {
       } else {
         const hadParens = token.endsWith("()");
         const name = hadParens ? token.slice(0, -2) : token;
-        const shaped = hadParens || /[a-z0-9][A-Z]/.test(name) || /[A-Z]{2,}[a-z]/.test(name) || /[A-Za-z0-9]_[A-Za-z0-9]/.test(name);
+        const shaped = hadParens || /^[A-Z][a-z0-9]+$/.test(name) || /[a-z0-9][A-Z]/.test(name) || /[A-Z]{2,}[a-z]/.test(name) || /[A-Za-z0-9]_[A-Za-z0-9]/.test(name);
         if (name.length >= 3 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && shaped) normalized = name;
       }
       if (normalized && !seen.has(normalized)) {

@@ -162,10 +162,10 @@ void test('identifier entries search amendments, calls, and flags while excludin
         const extracted = extractSpecTokens([
             '## Amendment', '`olderToken`',
             '## Amendment Round 2', '`newestToken`',
-            '## Design', '`parseWidget()` `PascalCase` `snake_case` `URLParser` `JSONValue` `HTTPServer` `true` `lib/foo.ts`',
+            '## Design', '`parseWidget()` `PascalCase` `snake_case` `URLParser` `JSONValue` `HTTPServer` `Widget` `true` `lib/foo.ts`',
         ].join('\n'));
         assert.deepEqual(extracted.amendment, ['newestToken', 'olderToken']);
-        assert.deepEqual(extracted.design, ['parseWidget', 'PascalCase', 'snake_case', 'URLParser', 'JSONValue', 'HTTPServer']);
+        assert.deepEqual(extracted.design, ['parseWidget', 'PascalCase', 'snake_case', 'URLParser', 'JSONValue', 'HTTPServer', 'Widget']);
     } finally {
         fixture.cleanup();
     }
