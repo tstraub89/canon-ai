@@ -85,7 +85,7 @@ The orchestrator is a long-running TypeScript process. It spawns agent CLIs as s
 6. **Plan**: orchestrator spawns Claude with the plan prompt. Claude writes `plan.md`.
 7. **Implement**: the orchestrator spawns the implementer (Codex in mixed mode, Claude in `claude` mode) with the implement prompt + spec + plan. The implementer edits files in the worktree (or main checkout if `worktree: false`) and writes `handoff.md`. The orchestrator runs a hallucination check.
 8. **Auto-commit**: `autoCommitCode()` parses every handoff Changes table → `allHandoffFiles` set. Verifies dirty tree matches handoff (every dirty file is listed; every listed file exists or is already committed, except gitignored build output and the listing task's own artifacts under `tasks/<id>/`). Before staging, the orchestrator runs docs-refs-check and may resume the implement session up to two times to fix broken references in handoff.md. Stages and commits with task-titled message.
-9. **Code review**: orchestrator runs `validateHandoff()` pre-flight (no `Fail` rows, AC coverage table populated, baseline Self-Check evidence present and filled, all required validations present). If pass, spawns Claude with the review prompt. Claude writes `review.md` (Stage 1 + Stage 2). On `changes_requested`, routes back to implement.
+9. **Code review**: orchestrator runs the `classifyPreflightBlockers()` pre-flight (no `Fail` rows, AC coverage table populated, baseline Self-Check evidence present and filled, all required validations present). If pass, spawns Claude with the review prompt. Claude writes `review.md` (Stage 1 + Stage 2). On `changes_requested`, routes back to implement.
 10. **QA**: Claude writes `done.md` (including judgment cells for the task-quality-log row) and distills `notes.md` into the task's `lessons.md` fragment. The qa → done transition upserts the task's `quality-log.md` fragment row from `status.json` plus those judgment cells. Task runs write telemetry fragments; `--ship` folds them into the shared docs.
 11. **Human review**: human tests against `done.md`, marks `phases.human_review.status = "done"`.
 
@@ -185,7 +185,7 @@ Two mechanisms halt or redirect the pipeline:
 
 Three gates protect the implement → review boundary:
 - **`autoCommitCode()`** (pre-commit): cross-checks dirty tree against handoff Changes table both directions. Fails if files aren't accounted for.
-- **`validateHandoff()`** (pre-review, per-task): rejects handoffs with `Fail` validation outcomes, missing AC coverage tables, missing or unfilled baseline Self-Check evidence, or skipped required checks.
+- **`classifyPreflightBlockers()`** (pre-review, per-task): rejects handoffs with `Fail` validation outcomes, missing AC coverage tables, missing or unfilled baseline Self-Check evidence, or skipped required checks.
 - **`verifyHandoffAgainstDiff()`** (pre-review, bundle-wide): post-commit cross-check that the committed diff matches the union of all bundle members' handoff Changes tables — catches hallucinated handoff entries and silent edits that slipped past the pre-commit check. Two kinds of row are exempt: gitignored build output listed beside its generator, and a row naming one of the listing task's own artifacts under `tasks/<id>/` (the pipeline may rewrite those identical to the base). A row naming another bundle member's artifact is not exempt.
 
 ### Concerns that don't apply

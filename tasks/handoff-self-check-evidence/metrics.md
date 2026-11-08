@@ -10,3 +10,9 @@
 | 2026-11-08T14:15:50.909Z | handoff-self-check-evidence | spec | claude | opus | 0 | 115.9s | 822057 | ok |
 | 2026-11-08T14:16:50.240Z | handoff-self-check-evidence | spec_review | codex | gpt-6.1-sol | 1 | 59.3s | 1862309 | ok |
 | 2026-11-08T14:23:05.731Z | handoff-self-check-evidence | plan | claude | opus | 0 | 375.4s | 5389821 | ok |
+| 2026-11-08T14:32:41.711Z | handoff-self-check-evidence | implement | codex | gpt-6.1-sol | 0 | 574.6s | 4078702 | ok |
+| 2026-11-08T14:35:09.993Z | handoff-self-check-evidence | code_review | codex | gpt-6.1-sol | 0 | 147.2s | - | ok |
+| 2026-11-08T14:43:04.753Z | handoff-self-check-evidence | code_review | claude | opus | 0 | 474.7s | 789641 | ok |
+| 2026-11-08T14:43:04.761Z | handoff-self-check-evidence | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 332.2s | 4871263 | ok |
+| 2026-11-08T14:43:04.765Z | handoff-self-check-evidence | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 371.8s | 3039583 | ok |
+| 2026-11-08T14:44:39.399Z | handoff-self-check-evidence | qa | claude | claude-haiku-5-5 | 0 | 94.6s | 1340639 | ok |
