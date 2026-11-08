@@ -262,3 +262,11 @@ A regex over a CLI's flags misses valid invocations and over-matches flag values
 *(2026-11-04, source: cold-lens-full-model-l-xl)*
 
 A test that reads its expected model from the same config it is checking cannot fail on a wrong cell, because the expected value moves with the bug. The existing review-invocation parity test and the `makeDeps` stub both did this, so they passed on the old mini cells for L and XL. Prevention: for any size, phase, or tier matrix, write the expected value as a literal next to the cell it pins, and pick distinct override values (for example `mini-x` and `full-x`) so a fallback to the wrong tier shows up as a wrong literal. If the matrix reads env vars at module load, put the test in a spawned process that sets them first. Confirm the test fails on the old cells before editing production code. Canonical example: the fresh-process literal `-m` assertions in `tests/run-task-code-review.test.ts` and the matrix table in `tests/pipeline-policy.test.ts`.
+
+---
+
+### A fail-open test must reach the throw path, not only the early return
+
+*(date 2026-11-08, source: implementer-blast-radius-map)*
+
+A fake `git` that fails every call returns from the first guard, so the test never reaches the `throw` inside the fail-open `try`. Three of the nine first-round findings on this task were test-integrity gaps: an assertion on a hand-typed string instead of rendered output, a byte-cap check that still passes if every entry is dropped, and a fail-open check that never reached the outer catch. Write the fake to pass early calls through and fail only the call under test, assert a non-empty result when nothing fails (a positive control, so the test cannot go vacuous), and assert exact omitted counts. Reference `buildBlastRadiusBlock` in `src/orchestrator/blast-radius.ts` and its fixtures in `tests/blast-radius.test.ts`.

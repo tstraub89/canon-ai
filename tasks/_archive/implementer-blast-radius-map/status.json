@@ -1,7 +1,7 @@
 {
   "id": "implementer-blast-radius-map",
   "title": "Implementer pre-handoff self-check and blast-radius map",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-08",
   "updated": "2026-11-08",
   "branch": "task/implementer-blast-radius-map",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
