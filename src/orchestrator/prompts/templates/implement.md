@@ -2,7 +2,7 @@ You are implementing {{taskScope}} for {{projectName}}.
 
 {{{stateHeader}}}
 {{{startup}}}
-{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}
+{{{risksBlock}}}{{{pitfallsBlock}}}{{{contextBlock}}}{{{blastRadiusBlock}}}
 {{{affectedFilesBlock}}}
 Tasks to implement:
 {{{taskLines}}}{{#isBundle}}
@@ -38,6 +38,15 @@ Write the test and run it against the pre-fix code first; confirm it fails *for 
 
 **Parsing Structured Input** — always applicable when implementing a parser for author-facing structured input:
 Parse cell-by-cell with explicit rejection, not a permissive whole-string regex. Anchor each cell to exactly one expected shape and reject malformed cells with a specific reason at the parse boundary.
+
+{{#selfCheck}}
+**Pre-handoff self-check** — after you make your changes and before you run validation and write handoff.md, check the change in this order:
+1. **Test integrity.** For each test this pass added or changed to pin new or altered behavior: would it fail if the change were reverted? Does it assert the specific reason — the message, value, or state the change produces — rather than only that something failed or passed? Regenerated snapshots and pure fixture updates are exempt. Where a cheap run against the base commit confirms the failure, do it. A red-first regression-test AC still follows the red-first checkpoint; this check does not replace it.
+2. **Restatement sweep.** For every contract the change alters — an operator-facing string, flag, format, heading, verdict, or config key — search the repository for other places that state the same contract, and bring them in line.
+3. **Sibling parity.** For every guard, check, or branch the change adds, find the parallel paths that handle the same input — other commands, modes, entry points, or platform variants — and confirm each one either gets the same treatment or deliberately does not.
+
+If a check finds an edit needed in a file outside the spec's Affected Files, do not make it: record it under Blockers in handoff.md.
+{{/selfCheck}}
 
 Run ALL applicable validation checks before writing handoff. See "Validation Required" in each spec.md. The universal change-type → check-category matrix:
 

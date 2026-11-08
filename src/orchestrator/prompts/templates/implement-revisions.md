@@ -5,6 +5,13 @@
 
 {{{affectedFilesBlock}}}
 
+**Pre-handoff self-check** — after you make this round's changes and before you re-run validation and append to handoff.md, check the change in this order:
+1. **Test integrity.** For each test this pass added or changed to pin new or altered behavior: would it fail if the change were reverted? Does it assert the specific reason — the message, value, or state the change produces — rather than only that something failed or passed? Regenerated snapshots and pure fixture updates are exempt. Where a cheap run against the base commit confirms the failure, do it. A red-first regression-test AC still follows the red-first checkpoint; this check does not replace it.
+2. **Restatement sweep.** For every contract the change alters — an operator-facing string, flag, format, heading, verdict, or config key — search the repository for other places that state the same contract, and bring them in line.
+3. **Sibling parity.** For every guard, check, or branch the change adds, find the parallel paths that handle the same input — other commands, modes, entry points, or platform variants — and confirm each one either gets the same treatment or deliberately does not.
+
+If a check finds an edit needed in a file outside the spec's Affected Files, do not make it: record it under Blockers in handoff.md.
+
 {{#hasReviewFindings}}
 Your prior iteration shipped; the reviewer (Claude) appended findings to `review.md` as `## Round {{priorRound}}`. If you're resuming the prior session, the full task framing (spec, plan, repo conventions) is already in context — skip the re-read. If your context is cold, re-read `tasks/<id>/spec.md` and `tasks/<id>/plan.md` before addressing findings.
 

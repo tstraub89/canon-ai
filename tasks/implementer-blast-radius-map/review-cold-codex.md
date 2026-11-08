@@ -1,0 +1,1 @@
+The acronym-led identifier matching change is covered by tests, and the updated prompt-variant, truncation, and fail-open tests pass. The full test suite also passed.

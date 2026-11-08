@@ -512,6 +512,8 @@ In mixed mode, the foreman receives the cold-Codex findings as the pre-obtained 
 
 Round 2+ of code review and implement do not re-inject the full task framing. Resumed sessions already have spec/plan/repo conventions in context, and round-1 findings are durable in the artifacts. Code review selects a full or delta scope as described above, then (in mixed mode) re-obtains cold-Codex findings and re-runs the Claude lenses from scratch before the foreman synthesizes the new verdict.
 
+Fresh, park-resume, and rerouted implement prompts include a capped, names-only list of tracked files that reference the spec's Affected Files and files containing identifiers named in the spec. Task artifacts under `tasks/` are excluded. Tracked generated output is excluded only when its path is marked `linguist-generated` in `.gitattributes`.
+
 **Cumulative artifacts.** `handoff.md` and `review.md` grow by section per round:
 - Round 1 fills the existing template structure.
 - Round 2+ APPENDS a new `## Iteration N` (handoff) or `## Round N` (review) section near the bottom.

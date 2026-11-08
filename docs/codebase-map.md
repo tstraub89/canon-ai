@@ -73,6 +73,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Init dependency checks | `src/cli/deps.ts` | Computes required binaries at check time from the provider setting or explicit provider |
 | Policy config wrappers | `src/orchestrator/policy.ts` | Sole provider-setting resolver; validates task/bundle pins; Claude/Codex model and size getters wrapping `src/lib/pipeline-policy.ts` |
 | Task context extractors | `src/orchestrator/context.ts` | `extractAffectedFiles()`, `extractAcSummary()`, `extractValidationChecks()` — feeds prompt builders |
+| Blast-radius map | `src/orchestrator/blast-radius.ts` | `buildBlastRadiusBlock()` — referrers of Affected Files and spec-named identifiers for implement prompts (git grep, fail-open) |
 | Signal handlers | `src/orchestrator/signals.ts` | SIGHUP survival; installed before heavy imports so the handler is always present |
 | Detached-mode isolation | `src/orchestrator/detach.ts` | Process group detachment for SIGHUP-safe background runs |
 | Heartbeat monitor | `src/orchestrator/heartbeat.ts` | Per-task `.heartbeat.json` writes at 30s intervals; used by `canon watch` / `canon doctor` to detect live vs. stale runs |

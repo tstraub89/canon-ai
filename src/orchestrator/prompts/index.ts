@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { config } from '../env.js';
+import { buildBlastRadiusBlock, resolveBlastRadiusRoot } from '../blast-radius.js';
 import { getBaseBranch, type ScopedDiff } from '../git.js';
 import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
 import { taskDirFor } from '../state.js';
@@ -358,6 +359,8 @@ export function promptImplement(
         risksBlock: buildKnownRisks(taskIds),
         pitfallsBlock: buildKnownPitfalls(taskIds),
         contextBlock: buildContextBlock(taskIds),
+        selfCheck: mode === 'fresh',
+        blastRadiusBlock: mode === 'fresh' ? buildBlastRadiusBlock(taskIds, resolveBlastRadiusRoot(taskIds)) : '',
         affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         taskLines,
         isBundle: tasks.length > 1,
@@ -527,6 +530,7 @@ export function promptImplementReroute(
         risksBlock: buildKnownRisks(taskIds),
         pitfallsBlock: buildKnownPitfalls(taskIds),
         contextBlock: buildContextBlock(taskIds),
+        blastRadiusBlock: buildBlastRadiusBlock(taskIds, resolveBlastRadiusRoot(taskIds)),
         affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),
         taskLines,
         phaseCommands: phaseCommands(taskIds, 'implement', 'done'),
