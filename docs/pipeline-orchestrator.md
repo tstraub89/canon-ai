@@ -303,6 +303,8 @@ Claude uses the light tier for XS/S spec, plan, code review, and (in Claude mode
 | `CANON_SKIP_PHASE_GATE` | _(unset)_ | Any non-empty value bypasses the `canon task phase <id> spec done` Affected Files lint (not the plan/implement pre-flights; those take `--force`). |
 | `CANON_PATTERNS_MD_PATH` | `docs/patterns.md` | Overrides the patterns doc injected into agent prompts. |
 
+Fresh and rerouted implement prompts include a capped, names-only list of tracked files that reference the spec's Affected Files and files containing identifiers named in the spec. Task artifacts under `tasks/` are excluded. Tracked generated output is excluded only when its path is marked `linguist-generated` in `.gitattributes`.
+
 Codex model overrides:
 
 | Variable | Default | Purpose |

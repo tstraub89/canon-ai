@@ -3,12 +3,14 @@ import { scanSpecManifest, blocksToRecords } from '../src/orchestrator/markdown-
 import { resolveQaDocsFreshness } from '../src/orchestrator/phases/qa.js';
 import { DEFAULT_PROTECTED_DOCS } from '../src/orchestrator/docs-freshness.js';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
 
 import { REPO_ROOT } from '../src/orchestrator/env.js';
+import { BLAST_RADIUS_HEADING, BLAST_RADIUS_ROOT_ENV } from '../src/orchestrator/blast-radius.js';
 import {
     SPEC_MANIFEST_CONTRACT,
     promptCodeReview,
@@ -43,6 +45,10 @@ const goldenTemplate = [
     '- [x] `type-check`',
     '- [x] `test`',
     '- [x] `lint`',
+    '',
+    '## Design',
+    '',
+    'The fixture calls `fixtureWidget()`.',
     '',
     '## Affected Files',
     '',
@@ -97,6 +103,7 @@ const reviewTemplate = [
 ].join('\n');
 
 let tmpRoot = '';
+let previousBlastRadiusRoot: string | undefined;
 let baseState: PipelineState;
 let specRevisionState: PipelineState;
 let planState: PipelineState;
@@ -196,6 +203,13 @@ function recordOrAssert(key: string, actual: string): void {
 // Run UPDATE_GOLDENS=1 npm test after intentional template changes to regenerate.
 before(() => {
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-fidelity-tests-'));
+    const blastRadiusRoot = path.join(tmpRoot, 'blast-radius-repo');
+    fs.mkdirSync(path.join(blastRadiusRoot, 'docs'), { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: blastRadiusRoot });
+    fs.writeFileSync(path.join(blastRadiusRoot, 'docs/widget.md'), 'fixtureWidget\n');
+    execFileSync('git', ['add', '-A'], { cwd: blastRadiusRoot });
+    previousBlastRadiusRoot = process.env[BLAST_RADIUS_ROOT_ENV];
+    process.env[BLAST_RADIUS_ROOT_ENV] = blastRadiusRoot;
     const taskDir = path.join(tmpRoot, TASK_ID);
     fs.mkdirSync(taskDir, { recursive: true });
     fs.writeFileSync(path.join(taskDir, 'status.json'), JSON.stringify(makeStatus(), null, 2));
@@ -223,6 +237,8 @@ before(() => {
 after(() => {
     delete process.env.CANON_TASKS_DIR_OVERRIDE;
     delete process.env.CANON_PATTERNS_MD_PATH;
+    if (previousBlastRadiusRoot === undefined) delete process.env[BLAST_RADIUS_ROOT_ENV];
+    else process.env[BLAST_RADIUS_ROOT_ENV] = previousBlastRadiusRoot;
     if (tmpRoot) {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -432,6 +448,93 @@ for (const builder of ['plan', 'implement'] as const) {
 void test('promptImplement_fresh', () => {
     const actual = normalize(promptImplement(baseState, 'fresh', [], 'main'));
     recordOrAssert('promptImplement_fresh', actual);
+    assert.ok(goldens.promptImplement_fresh.includes(BLAST_RADIUS_HEADING));
+    assert.ok(goldens.promptImplement_fresh.includes('These files are surfaces to check for restatements and sibling paths.'));
+    assert.ok(goldens.promptImplement_fresh.includes('`docs/widget.md`'));
+});
+
+void test('implement self-check appears in authoring prompts at the required point and is absent on resume', () => {
+    const selfCheck = '**Pre-handoff self-check**';
+    const selfCheckEnd = 'in handoff.md.';
+    const assertSelfCheckOrder = (prompt: string): void => {
+        const start = prompt.indexOf(selfCheck);
+        assert.ok(start >= 0, 'prompt should include the self-check');
+        const end = prompt.indexOf(selfCheckEnd, start);
+        assert.ok(end > start, 'self-check should include the Blocker instruction');
+        const block = prompt.slice(start, end + selfCheckEnd.length);
+        assert.ok(block.indexOf('Test integrity') < block.indexOf('Restatement sweep'));
+        assert.ok(block.indexOf('Restatement sweep') < block.indexOf('Sibling parity'));
+        assert.match(block, /record it under Blockers in handoff\.md\./);
+        return;
+    };
+
+    const fresh = promptImplement(baseState, 'fresh', [], 'main');
+    const freshCheck = fresh.indexOf(selfCheck);
+    assertSelfCheckOrder(fresh);
+    assert.ok(freshCheck < fresh.indexOf('Run ALL applicable validation checks'));
+
+    for (const resumed of [false, true]) {
+        const reroute = promptImplementReroute(rerouteState, resumed, [], 'main');
+        assertSelfCheckOrder(reroute);
+        assert.ok(reroute.indexOf(selfCheck) < reroute.indexOf('Re-run ALL applicable validation checks'));
+    }
+
+    const revisions = promptImplementRevisions(iterState, [], 'main');
+    assertSelfCheckOrder(revisions);
+    assert.ok(revisions.indexOf(selfCheck) < revisions.indexOf('Tasks with new review feedback:'));
+
+    const parkResume = promptImplementParkResume(baseState);
+    assertSelfCheckOrder(parkResume);
+    assert.ok(parkResume.includes(BLAST_RADIUS_HEADING));
+    assert.ok(parkResume.includes('`docs/widget.md`'));
+
+    const interruptedResume = promptImplementResume(baseState);
+    assert.ok(!interruptedResume.includes(selfCheck));
+    assert.ok(!interruptedResume.includes(BLAST_RADIUS_HEADING));
+    assert.ok(!goldens.promptImplementRevisions.includes(BLAST_RADIUS_HEADING));
+});
+
+void test('self-check and blast-radius framing stay adopter-neutral across providers', () => {
+    for (const provider of ['mixed', 'claude'] as const) {
+        const state: PipelineState = { ...baseState, provider };
+        const prompts = [
+            promptImplement(state),
+            promptImplementParkResume(state),
+            promptImplementRevisions({ ...iterState, provider }, [], 'main'),
+            promptImplementReroute({ ...rerouteState, provider }),
+        ];
+        for (const prompt of prompts) {
+            const start = prompt.indexOf('**Pre-handoff self-check**');
+            const end = prompt.indexOf('in handoff.md.', start);
+            assert.ok(start >= 0 && end > start);
+            const selfCheck = prompt.slice(start, end + 'in handoff.md.'.length);
+            assert.doesNotMatch(selfCheck, /src\/|scripts\/|tests\/|templates\/|Codex|Claude/);
+        }
+
+        for (const [prompt, nextHeading] of [
+            [prompts[0], 'Tasks to implement:'],
+            [prompts[1], 'Tasks to implement:'],
+            [prompts[3], 'Tasks with amended specs:'],
+        ] as const) {
+            const start = prompt.indexOf(BLAST_RADIUS_HEADING);
+            assert.ok(start >= 0);
+            const end = prompt.indexOf(nextHeading, start);
+            const map = prompt.slice(start, end < 0 ? undefined : end);
+            assert.doesNotMatch(map, /src\/|scripts\/|tests\/|templates\/|Codex|Claude/);
+            assert.match(map, /surfaces to check for restatements and sibling paths/);
+        }
+    }
+});
+
+void test('implement prompt omits the blast-radius heading when the root is not a git repository', () => {
+    const previous = process.env[BLAST_RADIUS_ROOT_ENV];
+    process.env[BLAST_RADIUS_ROOT_ENV] = tmpRoot;
+    try {
+        assert.doesNotMatch(promptImplement(baseState), /## Blast Radius/);
+    } finally {
+        if (previous === undefined) delete process.env[BLAST_RADIUS_ROOT_ENV];
+        else process.env[BLAST_RADIUS_ROOT_ENV] = previous;
+    }
 });
 
 void test('implement prompts state red-first evidence and pre-fix commit', () => {
@@ -526,6 +629,7 @@ void test('promptImplement renders affected files when provided', () => {
 void test('promptImplementRevisions', () => {
     const actual = normalize(promptImplementRevisions(iterState, [], 'main'));
     recordOrAssert('promptImplementRevisions', actual);
+    assert.ok(!goldens.promptImplementRevisions.includes(BLAST_RADIUS_HEADING));
 });
 
 void test('toResumePrompt strips CODEX_STARTUP from spec-review, fresh-implement, and implement-revisions prompts', () => {
@@ -588,6 +692,8 @@ void test('promptImplementRevisions selects pre-flight branch when preflight cou
 void test('promptImplementReroute', () => {
     const actual = normalize(promptImplementReroute(rerouteState, false, [], 'main'));
     recordOrAssert('promptImplementReroute', actual);
+    assert.ok(goldens.promptImplementReroute.includes(BLAST_RADIUS_HEADING));
+    assert.ok(goldens.promptImplementReroute.includes('`docs/widget.md`'));
 });
 
 void test('promptImplementReroute_resumed', () => {

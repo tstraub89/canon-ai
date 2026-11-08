@@ -1,0 +1,6 @@
+# Generated output: excluded from the implement prompt's blast-radius map and collapsed in diffs.
+dist/** linguist-generated
+templates/.canon/** linguist-generated
+templates/.claude/** linguist-generated
+templates/docs/pipeline-orchestrator.md linguist-generated
+templates/scripts/** linguist-generated
