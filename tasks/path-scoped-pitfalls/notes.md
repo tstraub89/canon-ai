@@ -7,3 +7,6 @@ Raw observations from any phase. Prefix with phase name. Distilled into the task
 - [plan] Unspecified: demotion order *within* a channel when over the cap. Chosen: largest entry first (keeps the most rules in full), ties by later document position first.
 - [plan] Spec-review nit (park-resume coverage): handled by an assertion in the existing park-resume test in `tests/run-task-prompts.test.ts`, not a new golden.
 - [implement-revision] Choosing the first cell that resolves by heading prefix lets a short area label shadow the actual target; rank target cells by explicit doc paths and exact heading matches before prefixes.
+- [implement-revision] A `.md` key path can parse as a linked-doc target and steal an exact section target; prefer candidates that leave path-like keys in other cells, then exact targets, and keep wildcard `.md` tokens as keys.
+- [implement-revision] Index tables may be nested under H3 headings in either supported section; recognize them by target/path content and remove recognized Known Pitfalls index rows from the entry body before matching.
+- [implement-revision] The last-resort byte-cap summary must fit as a complete line; truncate demoted-title detail first, and omit the block when even the complete summary exceeds an intentionally tiny test cap.

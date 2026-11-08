@@ -5409,12 +5409,18 @@ function sectionHeading(doc, name) {
   if (exact) return exact;
   return choices.filter((heading) => heading.text.toLocaleLowerCase().startsWith(target)).sort((left, right) => left.text.length - right.text.length || left.start - right.start)[0] ?? null;
 }
-function knownPitfallEntries(patterns) {
+function knownPitfallEntries(patterns, readDoc) {
   const result = [];
   for (const section of headingsAt(patterns, 2).filter((heading) => heading.text.toLocaleLowerCase().startsWith("known pitfalls"))) {
+    const indexLines = /* @__PURE__ */ new Set();
+    for (const table of markdownTablesInSection(patterns, section)) {
+      if (!isIndexTable(table, patterns, readDoc)) continue;
+      for (let line = table.startLine; line < table.endLine; line++) indexLines.add(line);
+    }
     for (const heading of patterns.headings) {
       if (heading.level !== 3 || heading.start < section.start || heading.start >= section.end) continue;
-      result.push({ doc: patterns, heading, title: heading.text, body: headingBody(patterns, heading) });
+      const body = patterns.lines.slice(heading.startLine, heading.endLine).filter((_, index) => !indexLines.has(heading.startLine + index)).join("\n").trim();
+      result.push({ doc: patterns, heading, title: heading.text, body });
     }
   }
   return result;
@@ -5543,16 +5549,11 @@ function compareTargetCellScores(left, right) {
   }
   return 0;
 }
-function tableRowsInSection(doc, section) {
+function markdownTablesInSection(doc, section) {
   const result = [];
-  const pitfallEntryLines = /* @__PURE__ */ new Set();
-  for (const heading of doc.headings) {
-    if (heading.level !== 3 || heading.startLine <= section.startLine || heading.startLine >= section.endLine) continue;
-    for (let entryLine = heading.startLine; entryLine < heading.endLine; entryLine++) pitfallEntryLines.add(entryLine);
-  }
   let line = section.startLine + 1;
   while (line < section.endLine) {
-    if (!doc.outsideFence[line] || pitfallEntryLines.has(line)) {
+    if (!doc.outsideFence[line]) {
       line++;
       continue;
     }
@@ -5562,28 +5563,42 @@ function tableRowsInSection(doc, section) {
       line++;
       continue;
     }
+    const startLine = line;
     line += 2;
+    const tableRows = [];
     while (line < section.endLine) {
-      if (!doc.outsideFence[line] || pitfallEntryLines.has(line)) break;
+      if (!doc.outsideFence[line]) break;
       const cells = splitCells(doc.lines[line]);
       if (!cells) {
         const raw = doc.lines[line].trim();
         if (raw.startsWith("|") && raw.endsWith("|")) {
-          result.push([raw.replace(/^\|/, "").replace(/\|$/, "").trim()]);
+          tableRows.push([raw.replace(/^\|/, "").replace(/\|$/, "").trim()]);
           line++;
           continue;
         }
         break;
       }
       if (cells.length !== header.length) {
-        result.push([doc.lines[line].trim().replace(/^\|/, "").replace(/\|$/, "").trim()]);
+        tableRows.push([doc.lines[line].trim().replace(/^\|/, "").replace(/\|$/, "").trim()]);
       } else if (!isSeparatorRow2(cells)) {
-        result.push(cells);
+        tableRows.push(cells);
       }
       line++;
     }
+    result.push({ startLine, endLine: line, rows: tableRows });
   }
   return result;
+}
+function isIndexTable(table, patterns, readDoc) {
+  return table.rows.some((cells) => cells.some((cell) => {
+    const value = cell.trim();
+    return /^(?:—|no keys?)$/i.test(value) || pathTokens(value, patterns.path).length > 0 || splitTargetItems(value).some((item) => parseTargetFromItem(item, patterns, readDoc) !== null);
+  }));
+}
+function tableRowsInSection(doc, section, readDoc) {
+  const tables = markdownTablesInSection(doc, section);
+  const isKnownPitfalls = section.text.toLocaleLowerCase().startsWith("known pitfalls");
+  return tables.filter((table) => !isKnownPitfalls || isIndexTable(table, doc, readDoc)).flatMap((table) => table.rows);
 }
 function stripParenthetical(value) {
   return value.replace(/\[[^\]]+\]\([^)]+\)|\([^)]*\)/g, (match) => match.startsWith("[") ? match : "").trim();
@@ -5599,13 +5614,13 @@ function parseDocPathItem(item) {
   const codePath = item.match(/^\s*`([^`]+)`\s*$/);
   if (codePath) {
     const normalized = normalizeRepoToken(codePath[1]);
-    if (normalized?.toLocaleLowerCase().endsWith(".md")) return { path: normalized };
+    if (normalized?.toLocaleLowerCase().endsWith(".md") && !normalized.includes("*")) return { path: normalized };
     return null;
   }
   const link = item.match(/^\s*\[[^\]]+\]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)\s*$/);
   if (link) {
     const resolved = resolveLinkPath(link[1]);
-    if (resolved?.toLocaleLowerCase().endsWith(".md")) return { path: resolved };
+    if (resolved?.toLocaleLowerCase().endsWith(".md") && !resolved.includes("*")) return { path: resolved };
   }
   return null;
 }
@@ -5630,7 +5645,7 @@ function parseTargetFromItem(item, patterns, readDoc) {
   const docPath = parseDocPathItem(clean);
   if (docPath) {
     if (docPath.path === PATTERNS_PATH) return null;
-    return { target: { kind: "linked", path: docPath.path }, specificity: 3 };
+    return { target: { kind: "linked", path: docPath.path }, specificity: 1 };
   }
   const sectionName = clean.replaceAll("`", "").trim();
   const heading = sectionHeading(patterns, sectionName);
@@ -5675,7 +5690,7 @@ function buildIndexRows(patterns, affectedFiles, readDoc) {
   const sections = patterns.headings.filter((heading) => heading.level === 2 && (heading.text.toLocaleLowerCase().startsWith("trigger table") || heading.text.toLocaleLowerCase().startsWith("known pitfalls")));
   const rows = [];
   for (const section of sections) {
-    for (const cells of tableRowsInSection(patterns, section)) {
+    for (const cells of tableRowsInSection(patterns, section, readDoc)) {
       if (cells.length === 1) {
         rows.push({ line: `- ${cells[0]}`, targets: [], keys: [], matched: false });
         continue;
@@ -5686,11 +5701,13 @@ function buildIndexRows(patterns, affectedFiles, readDoc) {
         const parsed = items.map((item) => parseTargetFromItem(item, patterns, readDoc));
         const resolved = parsed.filter((item) => item !== null);
         if (resolved.length === 0) continue;
+        const remainingPathKeys = cells.reduce((count, cell, cellIndex) => count + (cellIndex === index ? 0 : pathTokens(cell, patterns.path).length), 0);
         const score = [
+          remainingPathKeys,
           resolved.length === items.length && resolved.every((item) => item.specificity > 0) ? 1 : 0,
           resolved.reduce((total, item) => total + item.specificity, 0),
           resolved.length,
-          index
+          -index
         ];
         if (!winner || compareTargetCellScores(score, winner.score) > 0) {
           winner = { index, targets: resolved.map((item) => item.target), score };
@@ -5781,17 +5798,6 @@ function titleGroupsFor(entriesByDoc, active, demoted, matchedLinkedDocs) {
 function bodyByteLength(value) {
   return Buffer.byteLength(value, "utf8");
 }
-function utf8Prefix(value, byteLimit) {
-  let bytes = 0;
-  let end = 0;
-  for (const character of value) {
-    const length = Buffer.byteLength(character, "utf8");
-    if (bytes + length > byteLimit) break;
-    bytes += length;
-    end += character.length;
-  }
-  return value.slice(0, end);
-}
 function selectPitfallsInternal(input) {
   const affectedFiles = [...new Set(input.affectedFiles.map(normalizeAffectedFile).filter((value) => value !== null))];
   const patterns = input.patterns === null ? null : scanMarkdown(input.patterns, PATTERNS_PATH);
@@ -5826,7 +5832,7 @@ function selectPitfallsInternal(input) {
   }
   const candidates = [];
   const titleEntries = /* @__PURE__ */ new Map();
-  const patternsEntries = patterns ? knownPitfallEntries(patterns) : [];
+  const patternsEntries = patterns ? knownPitfallEntries(patterns, (repoPath) => readLinkedDoc(repoPath)?.text ?? null) : [];
   if (patterns) titleEntries.set(patterns.path, patternsEntries);
   if (patterns) {
     for (const entry of patternsEntries) {
@@ -5871,6 +5877,7 @@ function selectPitfallsInternal(input) {
   const demoted = [];
   const titleLimitState = { perDoc: Number.POSITIVE_INFINITY };
   const areaLimitState = { count: indexRows.length };
+  const demotedLimitState = { count: Number.POSITIVE_INFINITY };
   const requestedCap = input.cap ?? PITFALLS_BYTE_CAP;
   const cap = Number.isFinite(requestedCap) ? Math.max(0, Math.floor(requestedCap)) : PITFALLS_BYTE_CAP;
   let capped = false;
@@ -5894,7 +5901,11 @@ function selectPitfallsInternal(input) {
     const areaVisible = indexRows.slice(0, areaLimitState.count).map((row) => row.line);
     const droppedRows = indexRows.length - areaVisible.length;
     if (droppedRows > 0) areaVisible.push(`- +${droppedRows} more index rows`);
-    const demotedLines = demoted.filter((candidate) => candidate.channel === "section" || candidate.channel === "lesson").map((candidate) => `- ${candidate.title} (demoted to fit)`);
+    const demotedCandidates = demoted.filter((candidate) => candidate.channel === "section" || candidate.channel === "lesson");
+    const demotedVisible = demotedCandidates.slice(0, demotedLimitState.count);
+    const droppedDemoted = demotedCandidates.length - demotedVisible.length;
+    const demotedLines = demotedVisible.map((candidate) => `- ${candidate.title} (demoted to fit)`);
+    if (droppedDemoted > 0) demotedLines.push(`- +${droppedDemoted} more demoted titles`);
     const sections = [];
     if (pitfallFull.length > 0) sections.push(`### Pitfalls and patterns that cite your files
 
@@ -5914,7 +5925,7 @@ ${demotedLines.join("\n")}`);
     const totalDemoted = demoted.length;
     const note = capped ? `
 
-_Pitfalls block capped at ${cap} bytes: ${totalDemoted} full ${totalDemoted === 1 ? "candidate" : "candidates"} demoted; ${droppedTitles} titles and ${droppedRows} index rows dropped._` : "";
+_Pitfalls block capped at ${cap} bytes: ${totalDemoted} full ${totalDemoted === 1 ? "candidate" : "candidates"} demoted; ${droppedTitles} titles and ${droppedRows} index rows dropped; ${droppedDemoted} demoted titles dropped._` : "";
     if (sections.length === 0 && !note) return "";
     const framing = "Selected full entries match paths in the task spec\u2019s Affected Files. Other pitfalls stay visible by title; open a title\u2019s doc when it may apply.";
     return `
@@ -5953,17 +5964,25 @@ ${sections.join("\n\n")}${note}
       areaLimitState.count = keep;
     }
   }
+  if (bodyByteLength(render4()) > cap) {
+    const demotedTitleCount = demoted.filter((candidate) => candidate.channel === "section" || candidate.channel === "lesson").length;
+    for (let keep = demotedTitleCount - 1; keep >= 0 && bodyByteLength(render4()) > cap; keep--) {
+      demotedLimitState.count = keep;
+    }
+  }
   const rendered = render4();
   if (bodyByteLength(rendered) <= cap) return rendered;
   const groups = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
   const titleCount = groups.reduce((total, group) => total + group.titles.length, 0);
+  const allDemotedTitles = demoted.filter((candidate) => candidate.channel === "section" || candidate.channel === "lesson").length;
+  const droppedDemotedTitles = Math.max(0, allDemotedTitles - demotedLimitState.count);
   const summary = `
 ${PITFALLS_HEADING}
 
-_Pitfalls block capped at ${cap} bytes: ${demoted.length} full candidates demoted; ${titleCount} titles and ${indexRows.length} index rows dropped._
+_Pitfalls block capped at ${cap} bytes: ${demoted.length} full candidates demoted; ${titleCount} titles and ${indexRows.length} index rows dropped; ${droppedDemotedTitles} demoted titles dropped._
 
 `;
-  return utf8Prefix(summary, cap);
+  return bodyByteLength(summary) <= cap ? summary : "";
 }
 function selectPitfalls(input) {
   try {

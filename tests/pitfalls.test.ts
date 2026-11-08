@@ -76,15 +76,47 @@ void test('AC-3: linked docs match globs, retain titles, and resolve relative ma
 });
 
 void test('AC-4: every index row stays in the area index, including keyless and matched rows', () => {
-    const patterns = `## Known Pitfalls\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | Any new effect or timer — cross-cutting |\n\n### Entry with an explanatory table\n\nThis table is part of an entry, not an index.\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/nested.md\` | \`src/z/**\` |\n\n## Trigger Table — Scan This First\n\n| Area | Section | Key files |\n|---|---|---|\n| No key | Shared Rules | — |\n| Affected | Shared Rules | \`src/a/b.ts\` |\n\n## Shared Rules\n\nSection body.\n`;
+    const patterns = `## Known Pitfalls\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | Any new effect or timer — cross-cutting |\n\n### Entry with an explanatory table\n\nThis table is part of an entry, not an index.\n\n| Input | Output |\n|---|---|\n| source value | transformed value |\n\n## Trigger Table — Scan This First\n\n| Area | Section | Key files |\n|---|---|---|\n| No key | Shared Rules | — |\n| Affected | Shared Rules | \`src/a/b.ts\` |\n\n## Shared Rules\n\nSection body.\n`;
     const output = selectPitfalls(matchingInput(patterns));
     assert.match(output, /### Area index[\s\S]*`docs\/pitfalls\/effects\.md` — Any new effect or timer — cross-cutting/);
-    assert.doesNotMatch(output, /docs\/pitfalls\/nested\.md/);
+    assert.doesNotMatch(output, /source value|transformed value/);
     assert.match(output, /Shared Rules — No key — —/);
     assert.match(output, /Shared Rules — Affected — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
+
+    const triggerUnderH3 = `## Trigger Table\n\n### Frontend\n\n| Area | Section | Keys |\n|---|---|---|\n| New interface | Interface Rules | \`src/a/b.ts\` |\n\n## Interface Rules\n\nTRIGGER_TABLE_H3_SECTION\n`;
+    const nestedTrigger = selectPitfalls(matchingInput(triggerUnderH3));
+    assert.match(nestedTrigger, /## Interface Rules\n\nTRIGGER_TABLE_H3_SECTION/);
+    assert.match(nestedTrigger, /Interface Rules — New interface — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
+
+    const indexAfterEntry = `## Known Pitfalls\n\n### Existing entry\n\nEXISTING_ENTRY_BODY has no matching path.\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | \`src/a/b.ts\` |\n`;
+    const trailingIndex = selectPitfalls(matchingInput(indexAfterEntry));
+    assert.match(trailingIndex, /`docs\/pitfalls\/effects\.md` — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
+    assert.match(trailingIndex, /### Other pitfalls \(titles only\)[\s\S]*- Existing entry/);
+    assert.doesNotMatch(trailingIndex, /EXISTING_ENTRY_BODY/);
+
+    const unresolvableIndex = `## Known Pitfalls\n\n### Existing entry\n\nNo matching path.\n\n| Area | Section | Keys |\n|---|---|---|\n| Unmapped area | Future section | \`src/a/b.ts\` |\n`;
+    const unresolved = selectPitfalls(matchingInput(unresolvableIndex));
+    assert.match(unresolved, /Unmapped area — Future section — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
+
     const noAffectedFiles = selectPitfalls({ ...matchingInput(patterns, []), affectedFiles: [] });
     assert.match(noAffectedFiles, /`docs\/pitfalls\/effects\.md` — Any new effect or timer — cross-cutting/);
     assert.match(noAffectedFiles, /Shared Rules — No key — —/);
+});
+
+void test('section cells outrank markdown paths in key cells, and markdown globs remain keys', () => {
+    const lintRow = tablePatterns(
+        '| Area | Section | Key files |\n|---|---|---|\n| Lint / TS suppression | Lint & Type Safety Policy | `src/orchestrator/prompts/templates/implement.md` |',
+        `## Lint & Type Safety Policy\n\nLINT_POLICY_SECTION_SENTINEL\n`,
+    );
+    const lintOutput = selectPitfalls(matchingInput(lintRow, ['src/orchestrator/prompts/templates/implement.md']));
+    assert.match(lintOutput, /## Lint & Type Safety Policy\n\nLINT_POLICY_SECTION_SENTINEL/);
+    assert.match(lintOutput, /Lint & Type Safety Policy — Lint \/ TS suppression — `src\/orchestrator\/prompts\/templates\/implement\.md` \*\*\(matches this task\)\*\*/);
+    assert.doesNotMatch(lintOutput, /Open `src\/orchestrator\/prompts\/templates\/implement\.md`/);
+
+    const globKey = `## Known Pitfalls\n\n| Area | Section | Before touching |\n|---|---|---|\n| State docs | State Rules | \`docs/pitfalls/*.md\` |\n\n### State pitfall\n\nNo direct token here.\n\n## State Rules\n\nSTATE_RULES_SECTION_SENTINEL\n`;
+    const globOutput = selectPitfalls(matchingInput(globKey, ['docs/pitfalls/state.md']));
+    assert.match(globOutput, /## State Rules\n\nSTATE_RULES_SECTION_SENTINEL/);
+    assert.match(globOutput, /State Rules — State docs — `docs\/pitfalls\/\*\.md` \*\*\(matches this task\)\*\*/);
 });
 
 void test('AC-5: section targets use exact headings before prefixes and allow mixed target cells', () => {
@@ -212,6 +244,27 @@ void test('AC-9: cap demotes lessons, sections, and linked entries before direct
     });
     assert.ok(Buffer.byteLength(tinyCap, 'utf8') <= 500, `output used ${Buffer.byteLength(tinyCap, 'utf8')} bytes`);
     assert.match(tinyCap, /Pitfalls block capped at 500 bytes/);
+
+    const impossibleCap = selectPitfalls({ patterns, lessons, readDoc: noDocs, affectedFiles: ['src/a/b.ts'], cap: 40 });
+    assert.equal(impossibleCap, '');
+    assert.ok(Buffer.byteLength(impossibleCap, 'utf8') <= 40);
+
+    const manyTargets = Array.from({ length: 30 }, (_, index) =>
+        `| Target ${index} | Rule ${index} | \`src/a/b.ts\` |`,
+    ).join('\n');
+    const manySections = Array.from({ length: 30 }, (_, index) =>
+        `## Rule ${index}\n\n${`RULE_${index}_BODY `.repeat(8)}\n`,
+    ).join('\n');
+    const demotedHeavy = selectPitfalls({
+        patterns: tablePatterns(`| Area | Section | Keys |\n|---|---|---|\n${manyTargets}`, manySections),
+        lessons: null,
+        readDoc: noDocs,
+        affectedFiles: ['src/a/b.ts'],
+        cap: 500,
+    });
+    assert.ok(Buffer.byteLength(demotedHeavy, 'utf8') <= 500);
+    assert.match(demotedHeavy, /demoted titles dropped/);
+    assert.match(demotedHeavy, /more demoted titles/);
 });
 
 void test('AC-10: patterns, lessons, linked docs, and affected files are independent channels', () => {
@@ -338,4 +391,13 @@ void test('AC-13: canon-ai git-path pitfalls and Validation Gate Discipline stay
     assert.doesNotMatch(output, /Pitfalls block capped/);
     assert.ok(PITFALLS_BYTE_CAP >= Buffer.byteLength(output, 'utf8'));
     assert.ok(output.includes(PITFALLS_HEADING));
+
+    const lintOutput = selectPitfalls({
+        patterns,
+        lessons: null,
+        readDoc: noDocs,
+        affectedFiles: ['src/orchestrator/prompts/templates/implement.md'],
+    });
+    assert.match(lintOutput, /## Lint & Type Safety Policy[\s\S]*Lint suppression comments/);
+    assert.match(lintOutput, /Lint & Type Safety Policy — Lint \/ TS suppression \/ `any` — `src\/orchestrator\/prompts\/templates\/implement\.md` \*\*\(matches this task\)\*\*/);
 });

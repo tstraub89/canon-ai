@@ -48,6 +48,12 @@ type IndexRow = {
     matched: boolean;
 };
 
+type MarkdownTable = {
+    startLine: number;
+    endLine: number;
+    rows: string[][];
+};
+
 type CandidateChannel = 'direct' | 'linked' | 'section' | 'lesson';
 type Candidate = {
     doc: MarkdownDoc;
@@ -160,12 +166,20 @@ function sectionHeading(doc: MarkdownDoc, name: string): Heading | null {
         .sort((left, right) => left.text.length - right.text.length || left.start - right.start)[0] ?? null;
 }
 
-function knownPitfallEntries(patterns: MarkdownDoc): DocEntry[] {
+function knownPitfallEntries(patterns: MarkdownDoc, readDoc: (repoPath: string) => string | null): DocEntry[] {
     const result: DocEntry[] = [];
     for (const section of headingsAt(patterns, 2).filter(heading => heading.text.toLocaleLowerCase().startsWith('known pitfalls'))) {
+        const indexLines = new Set<number>();
+        for (const table of markdownTablesInSection(patterns, section)) {
+            if (!isIndexTable(table, patterns, readDoc)) continue;
+            for (let line = table.startLine; line < table.endLine; line++) indexLines.add(line);
+        }
         for (const heading of patterns.headings) {
             if (heading.level !== 3 || heading.start < section.start || heading.start >= section.end) continue;
-            result.push({ doc: patterns, heading, title: heading.text, body: headingBody(patterns, heading) });
+            const body = patterns.lines.slice(heading.startLine, heading.endLine)
+                .filter((_, index) => !indexLines.has(heading.startLine + index))
+                .join('\n').trim();
+            result.push({ doc: patterns, heading, title: heading.text, body });
         }
     }
     return result;
@@ -307,16 +321,11 @@ function compareTargetCellScores(left: readonly number[], right: readonly number
     return 0;
 }
 
-function tableRowsInSection(doc: MarkdownDoc, section: Heading): string[][] {
-    const result: string[][] = [];
-    const pitfallEntryLines = new Set<number>();
-    for (const heading of doc.headings) {
-        if (heading.level !== 3 || heading.startLine <= section.startLine || heading.startLine >= section.endLine) continue;
-        for (let entryLine = heading.startLine; entryLine < heading.endLine; entryLine++) pitfallEntryLines.add(entryLine);
-    }
+function markdownTablesInSection(doc: MarkdownDoc, section: Heading): MarkdownTable[] {
+    const result: MarkdownTable[] = [];
     let line = section.startLine + 1;
     while (line < section.endLine) {
-        if (!doc.outsideFence[line] || pitfallEntryLines.has(line)) {
+        if (!doc.outsideFence[line]) {
             line++;
             continue;
         }
@@ -326,28 +335,54 @@ function tableRowsInSection(doc: MarkdownDoc, section: Heading): string[][] {
             line++;
             continue;
         }
+        const startLine = line;
         line += 2;
+        const tableRows: string[][] = [];
         while (line < section.endLine) {
-            if (!doc.outsideFence[line] || pitfallEntryLines.has(line)) break;
+            if (!doc.outsideFence[line]) break;
             const cells = splitCells(doc.lines[line]);
             if (!cells) {
                 const raw = doc.lines[line].trim();
                 if (raw.startsWith('|') && raw.endsWith('|')) {
-                    result.push([raw.replace(/^\|/, '').replace(/\|$/, '').trim()]);
+                    tableRows.push([raw.replace(/^\|/, '').replace(/\|$/, '').trim()]);
                     line++;
                     continue;
                 }
                 break;
             }
             if (cells.length !== header.length) {
-                result.push([doc.lines[line].trim().replace(/^\|/, '').replace(/\|$/, '').trim()]);
+                tableRows.push([doc.lines[line].trim().replace(/^\|/, '').replace(/\|$/, '').trim()]);
             } else if (!isSeparatorRow(cells)) {
-                result.push(cells);
+                tableRows.push(cells);
             }
             line++;
         }
+        result.push({ startLine, endLine: line, rows: tableRows });
     }
     return result;
+}
+
+function isIndexTable(table: MarkdownTable, patterns: MarkdownDoc, readDoc: (repoPath: string) => string | null): boolean {
+    return table.rows.some(cells => cells.some(cell => {
+        const value = cell.trim();
+        return /^(?:—|no keys?)$/i.test(value)
+            || pathTokens(value, patterns.path).length > 0
+            || splitTargetItems(value).some(item => parseTargetFromItem(item, patterns, readDoc) !== null);
+    }));
+}
+
+function tableRowsInSection(
+    doc: MarkdownDoc,
+    section: Heading,
+    readDoc: (repoPath: string) => string | null,
+): string[][] {
+    const tables = markdownTablesInSection(doc, section);
+    const isKnownPitfalls = section.text.toLocaleLowerCase().startsWith('known pitfalls');
+    // Known Pitfalls can contain explanatory tables inside entries. Recognize index tables by
+    // their target content, while Trigger Table tables are indexes by location at any heading depth.
+    return tables
+        .filter(table => !isKnownPitfalls || isIndexTable(table, doc, readDoc))
+        .flatMap(table => table.rows);
 }
 
 function stripParenthetical(value: string): string {
@@ -366,13 +401,13 @@ function parseDocPathItem(item: string): { path: string } | null {
     const codePath = item.match(/^\s*`([^`]+)`\s*$/);
     if (codePath) {
         const normalized = normalizeRepoToken(codePath[1]);
-        if (normalized?.toLocaleLowerCase().endsWith('.md')) return { path: normalized };
+        if (normalized?.toLocaleLowerCase().endsWith('.md') && !normalized.includes('*')) return { path: normalized };
         return null;
     }
     const link = item.match(/^\s*\[[^\]]+\]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)\s*$/);
     if (link) {
         const resolved = resolveLinkPath(link[1]);
-        if (resolved?.toLocaleLowerCase().endsWith('.md')) return { path: resolved };
+        if (resolved?.toLocaleLowerCase().endsWith('.md') && !resolved.includes('*')) return { path: resolved };
     }
     return null;
 }
@@ -399,7 +434,7 @@ function parseTargetFromItem(item: string, patterns: MarkdownDoc, readDoc: (repo
     const docPath = parseDocPathItem(clean);
     if (docPath) {
         if (docPath.path === PATTERNS_PATH) return null;
-        return { target: { kind: 'linked', path: docPath.path }, specificity: 3 };
+        return { target: { kind: 'linked', path: docPath.path }, specificity: 1 };
     }
 
     const sectionName = clean.replaceAll('`', '').trim();
@@ -450,22 +485,26 @@ function buildIndexRows(patterns: MarkdownDoc | null, affectedFiles: readonly st
     ));
     const rows: IndexRow[] = [];
     for (const section of sections) {
-        for (const cells of tableRowsInSection(patterns, section)) {
+        for (const cells of tableRowsInSection(patterns, section, readDoc)) {
             if (cells.length === 1) {
                 rows.push({ line: `- ${cells[0]}`, targets: [], keys: [], matched: false });
                 continue;
             }
-            let winner: { index: number; targets: Target[]; score: [number, number, number, number] } | undefined;
+            let winner: { index: number; targets: Target[]; score: [number, number, number, number, number] } | undefined;
             for (let index = 0; index < cells.length; index++) {
                 const items = splitTargetItems(cells[index]);
                 const parsed = items.map(item => parseTargetFromItem(item, patterns, readDoc));
                 const resolved = parsed.filter((item): item is ParsedTarget => item !== null);
                 if (resolved.length === 0) continue;
-                const score: [number, number, number, number] = [
+                // Keep path-bearing cells available as keys, then prefer exact targets and the leftmost tie.
+                const remainingPathKeys = cells.reduce((count, cell, cellIndex) =>
+                    count + (cellIndex === index ? 0 : pathTokens(cell, patterns.path).length), 0);
+                const score: [number, number, number, number, number] = [
+                    remainingPathKeys,
                     resolved.length === items.length && resolved.every(item => item.specificity > 0) ? 1 : 0,
                     resolved.reduce((total, item) => total + item.specificity, 0),
                     resolved.length,
-                    index,
+                    -index,
                 ];
                 if (!winner || compareTargetCellScores(score, winner.score) > 0) {
                     winner = { index, targets: resolved.map(item => item.target), score };
@@ -574,18 +613,6 @@ function bodyByteLength(value: string): number {
     return Buffer.byteLength(value, 'utf8');
 }
 
-function utf8Prefix(value: string, byteLimit: number): string {
-    let bytes = 0;
-    let end = 0;
-    for (const character of value) {
-        const length = Buffer.byteLength(character, 'utf8');
-        if (bytes + length > byteLimit) break;
-        bytes += length;
-        end += character.length;
-    }
-    return value.slice(0, end);
-}
-
 function selectPitfallsInternal(input: PitfallsInput): string {
     const affectedFiles = [...new Set(input.affectedFiles.map(normalizeAffectedFile).filter((value): value is string => value !== null))];
     const patterns = input.patterns === null ? null : scanMarkdown(input.patterns, PATTERNS_PATH);
@@ -621,7 +648,7 @@ function selectPitfallsInternal(input: PitfallsInput): string {
 
     const candidates: Candidate[] = [];
     const titleEntries = new Map<string, DocEntry[]>();
-    const patternsEntries = patterns ? knownPitfallEntries(patterns) : [];
+    const patternsEntries = patterns ? knownPitfallEntries(patterns, repoPath => readLinkedDoc(repoPath)?.text ?? null) : [];
     if (patterns) titleEntries.set(patterns.path, patternsEntries);
     if (patterns) {
         for (const entry of patternsEntries) {
@@ -670,6 +697,7 @@ function selectPitfallsInternal(input: PitfallsInput): string {
     const demoted: Candidate[] = [];
     const titleLimitState = { perDoc: Number.POSITIVE_INFINITY };
     const areaLimitState = { count: indexRows.length };
+    const demotedLimitState = { count: Number.POSITIVE_INFINITY };
     const requestedCap = input.cap ?? PITFALLS_BYTE_CAP;
     const cap = Number.isFinite(requestedCap) ? Math.max(0, Math.floor(requestedCap)) : PITFALLS_BYTE_CAP;
     let capped = false;
@@ -695,9 +723,12 @@ function selectPitfallsInternal(input: PitfallsInput): string {
         const areaVisible = indexRows.slice(0, areaLimitState.count).map(row => row.line);
         const droppedRows = indexRows.length - areaVisible.length;
         if (droppedRows > 0) areaVisible.push(`- +${droppedRows} more index rows`);
-        const demotedLines = demoted
+        const demotedCandidates = demoted
             .filter(candidate => candidate.channel === 'section' || candidate.channel === 'lesson')
-            .map(candidate => `- ${candidate.title} (demoted to fit)`);
+        const demotedVisible = demotedCandidates.slice(0, demotedLimitState.count);
+        const droppedDemoted = demotedCandidates.length - demotedVisible.length;
+        const demotedLines = demotedVisible.map(candidate => `- ${candidate.title} (demoted to fit)`);
+        if (droppedDemoted > 0) demotedLines.push(`- +${droppedDemoted} more demoted titles`);
 
         const sections: string[] = [];
         if (pitfallFull.length > 0) sections.push(`### Pitfalls and patterns that cite your files\n\n${pitfallFull.map(candidate => candidate.body).join('\n\n')}`);
@@ -708,7 +739,7 @@ function selectPitfallsInternal(input: PitfallsInput): string {
 
         const totalDemoted = demoted.length;
         const note = capped
-            ? `\n\n_Pitfalls block capped at ${cap} bytes: ${totalDemoted} full ${totalDemoted === 1 ? 'candidate' : 'candidates'} demoted; ${droppedTitles} titles and ${droppedRows} index rows dropped._`
+            ? `\n\n_Pitfalls block capped at ${cap} bytes: ${totalDemoted} full ${totalDemoted === 1 ? 'candidate' : 'candidates'} demoted; ${droppedTitles} titles and ${droppedRows} index rows dropped; ${droppedDemoted} demoted titles dropped._`
             : '';
         if (sections.length === 0 && !note) return '';
         const framing = 'Selected full entries match paths in the task spec’s Affected Files. Other pitfalls stay visible by title; open a title’s doc when it may apply.';
@@ -747,13 +778,22 @@ function selectPitfallsInternal(input: PitfallsInput): string {
         }
     }
 
+    if (bodyByteLength(render()) > cap) {
+        const demotedTitleCount = demoted.filter(candidate => candidate.channel === 'section' || candidate.channel === 'lesson').length;
+        for (let keep = demotedTitleCount - 1; keep >= 0 && bodyByteLength(render()) > cap; keep--) {
+            demotedLimitState.count = keep;
+        }
+    }
+
     const rendered = render();
     if (bodyByteLength(rendered) <= cap) return rendered;
 
     const groups = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
     const titleCount = groups.reduce((total, group) => total + group.titles.length, 0);
-    const summary = `\n${PITFALLS_HEADING}\n\n_Pitfalls block capped at ${cap} bytes: ${demoted.length} full candidates demoted; ${titleCount} titles and ${indexRows.length} index rows dropped._\n\n`;
-    return utf8Prefix(summary, cap);
+    const allDemotedTitles = demoted.filter(candidate => candidate.channel === 'section' || candidate.channel === 'lesson').length;
+    const droppedDemotedTitles = Math.max(0, allDemotedTitles - demotedLimitState.count);
+    const summary = `\n${PITFALLS_HEADING}\n\n_Pitfalls block capped at ${cap} bytes: ${demoted.length} full candidates demoted; ${titleCount} titles and ${indexRows.length} index rows dropped; ${droppedDemotedTitles} demoted titles dropped._\n\n`;
+    return bodyByteLength(summary) <= cap ? summary : '';
 }
 
 export function selectPitfalls(input: PitfallsInput): string {
