@@ -138,6 +138,7 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | Shared run-context resolver tests | `tests/run-context.test.ts` | Orphaned-worktree, PID fallback (CASE C/D), launch-window, EPERM |
 | `canon watch` command tests | `tests/watch.test.ts` | Attach/idle branches, grace re-read, launch-window wait, `--until`, `--timeout`, read-failure, summary-line format |
 | Docs refs validator | `scripts/docs-refs-check.mjs` | Markdown reference gate; run via `npm run docs-refs-check` |
+| Round-1 review metrics | `scripts/review-metrics.mjs` | canon-ai-local: counts first-round `code_review` findings per archived task by category and failure kind; flags are listed in the file header |
 | Docs refs config | `scripts/docs-refs-config.mjs` | Adopter-owned tuning surface loaded by `scripts/docs-refs-check.mjs`; canon-ai-dev re-adds `templates/` here so its own gate still scans templates. |
 | Canon-managed template sync | `tests/sync-canon-templates.test.ts` | Sync direction, delimiter preservation, CLI check, hook regression |
 | CLI argument tests | `tests/cli-args.test.ts` | Pre-scan behavior and declaration/usage/parser agreement |
