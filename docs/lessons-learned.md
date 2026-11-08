@@ -278,3 +278,11 @@ A fake `git` that fails every call returns from the first guard, so the test nev
 *(date 2026-11-08, source: handoff-self-check-evidence)*
 
 When a gate reads an artifact that accumulates across review rounds, define the effective row for each check (the latest block with a filled row for it; placeholder rows supersede nothing) and state that superseded rows are never judged. Otherwise a baseline `N/A — no tests changed` stays active after a revision adds a test, and a correction appended later leaves the original false claim standing. The revision prompt appends only the delta, so the supersession rule has to live in the gate's charter, the revision prompt, and the foreman's re-review instruction, each with the two canonical examples. Before writing such a check, grep the revision prompt for "delta only" wording and confirm the spec says what supersedes what. Spec review caught the gap in round 1 for this task.
+
+---
+
+### Classify a table by its position or header, not by what its cells contain
+
+*(2026-11-08, source: path-scoped-pitfalls)*
+
+A parser that decides whether a markdown table is an index (a lookup of docs or sections) by sniffing its cells misclassified tables in three consecutive review rounds. Each content rule (a path token, an em dash, a heading-like cell) fixed the layout the last reviewer reported and broke one the previous rule handled, because an explanatory table inside an entry can carry the same signals as an index. The rule that settled it was positional: only tables directly under the section heading, before the first entry, are indexes; a table inside an entry is entry content. The same pattern held for choosing a row's target cell: a header hint ("Read this doc", "Section") beat any content precedence. Prevention: when a spec needs to tell two kinds of table apart, write the rule as position or header text in the spec before implementing, and pin each real layout in a test. Do not add a content heuristic to a parser already in review. Canonical example: `knownPitfallsIndexTables` in `src/orchestrator/pitfalls.ts`, with the rule stated in `tasks/_archive/path-scoped-pitfalls/spec.md` Amendment 1.

@@ -1,7 +1,7 @@
 {
   "id": "path-scoped-pitfalls",
   "title": "Inject only pitfalls and lessons relevant to Affected Files",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-08",
   "updated": "2026-11-08",
   "branch": "task/path-scoped-pitfalls",
@@ -62,7 +62,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
