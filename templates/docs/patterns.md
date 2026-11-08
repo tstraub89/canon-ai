@@ -7,7 +7,7 @@
 This is the project's hard-won implementation knowledge. It has two main sections:
 
 1. **Trigger Table** — at the top, an index agents skim to jump to the relevant section. If your task touches an area listed here, the pointed-at section is likely load-bearing for what you're doing.
-2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. The orchestrator pre-injects task-relevant pitfalls into the implementer's prompt; agents still need this file open for spec authorship and code review.
+2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. Implement prompts select full pitfalls and Trigger Table sections that match the spec's Affected Files, plus lessons that cite those files; other pitfall titles and a one-line index of the tables remain visible. Cite full repository paths, directory prefixes, or globs in each entry. Agents still need this file open for spec authorship and code review.
 
 ## Trigger Table — Scan This First
 
@@ -76,25 +76,13 @@ Never add a suppression comment without a written justification on the same line
 
 ### Pitfall format
 
-Each entry should be a short paragraph (3–8 lines) with this shape:
+Write each pitfall as its own H3. Make the heading the short imperative rule, then explain the failure it prevents and the concrete check that avoids it. Cite full repository paths, directory prefixes, or globs in the body; bare basenames and symbols do not select a pitfall for an Affected File. For example, a state rule may cite `app/src/store/**`.
 
-> **Short imperative title naming the rule, not the bug.** *(Title is the lesson — a future reader scanning headings should learn the rule from titles alone.)*
-> 
-> The actual rule, then the failure mode it prevents (specific incident or class of bug), then the concrete prevention (what to grep for, what to verify, where the canonical example lives). Reference symbols/files via the `` `SYMBOL` in `path/file.ts` `` form so the docs-refs checker (`scripts/docs-refs-check.mjs`, shipped by canon; wire it to a script runner if your project has one) can validate them.
+If the pitfall corpus is split across documents, add a table under this heading with columns `Read this doc` and `Before touching`. Give each document its own row and map it to the paths or globs that make an implementer open it.
 
-### Example pitfall
+### Reset derived state when a source identifier changes
 
-> **Always reset derived state when the source identifier changes.**
->
-> When a record references another by ID, computed fields (caches, transforms, ephemeral selections) calibrated for the old reference can survive an ID swap and produce stale-data bugs that are visible to users but invisible in logs. The fix is to reset every derived field at every site that writes the ID — there's no single chokepoint for this. Canonical reset helper: `<your-reset-function>` in `<path>`. Grep all writers of the ID field before adding a new one.
-
-### Browser & Platform Quirks
-
-> *(If applicable to your project — mobile/web/desktop platform-specific gotchas land here.)*
-
-### State Management
-
-> *(If applicable — framework-specific state pitfalls.)*
+When a record references another by ID, computed fields calibrated for the old reference can survive an ID swap and produce stale-data bugs. Reset those fields at every site that writes the ID. Search the project's actual state and update paths, such as `app/src/store/**`, before adding another writer.
 
 ## Quick Reference: "I Want To..."
 

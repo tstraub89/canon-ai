@@ -11,6 +11,7 @@ import test, { after, before } from 'node:test';
 
 import { REPO_ROOT } from '../src/orchestrator/env.js';
 import { BLAST_RADIUS_HEADING, BLAST_RADIUS_ROOT_ENV } from '../src/orchestrator/blast-radius.js';
+import { PITFALLS_DOCS_ROOT_ENV, PITFALLS_HEADING } from '../src/orchestrator/pitfalls.js';
 import {
     SPEC_MANIFEST_CONTRACT,
     promptCodeReview,
@@ -50,10 +51,11 @@ const goldenTemplate = [
     '',
     'The fixture calls `fixtureWidget()`.',
     '',
-    '## Affected Files',
+    '### Affected Files',
     '',
     '| File | Change |',
     '|---|---|',
+    '| `fixture/widget/core.ts` | fixture change |',
     '',
 ].join('\n');
 
@@ -104,6 +106,7 @@ const reviewTemplate = [
 
 let tmpRoot = '';
 let previousBlastRadiusRoot: string | undefined;
+let previousPitfallsDocsRoot: string | undefined;
 let baseState: PipelineState;
 let specRevisionState: PipelineState;
 let planState: PipelineState;
@@ -210,6 +213,8 @@ before(() => {
     execFileSync('git', ['add', '-A'], { cwd: blastRadiusRoot });
     previousBlastRadiusRoot = process.env[BLAST_RADIUS_ROOT_ENV];
     process.env[BLAST_RADIUS_ROOT_ENV] = blastRadiusRoot;
+    previousPitfallsDocsRoot = process.env[PITFALLS_DOCS_ROOT_ENV];
+    process.env[PITFALLS_DOCS_ROOT_ENV] = path.resolve('tests/fixtures/pitfalls-docs');
     const taskDir = path.join(tmpRoot, TASK_ID);
     fs.mkdirSync(taskDir, { recursive: true });
     fs.writeFileSync(path.join(taskDir, 'status.json'), JSON.stringify(makeStatus(), null, 2));
@@ -239,6 +244,8 @@ after(() => {
     delete process.env.CANON_PATTERNS_MD_PATH;
     if (previousBlastRadiusRoot === undefined) delete process.env[BLAST_RADIUS_ROOT_ENV];
     else process.env[BLAST_RADIUS_ROOT_ENV] = previousBlastRadiusRoot;
+    if (previousPitfallsDocsRoot === undefined) delete process.env[PITFALLS_DOCS_ROOT_ENV];
+    else process.env[PITFALLS_DOCS_ROOT_ENV] = previousPitfallsDocsRoot;
     if (tmpRoot) {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -453,6 +460,37 @@ void test('promptImplement_fresh', () => {
     assert.ok(goldens.promptImplement_fresh.includes('`docs/widget.md`'));
 });
 
+void test('AC-1: prompt selects pitfalls from spec files when affectedFiles argument is empty', () => {
+    const taskId = 'pitfalls-prompt-ac-1';
+    const taskDir = path.join(tmpRoot, taskId);
+    const patternsPath = path.join(tmpRoot, 'patterns-ac-1.md');
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'spec.md'), [
+        '# Spec',
+        '',
+        '## Design',
+        '',
+        '### Affected Files',
+        '',
+        '| File | Change |',
+        '|---|---|',
+        '| `src/a/b.ts` | fixture change |',
+        '',
+    ].join('\n'));
+    fs.writeFileSync(patternsPath, '## Known Pitfalls\n\n### AC-1 matching entry\n\nAC1_MATCHING_SENTINEL cites `src/a/b.ts`.\n');
+    const previousPatternsPath = process.env.CANON_PATTERNS_MD_PATH;
+    process.env.CANON_PATTERNS_MD_PATH = patternsPath;
+    try {
+        const status = makeStatus({ id: taskId, title: 'Pitfall prompt fixture' });
+        const prompt = promptImplement(makeState(makeTask({ taskId, title: 'Pitfall prompt fixture', status })), 'fresh', [], 'main');
+        assert.ok(prompt.includes(PITFALLS_HEADING));
+        assert.match(prompt, /### AC-1 matching entry[\s\S]*AC1_MATCHING_SENTINEL/);
+    } finally {
+        if (previousPatternsPath === undefined) delete process.env.CANON_PATTERNS_MD_PATH;
+        else process.env.CANON_PATTERNS_MD_PATH = previousPatternsPath;
+    }
+});
+
 void test('implement self-check appears in authoring prompts at the required point and is absent on resume', () => {
     const selfCheck = '**Pre-handoff self-check**';
     const selfCheckEnd = 'in handoff.md.';
@@ -487,6 +525,8 @@ void test('implement self-check appears in authoring prompts at the required poi
     assertSelfCheckOrder(parkResume);
     assert.ok(parkResume.includes(BLAST_RADIUS_HEADING));
     assert.ok(parkResume.includes('`docs/widget.md`'));
+    assert.ok(parkResume.includes(PITFALLS_HEADING));
+    assert.match(parkResume, /### Fixture pitfall citing the widget[\s\S]*fixture\/widget\/core\.ts/);
 
     const interruptedResume = promptImplementResume(baseState);
     assert.ok(!interruptedResume.includes(selfCheck));

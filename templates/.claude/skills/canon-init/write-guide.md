@@ -54,7 +54,7 @@ At least 3–5 entries covering major settled decisions: why this stack, why thi
 ## `docs/patterns.md`
 
 - Implementation patterns the team has settled on: at least one per major layer (API, data, UI if applicable)
-- **Known Pitfalls** section: fill with footguns from the grill session and codebase exploration
+- **Known Pitfalls** section: make each pitfall its own H3 with a rule-focused title, and cite full repository paths or globs in its body so implement prompts can select it by Affected Files. If pitfalls live in separate area docs, add a Known Pitfalls table mapping each doc to the paths or globs that should trigger it.
 - Leave the template structure intact; fill each section that applies
 
 ## `docs/lessons-learned.md`
