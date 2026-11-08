@@ -1,137 +1,109 @@
 # Implementation Handoff: path-scoped-pitfalls
 
 > Author: implementer | Spec: `tasks/path-scoped-pitfalls/spec.md` | Plan: `tasks/path-scoped-pitfalls/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
-
-## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+| `src/orchestrator/pitfalls.ts` | Added the relevance selector, then applied Amendment 1's positional Known Pitfalls table scope and header-first target selection with the specified content fallback. |
+| `src/orchestrator/context.ts` | Removed `buildKnownPitfalls` and its unused worktree import. |
+| `src/orchestrator/prompts/index.ts` | Wired the selector into fresh implement and implement-reroute prompts. |
+| `tests/pitfalls.test.ts` | Added original AC coverage plus AC-15/16 fixtures, real Lint-row coverage, and cap tests. |
+| `tests/fixtures/patterns.stub.md` | Added matching and unrelated path-citing pitfalls for prompt goldens. |
+| `tests/fixtures/pitfalls-docs/docs/lessons-learned.md` | Added a matching lesson fixture after the excluded example scope. |
+| `tests/run-task-prompts.test.ts` | Restructured the golden spec fixture, added the empty-diff call-site test and docs-root override, and covered park-resume. |
+| `tests/run-task-prompts.golden.json` | Regenerated fresh implement, reroute, and reroute-resumed snapshots. |
+| `docs/patterns.md` | Described relevance selection in “How to use this doc.” |
+| `templates/docs/patterns.md` | Updated selection guidance and the scaffold's one-H3-per-pitfall format. |
+| `.claude/skills/canon-init/write-guide.md` | Specified that split-doc indexes go before the H3 entries and use a `Read this doc` column. |
+| `templates/.claude/skills/canon-init/write-guide.md` | Synced the managed write-guide change. |
+| `README.md` | Described pitfalls and lessons as selected by spec Affected Files. |
+| `docs/pipeline-orchestrator.md` | Clarified the patterns override and documented the test-only docs-root override. |
+| `templates/docs/pipeline-orchestrator.md` | Synced the managed pipeline documentation change. |
+| `docs/codebase-map.md` | Updated the Patterns entry and added the selector module. |
+| `dist/orchestrator/run-task.js` | Rebuilt the tracked CLI bundle. |
+| `tasks/path-scoped-pitfalls/notes.md` | Recorded implementation and reroute pitfalls. |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The implementer receives full pitfall entries that cite paths from the task spec's Affected Files, matched Trigger Table sections, linked-doc entries, and matching lessons. Other pitfall titles and every index row remain available within the byte cap. Both fresh implement and implement-reroute use `buildRelevantPitfalls`; park-resume inherits it through the fresh prompt.
+
+Amendment 1 resolves the two recurring spec gaps by making Known Pitfalls table membership positional and target-cell precedence explicit. Only tables before the first H3 under `## Known Pitfalls` are indexes. A target header containing “section”, “doc”, or “read this” wins; tables without a hinted header use the specified doc/section/prefix precedence.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | The implementation follows the original plan and Amendment 1's reroute plan. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
-| AC | Status | Notes |
+| AC | Status | Evidence |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | No `buildKnownPitfalls` hits in `src/` or `tests/`; both prompt call sites use `buildRelevantPitfalls`, which reads spec paths through `extractAffectedFiles`. The call-site test selects an entry for `[src/a/b.ts](src/a/b.ts)` when prompt `affectedFiles` is empty. |
+| AC-2 | Met | Exact and directory-prefix matches render in full; an unrelated path-citing entry stays in the title index. |
+| AC-3 | Met | Covers glob-matched linked entries, open-doc pointer, unmatched titles, area row, and relative Markdown link resolution. |
+| AC-4 | Met | Covers keyless and matched rows, Trigger Table rows under H3, and the restored path-bearing explanatory table fixture. |
+| AC-5 | Met | Covers H2/H3 targets, exact-before-prefix resolution, mixed section/doc targets, and `docs/patterns.md` §Testing without treating that document as a linked pitfall doc. |
+| AC-6 | Met | A direct entry covered by a selected section appears once; nested H3 content is not repeated in the title index. |
+| AC-7 | Met | Matching lessons render under their own heading; unrelated, excluded-example, and fenced headings do not render as entries. |
+| AC-8 | Met | Basenames, symbols, and plain words do not match; a source-line suffix is stripped. |
+| AC-9 | Met | Full entries demote in channel order; title and index truncation include counts, and output stays within the cap. |
+| AC-10 | Met | Covers absent docs, section-only, lesson-only, missing linked docs, and no-Affected-Files output. |
+| AC-11 | Met | Tests `CANON_PATTERNS_MD_PATH` and the docs-root override using a temporary docs tree. |
+| AC-12 | Met | Golden spec uses `## Design` / `### Affected Files`; fresh, reroute, and reroute-resumed snapshots were generated and remain unchanged in this amendment. |
+| AC-13 | Met | Real-doc test keeps the git-path pitfall and Validation Gate Discipline full; it also pins the actual Lint row. |
+| AC-14 | Met | Updated the docs, scaffold, README, codebase map, pipeline reference, and init write guide. The guide now states the amendment's table position and target-header convention; the managed mirror is synced. |
+| AC-15 | Met | A path-citing table inside `### Worker retries` remains in the full direct-match entry, not the area index. A signal-free table before the first H3 appears in the area index. |
+| AC-16 | Met | Tests cover the real Lint row, the `Read this doc` hint, Section-header precedence over an exact Area heading, doc-path fallback over an exact heading, and exact-section fallback over a prefix. |
 
 ## Edge Cases Considered
 
-- ...
+- Hinted columns are selected even when their target text does not resolve; the row stays in the area index and contributes no targets.
+- Without a header hint, Markdown doc paths and `§` references win first, then exact section matches, then prefix matches; the leftmost cell wins within each tier.
+- Wildcard `.md` tokens remain keys rather than linked-doc targets.
+- Trigger Table tables are collected at any heading depth. Known Pitfalls tables after the first H3 are entry content by Amendment 1.
+- Missing linked docs stay visible in the index; their rows still match by key. Linked paths remain confined to the docs root.
+- The hard byte cap truncates title/index/demoted-title details with counts and does not emit a partial fallback sentence.
+
+## Self-Check
+
+| Check | Evidence |
+|---|---|
+| Test integrity | Before production edits, the AC-4/15/16 test selection ran against committed HEAD `f8af39de60b62750d293499a8c9b8b583fe4aaa2`. AC-4 failed because the explanatory table row appeared in the area index; AC-15's Worker retries entry failed to render in full; three AC-16 cases chose the wrong linked-doc/header target. The exact-over-prefix fallback pin passed at HEAD. The AC-15 test's second, signal-free-table assertion was reached and passed after the fix; the pre-fix run stopped at its earlier Worker retries assertion. |
+| Post-fix regression run | `node --import tsx --test tests/pitfalls.test.ts`: 19 passed, 0 failed. |
+| Golden stability | `tests/run-task-prompts.golden.json` did not change in Amendment 1; the current-tree full suite passes against the existing fresh, reroute, and reroute-resumed snapshots. The initial implementation regenerated those snapshots. |
+| Prompt parity | `promptImplement` and `promptImplementReroute` both use `buildRelevantPitfalls`; park-resume uses the fresh implement prompt. |
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- `[ambiguity]` The original spec defines lessons as H3 entries under H2s starting with “Example”, while the real lessons file places later real lessons below `## Example entry` and separates them with an unfenced `---`. The implementation ends the excluded example scope at the first such thematic break or the next H1/H2 so real lessons remain selectable.
+- `[ambiguity]` The original spec orders cap demotions by channel but does not define within-channel order. The implementation demotes the largest body first, breaking ties by later document position to preserve more smaller entries in full.
+- `[ambiguity]` Legacy `## Known Pitfalls` content without H3 entries contributes no selected entry. I preserve the H3-only entry definition and do not add a fallback beyond the Affected Files scope.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| _(none — the spec has no AC designated as red-first)_ | | | | |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Clean. |
+| `npm run type-check` | Pass | Clean. |
+| `npm run build` | Pass | Rebuilt `dist/orchestrator/run-task.js`. |
+| `npm test` | Pass | Current-tree run: 2,144 passed, 1 skipped, 0 failed. The skipped linked-worktree `REPO_ROOT` write test is disabled because this environment restricts `.git/` writes. |
+| `npm run docs-refs-check` | Pass | Final check after this handoff rewrite. |
+| `npm run sync-templates:check` | Pass | Final check after syncing the write-guide mirror. |
+| `npm run sync-templates` | Pass | Synced the canon-managed write-guide mirror. |
+| `node --import tsx --test tests/pitfalls.test.ts` | Pass | 19 focused tests passed. |
+| `git diff --check` | Pass | No whitespace errors. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All original and amended ACs met.
+- [x] All required validation checks pass.
+- [x] Reroute scope is documented; no files were added outside the spec's Affected Files.

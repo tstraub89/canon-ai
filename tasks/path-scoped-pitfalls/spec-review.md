@@ -31,3 +31,12 @@ none
 - [ ] **Approved** — spec is implementable as written
 - [x] **Approved with nits** — implementable, but noting observations for plan phase
 - [ ] **Changes requested** — spec must be revised before plan phase
+
+## Amendment Review
+
+- [ ] **Approved**
+- [x] **Approved with nits**
+- [ ] **Changes requested**
+
+> Findings:
+> - **Nit — AC-15 has a dangling fixture reference.** It says “The AC-4 fixture's nested table carries a path token again,” but AC-4 does not describe a nested-table fixture. Clarify which fixture/test this refers to; the required behaviors in AC-15 and the target-precedence cases in AC-16 are otherwise implementable and verifiable.

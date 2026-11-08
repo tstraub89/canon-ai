@@ -1,15 +1,15 @@
 {
   "id": "path-scoped-pitfalls",
   "title": "Inject only pitfalls and lessons relevant to Affected Files",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-08",
   "updated": "2026-11-08",
-  "branch": "",
+  "branch": "task/path-scoped-pitfalls",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "7e0ec5dccf8e0f01476506abed959c2bdc48c7b0",
+    "orchestrator_commit": "324d355e2343f64bb39d55c8aeb4367b5c8c5655",
     "canon_version": "3.18.0",
     "codex_cli": "codex-cli 0.167.0",
     "claude_code": "2.1.319 (Claude Code)"
@@ -17,7 +17,7 @@
   "task_size": "M",
   "delicate": false,
   "human_spec_gate": false,
-  "full_send": true,
+  "full_send": false,
   "worktree": true,
   "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
   "phases": {
@@ -31,7 +31,7 @@
       "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 1,
+      "iterations_total": 2,
       "changes_requested_total": 0,
       "auto_block_count": 0,
       "preflight_rejections_current_loop": 0
@@ -41,21 +41,24 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
-      "agent": "codex"
+      "status": "done",
+      "agent": "codex",
+      "rerouted": true,
+      "reroute_count": 1
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 4,
+      "changes_requested_total": 2,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -63,15 +66,26 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-11-08",
+      "phase": "code_review",
+      "iteration_count": 0,
+      "reason": "Code review surfaced a spec_gap verdict for task(s): path-scoped-pitfalls. The implementation cannot resolve this — the root cause is in the spec. Recovery options (both operate on the full blocked bundle [path-scoped-pitfalls]):\n  FIX: add ## Amendment to tasks/path-scoped-pitfalls/spec.md, then: canon run path-scoped-pitfalls --reroute\n  BLESS: canon task accept path-scoped-pitfalls code_review --reason \"<why>\""
+    }
+  ],
   "sessions": {
-    "spec_reviewer": "01a1bba1-c372-7211-a234-1fbfc10fb144"
+    "implementer": "01a1bba6-0e59-7b02-902d-7d42f2c4722c",
+    "spec_reviewer": "01a1bc03-3acd-71f3-b1b8-0d8e3543eebc",
+    "reviewer": "4e32d96d-f85c-4345-a830-3cc5f8a2a856"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
   "provider": "mixed",
   "session_backends": {
-    "spec_reviewer": "codex"
+    "implementer": "codex",
+    "spec_reviewer": "codex",
+    "reviewer": "claude"
   }
 }

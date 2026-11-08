@@ -187,3 +187,29 @@ None.
 - [x] (Bug/flake fixes) N/A: feature
 - [x] (Refactors) N/A: feature
 - [x] *Judgment Calls* lists every judgment call the spec makes
+
+## Amendment 1 — index-table scope and target-cell precedence (from code_review round 3 spec gap)
+
+Behavior-only amendment; Affected Files unchanged. These rules replace the overlapping parts of the Decision's **Index tables** and **Row target and keys** definitions and the Implementation Note "Detect the target cell by content, not by column name", which no longer applies.
+
+**A. Which Known Pitfalls tables are index tables.** In `docs/patterns.md` `## Known Pitfalls`, index tables are only the tables directly under the H2 and before its first H3. A table inside an H3 entry is always entry content: it stays in the entry body, and its path tokens count for that entry's direct match. Content signals (path tokens, em dashes, heading-like cells) play no part in this classification. An index table placed after the first H3 is not supported. The Trigger Table rule is unchanged.
+
+**B. Which cell is the row target.** The target column is chosen per table:
+1. **Header hint.** The first column whose header cell contains, case-insensitively, the word "section" or "doc", or the phrase "read this", is the target column for every row of that table.
+2. **Content fallback**, used only when no header matches: for each row, the target is the leftmost cell holding a doc-path item or a `§` reference; otherwise the leftmost cell holding an item that equals a heading exactly; otherwise the leftmost cell holding an item that resolves by prefix.
+
+Keys are the path-like tokens in all cells except the target cell. Prefix resolution of section names applies only to items in the chosen target cell.
+
+- [ ] AC-15: Index-table scope. A `| File | Why |` table inside a Known Pitfalls H3 entry, citing `src/queue/worker.ts`, stays in that entry's body and does not appear in the area index. With Affected File `src/queue/worker.ts`, that entry is injected in full as a direct match. A table directly under `## Known Pitfalls` (before any H3) appears in the area index even when it holds no path token, em dash or resolvable heading. The AC-4 fixture's nested table carries a path token again. Verify with unit tests.
+- [ ] AC-16: Target precedence. Pin with unit tests:
+  - canon-ai's real Trigger Table Lint row resolves its "Section in this file" cell (already covered by AC-13 and the existing Lint test; it must stay green);
+  - a Known Pitfalls row under headers `| Area | Read this doc | Key files |` with cells `State`, `` `docs/pitfalls/state.md` ``, `` `app/src/store/**` ``, next to a "State Management Rules" heading, with Affected File `app/src/store/editor.ts`, makes the linked doc matched and does not inject "State Management Rules";
+  - a row under `| Area touched | Section | Key files |` whose area cell equals a heading exactly resolves to the Section cell's target;
+  - a table whose headers match no hint (`| A | B | C |`) uses the content fallback: a doc-path cell beats an exact-heading cell, and an exact-heading cell beats a prefix-only cell.
+
+### Judgment Calls (amendment)
+
+| Call | Chosen | Strongest alternative | Why | Decided by |
+|---|---|---|---|---|
+| Index tables after the first H3 | Not supported | Content-heuristic classification (the round 2 ask) | Three rounds showed every content rule misclassifies an entry's own table; the scaffold already says "directly under `## Known Pitfalls`, before the H3 entries" | `Author` |
+| Target-cell detection | Header hint, then a fixed content precedence | Content-only precedence | Both real layouts carry a recognisable header ("Read this doc", "Section in this file"); content-only rules broke a real layout in each of three rounds | `Author` |
