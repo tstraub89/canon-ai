@@ -82,9 +82,19 @@ This rule applies to mixed mode; see "Claude-provider review independence (2026-
 
 ---
 
+## Self-Check presence at pre-flight, truth at the anchored lens
+
+**Decision**: The handoff's baseline Self-Check table must contain filled Test integrity, Restatement sweep, and Sibling parity rows. The deterministic pre-flight checks presence and fill only; Self-Check issues are format blockers fixed in the baseline section in place, and consume the existing pre-flight rejection budget. Iteration subsections do not satisfy this gate.
+
+**Why**: Evidence makes the implementer's self-check claims falsifiable. Deterministic checks can require a record without trying to judge its truth or matching prose against the spec.
+
+**Rule**: The anchored lens reads the effective record against the current cumulative diff: for each check, the latest filled row across the baseline and every Iteration subsection wins. Empty or placeholder Iteration rows supersede nothing; superseded rows are history and are not judged. Every updated row covers all branch work. A contradiction is a Stage 1 gap; an omission (such as an unmentioned changed behavioral test) is a Stage 2 `risk/guardrail` finding. Regenerated snapshots and fixture-only edits are exempt from test-integrity evidence.
+
+---
+
 ## Two-stage code review with Stage 1 as a gate
 
-**Decision**: Code review runs in two stages. Stage 1 verifies spec compliance (validation outcomes, AC coverage, red-first evidence, dropped sections); if Stage 1 fails, Stage 2 (code quality) is skipped entirely and the review sends back to Codex.
+**Decision**: Code review runs in two stages. Stage 1 verifies spec compliance (validation outcomes, AC coverage, red-first evidence, Self-Check contradictions in the effective record, dropped sections); if Stage 1 fails, Stage 2 (code quality) is skipped entirely and the review sends back to Codex.
 
 **Why**: The alternative — one review pass that mixes both — was simpler but produced two failure modes. **(1)** Stage 2 findings written against code that's about to change waste tokens (Codex re-implements; the Stage 2 nits become irrelevant or wrong). **(2)** Reviewers fall into "code quality" mode and miss spec-compliance failures because the code looks fine on its own. Stage 1 as a gate forces the reviewer to assess "does this match the spec?" before "is this well-written?" — a different lens that catches different bugs. The cost (re-running both stages on iteration) is bounded by `MAX_REVIEW_LOOPS`.
 

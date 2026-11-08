@@ -1,10 +1,10 @@
 {
   "id": "handoff-self-check-evidence",
   "title": "Handoff Self-Check evidence section with pre-flight and anchored verification",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-08",
   "updated": "2026-11-08",
-  "branch": "",
+  "branch": "task/handoff-self-check-evidence",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -66,7 +67,9 @@
   "escalations": [],
   "sessions": {
     "spec_reviewer": "01a1bb7f-f5c2-7531-953a-790f1649ccb7",
-    "author": "0f9b3ada-f0fe-4e54-a6bb-b2427e987e1a"
+    "author": "0f9b3ada-f0fe-4e54-a6bb-b2427e987e1a",
+    "implementer": "01a1bb8a-a3d3-7a91-b1c3-c0847e51e14d",
+    "reviewer": "32fbae45-bd4d-403b-ae26-cf17d3802302"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
@@ -74,6 +77,8 @@
   "provider": "mixed",
   "session_backends": {
     "spec_reviewer": "codex",
-    "author": "claude"
+    "author": "claude",
+    "implementer": "codex",
+    "reviewer": "claude"
   }
 }

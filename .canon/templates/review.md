@@ -20,6 +20,7 @@ Did the implementer's `handoff.md` pass all applicable checks?
 - [ ] All checks required by the spec's "Validation Required" section were run
 - [ ] No required checks were skipped without justification
 - [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
+- [ ] Self-Check evidence in the effective record is not contradicted by the diff
 
 ### Acceptance Criteria Check
 

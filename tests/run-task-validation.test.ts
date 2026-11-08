@@ -32,6 +32,8 @@ import {
     formatManifestLintIssues,
     manifestPreflightMessage,
     checkAcCoveragePlaceholders,
+    classifyPreflightBlockers,
+    validateHandoff,
     checkRerouteEvidence,
     buildSharedDocAbortMessage,
     classifySharedDocDirtFromData,
@@ -3362,6 +3364,7 @@ function classifyFixture(
         requiredChecks: ['`npm run test`'],
         changedFiles: new Set(changedFiles),
         acCoverageIssues: [],
+        selfCheckIssues: [],
         changesTableIssues: [],
         bundleDiffIssues: [],
         handoffMissing: false,
@@ -4690,4 +4693,92 @@ void test('amendment AC-A2: trailing tilde fence is diagnosed; closed examples p
     assert.equal(issues[0].line, manifest.split('\n').length + 1);
     assert.match(issues[0].message, /fence/);
     assert.deepEqual(lintSpecManifest('```md\nexample\n```\n<!--\nexample\n-->\n' + manifest), []);
+});
+
+
+const filledSelfCheck = [
+    '## Self-Check', '', '| Check | Evidence |', '|---|---|',
+    '| Test integrity | Added test asserts the exact rejection; fails on base. |',
+    '| Restatement sweep | Searched Self-Check; updated all contract carriers. |',
+    '| Sibling parity | Both handoff entry points checked. |', '',
+].join('\n');
+
+function writeSelfCheckFixture(tasksRoot: string, selfCheck: string): void {
+    writeCodeReviewTask(tasksRoot, 'self-check');
+    const dir = path.join(tasksRoot, 'self-check');
+    fs.writeFileSync(path.join(dir, 'spec.md'), '## Validation Required\n\n- [x] `npm test`\n');
+    fs.writeFileSync(path.join(dir, 'handoff.md'), [
+        '## Changes', '', '| File | What Changed |', '|---|---|',
+        '## AC Coverage', '', '| AC | Status | Notes |', '|---|---|---|', '| AC-1 | Met | fixture |',
+        selfCheck,
+        '## Validation Outcomes', '', '| Check | Result | Notes |', '|---|---|---|', '| npm test | Pass | fixture |',
+    ].join('\n'));
+}
+
+const invalidSelfChecks: Array<[string, string, RegExp]> = [
+    ['missing section', '', /add a baseline `## Self-Check` section.*Iteration `### Self-Check`.*does not satisfy/],
+    ['missing row', filledSelfCheck.replace(/^\| Sibling parity.*\n/m, ''), /row "Sibling parity" is missing/],
+    ['empty evidence', filledSelfCheck.replace('Both handoff entry points checked.', '   '), /row "Sibling parity".*empty Evidence/],
+    ['placeholder evidence', filledSelfCheck.replace('Both handoff entry points checked.', '_(parallel paths examined)_'), /row "Sibling parity".*template placeholder/],
+    ['iteration only', '## Iteration 2\n' + filledSelfCheck.replace('## Self-Check', '### Self-Check'), /add a baseline `## Self-Check` section.*Iteration `### Self-Check`.*does not satisfy/],
+    ['zero rows', '## Self-Check\n', /row "Test integrity" is missing/],
+    ['header only', '## Self-Check\n| Check | Evidence |\n|---|---|\n', /row "Test integrity" is missing/],
+    ['commented table', '## Self-Check\n<!--\n' + filledSelfCheck + '\n-->', /row "Test integrity" is missing/],
+    ['fenced table', '## Self-Check\n```md\n' + filledSelfCheck + '\n```', /row "Test integrity" is missing/],
+    ['duplicate empty row', filledSelfCheck + '| Sibling parity | |\n', /row "Sibling parity".*empty Evidence/],
+    ['unescaped pipe', filledSelfCheck.replace('Both handoff entry points checked.', 'pattern a|b'), /row "Sibling parity".*two cells.*escape literal pipes/],
+];
+for (const evidence of ['N/A', 'n/a', 'N/A —', 'N/A –', 'N/A -', 'N/A:', '**N/A**']) {
+    invalidSelfChecks.push([`bare ${evidence}`, filledSelfCheck.replace('Both handoff entry points checked.', evidence), /row "Sibling parity".*bare N\/A/]);
+}
+for (const [name, content, message] of invalidSelfChecks) {
+    void test(`Self-Check rejects ${name} at both handoff gates`, () => {
+        withTempTasks(tasksRoot => {
+            writeSelfCheckFixture(tasksRoot, content);
+            const live = classifyPreflightBlockers('self-check', new Set()).filter(issue => issue.message.startsWith('Self-Check'));
+            const parity = validateHandoff('self-check').filter(issue => issue.startsWith('Self-Check'));
+            assert.ok(live.length > 0, 'live gate must report a Self-Check issue');
+            assert.deepEqual(live.map(issue => issue.message), parity);
+            assert.ok(live.every(issue => issue.bucket === 'format'));
+            assert.match(parity.join('\n'), message);
+        });
+    });
+}
+
+const validSelfChecks = [
+    filledSelfCheck,
+    ...['—', '–', '-'].map(dash => filledSelfCheck.replace('Both handoff entry points checked.', `N/A ${dash} no guards added`)),
+    filledSelfCheck.replace('## Self-Check', '## Self-check'),
+    filledSelfCheck.replace('## Self-Check', '## Self Check'),
+    filledSelfCheck.replace('| Sibling parity |', '| **Sibling parity** |'),
+    filledSelfCheck.replace('| Sibling parity |', '| `SIBLING PARITY`: |'),
+    filledSelfCheck.replace('Both handoff entry points checked.', 'Searched a\\|b.'),
+    filledSelfCheck + '\n## Iteration 2\n### Self-Check\n| Check | Evidence |\n|---|---|\n| Test integrity | _(placeholder)_ |',
+    filledSelfCheck.replace('| Check | Evidence |', '### Evidence\n\n| Check | Evidence |'),
+];
+for (const [index, content] of validSelfChecks.entries()) {
+    void test(`Self-Check accepts filled variant ${index} at both gates`, () => {
+        withTempTasks(tasksRoot => {
+            writeSelfCheckFixture(tasksRoot, content);
+            assert.deepEqual(classifyPreflightBlockers('self-check', new Set()), []);
+            assert.deepEqual(validateHandoff('self-check'), []);
+        });
+    });
+}
+
+void test('Self-Check missing baseline writes Fix the handoff and consumes pre-flight budget', () => {
+    withTempTasks(tasksRoot => {
+        writeSelfCheckFixture(tasksRoot, '');
+        const classified = classifyPreflightBlockers('self-check', new Set());
+        assert.equal(classified.length, 1);
+        assert.equal(classified[0].bucket, 'format');
+        assert.match(classified[0].message, /^Self-Check section is missing/);
+        const failures = [{ taskId: 'self-check', classified }];
+        const route = determinePreflightRoute(failures);
+        assert.equal(route, 'implement');
+        assert.equal(writePreflightReviewArtifacts([taskContext(tasksRoot, 'self-check')], failures, route), true);
+        taskPhasePreflightRejected('self-check', 'code_review');
+        assert.match(readReview(tasksRoot, 'self-check'), /### Fix the handoff\n[\s\S]*Self-Check section is missing/);
+        assert.equal(readStatus('self-check').phases.code_review?.preflight_rejections_current_loop, 1);
+    });
 });

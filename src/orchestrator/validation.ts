@@ -72,6 +72,51 @@ export function checkAcCoveragePlaceholders(handoffContent: string): string[] {
     return [];
 }
 
+export const SELF_CHECK_ROWS = ['Test integrity', 'Restatement sweep', 'Sibling parity'] as const;
+
+const SELF_CHECK_MISSING =
+    'Self-Check section is missing — add a baseline `## Self-Check` section to handoff.md in place, after Red-First Evidence ' +
+    '(a Check / Evidence table with the rows Test integrity, Restatement sweep and Sibling parity). ' +
+    'An Iteration `### Self-Check` subsection does not satisfy this check.';
+
+function normalizeSelfCheckLabel(cell: string): string {
+    return cell.replace(/[*_`]/g, '').replace(/:\s*$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// Presence-and-fill only. Whether the evidence is TRUE is judged by the
+// anchored code-review lens (docs/decisions.md). scanSpecManifest is reused for
+// its generic visible-line/heading scan (fences and HTML comments hidden), so
+// the template's commented iteration block is never read as a baseline.
+export function checkSelfCheckEvidence(handoffContent: string): string[] {
+    const { lines, hidden, headings } = scanSpecManifest(handoffContent);
+    const baseline = headings.find(h => h.level === 2 && /^##\s+self[- ]check\s*$/i.test(h.text));
+    if (!baseline) return [SELF_CHECK_MISSING];
+    const end = headings.find(h => h.index > baseline.index && h.level <= 2)?.index ?? lines.length;
+    const rows = scanTableBlocks(lines, hidden, baseline.index + 1, end).flatMap(block => block.rows);
+    const issues: string[] = [];
+    for (const label of SELF_CHECK_ROWS) {
+        const matches = rows.filter(row => normalizeSelfCheckLabel(row.cells[0] ?? '') === label.toLowerCase());
+        if (matches.length === 0) {
+            issues.push(`Self-Check row "${label}" is missing — add it to the baseline \`## Self-Check\` table in place, with its evidence or \`N/A — <reason>\`.`);
+            continue;
+        }
+        for (const row of matches) {
+            const evidence = (row.cells[1] ?? '').trim();
+            const bare = evidence.replace(/[*_`]/g, '').trim();
+            if (row.cells.length !== 2) {
+                issues.push(`Self-Check row "${label}" must have exactly two cells — repair the baseline \`## Self-Check\` table in place and escape literal pipes as \`\\|\`.`);
+            } else if (!/[\p{L}\p{N}]/u.test(evidence)) {
+                issues.push(`Self-Check row "${label}" has an empty Evidence cell — fill it in the baseline \`## Self-Check\` table, or write \`N/A — <reason>\`.`);
+            } else if (/^_\(/.test(evidence)) {
+                issues.push(`Self-Check row "${label}" still holds the template placeholder — replace it in the baseline \`## Self-Check\` table with the evidence, or \`N/A — <reason>\`.`);
+            } else if (/^n\/a[\s.:—–-]*$/i.test(bare)) {
+                issues.push(`Self-Check row "${label}" is a bare N/A — give the reason in the baseline \`## Self-Check\` table: \`N/A — <reason>\`.`);
+            }
+        }
+    }
+    return issues;
+}
+
 // Compute the *current* result for each named validation check in a cumulative
 // handoff. Starts with the original `## Validation Outcomes` table, then walks
 // `## Iteration N` sections in order, overriding per check name with any rows
@@ -116,6 +161,7 @@ export function validateHandoff(taskId: string, changedFiles: ReadonlySet<string
         const content = fs.readFileSync(handoffPath, 'utf8');
         const latestResults = computeLatestValidationResults(content);
         issues.push(...checkAcCoveragePlaceholders(content));
+        issues.push(...checkSelfCheckEvidence(content));
         issues.push(...validateHandoffAgainstSpec(specPath, handoffPath, latestResults, changedFiles));
         const { malformed } = parseHandoffChangesRows(taskId);
         for (const entry of malformed) {
@@ -411,6 +457,7 @@ export type PreflightClassificationData = {
     requiredChecks: string[] | null;
     changedFiles: ReadonlySet<string>;
     acCoverageIssues: string[];
+    selfCheckIssues: string[];
     changesTableIssues: string[];
     bundleDiffIssues: string[];
     handoffMissing: boolean;
@@ -682,6 +729,7 @@ export function classifyPreflightBlockersFromData(data: PreflightClassificationD
 
     return [
         ...data.acCoverageIssues.map(format),
+        ...data.selfCheckIssues.map(format),
         ...data.changesTableIssues.map(format),
         ...data.bundleDiffIssues.map(format),
         ...fromRows,
@@ -705,6 +753,7 @@ export function classifyPreflightBlockers(
             requiredChecks,
             changedFiles,
             acCoverageIssues: checkAcCoveragePlaceholders(content),
+            selfCheckIssues: checkSelfCheckEvidence(content),
             changesTableIssues: malformed.map(entry => `Changes table row '${entry.cell}': ${entry.reason}`),
             bundleDiffIssues: [...bundleDiffIssues],
             handoffMissing: false,
@@ -715,6 +764,7 @@ export function classifyPreflightBlockers(
             requiredChecks: null,
             changedFiles,
             acCoverageIssues: [],
+            selfCheckIssues: [],
             changesTableIssues: [],
             bundleDiffIssues: [...bundleDiffIssues],
             handoffMissing: true,
