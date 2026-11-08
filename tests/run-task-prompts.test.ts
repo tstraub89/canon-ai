@@ -1573,3 +1573,28 @@ void test('amendment AC-A3: full-send foreman carries the contract and a valid s
         .flatMap(record => parseHandoffPathCell(Object.values(record)[0]).paths);
     assert.ok(paths.includes('path/to/changed-file.ts'));
 });
+
+
+void test('promptImplementRevisions_preflight', () => {
+    const status = makeStatus();
+    status.phases.code_review = phase('claude', { preflight_rejections_current_loop: 1 });
+    const prompt = normalize(promptImplementRevisions(makeState(makeTask({ status })), [], 'main'));
+    recordOrAssert('promptImplementRevisions_preflight', prompt);
+    assert.match(prompt, /Self-Check table, Changes table/);
+    assert.match(prompt, /adding or repairing the baseline `## Self-Check` section in place — an Iteration `### Self-Check` subsection does not satisfy the pre-flight/);
+});
+
+void test('Self-Check authoring prompts retain evidence and whole-branch supersession instructions', () => {
+    for (const prompt of [promptImplement(baseState), promptImplementReroute(rerouteState)]) {
+        assert.match(prompt, /Record each check's evidence in handoff.md's `## Self-Check` table/);
+        assert.match(prompt, /Write the section even if the handoff template you are using lacks it/);
+    }
+    assert.match(promptImplementReroute(rerouteState), /covers all work on the branch: carry earlier rounds' Self-Check evidence forward/);
+    const revision = promptImplementRevisions(iterState, [], 'main');
+    assert.match(revision, /One exception: a `### Self-Check` subsection[^\n]*restates whole-branch evidence rather than this round's delta/);
+    assert.match(revision, /adds, renames, or changes behavioral tests, contracts, or guards, or a review finding says an earlier row is contradicted/);
+    assert.match(revision, /Each row you write restates that check's evidence for all work on the branch, not only this round, and supersedes the earlier version of that row; leave earlier rows in place as history/);
+    assert.match(promptImplementResume(baseState), /the `## Self-Check` evidence table — test integrity, restatement sweep, sibling parity, each with evidence or `N\/A — <reason>`/);
+    const foreman = promptCodeReview(codeReviewRoundNState);
+    assert.match(foreman, /red-first evidence is read across the whole handoff[^\n]*Also tell the anchored lens to read Self-Check evidence across the baseline `## Self-Check` section and every Iteration `### Self-Check` subsection, and to judge the effective record: for each check, the latest filled row; superseded rows are history and are not judged/);
+});

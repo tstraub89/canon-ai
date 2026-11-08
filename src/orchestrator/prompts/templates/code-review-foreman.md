@@ -18,7 +18,7 @@ Tasks:
 This is Round 1, the initial code review.
 {{/isRound1}}
 {{^isRound1}}
-This is Round {{roundN}}: re-review after iteration {{priorIteration}}. {{#mixedProvider}}All three lenses run again this round.{{/mixedProvider}}{{^mixedProvider}}Both Claude lenses run again this round.{{/mixedProvider}} Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}. Also tell the anchored lens that red-first evidence is read across the whole handoff (baseline section and every Iteration subsection), not only that Iteration section.
+This is Round {{roundN}}: re-review after iteration {{priorIteration}}. {{#mixedProvider}}All three lenses run again this round.{{/mixedProvider}}{{^mixedProvider}}Both Claude lenses run again this round.{{/mixedProvider}} Direct the anchored lens to read the Iteration {{priorIteration}} section of `handoff.md` that addresses review round {{priorIteration}}. Also tell the anchored lens that red-first evidence is read across the whole handoff (baseline section and every Iteration subsection), not only that Iteration section. Also tell the anchored lens to read Self-Check evidence across the baseline `## Self-Check` section and every Iteration `### Self-Check` subsection, and to judge the effective record: for each check, the latest filled row; superseded rows are history and are not judged.
 {{#tightenLine}}
 {{{tightenLine}}}
 {{/tightenLine}}

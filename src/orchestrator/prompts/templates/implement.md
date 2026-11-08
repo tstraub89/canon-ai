@@ -45,6 +45,8 @@ Parse cell-by-cell with explicit rejection, not a permissive whole-string regex.
 2. **Restatement sweep.** For every contract the change alters — an operator-facing string, flag, format, heading, verdict, or config key — search the repository for other places that state the same contract, and bring them in line.
 3. **Sibling parity.** For every guard, check, or branch the change adds, find the parallel paths that handle the same input — other commands, modes, entry points, or platform variants — and confirm each one either gets the same treatment or deliberately does not.
 
+Record each check's evidence in handoff.md's `## Self-Check` table (`Check` | `Evidence`, one row each for `Test integrity`, `Restatement sweep` and `Sibling parity`): the tests and the assertion that pins each one's failure reason, and how you know it fails without the change; the search pattern(s) you ran for each changed contract, and how each hit outside Affected Files was handled; the parallel paths you examined, and whether each got the same treatment. Write `N/A — <reason>` for a check that does not apply, and `\|` for a literal pipe. Write the section even if the handoff template you are using lacks it: code review rejects a handoff without a filled `## Self-Check` section, and the reviewer checks each row against the diff.
+
 If a check finds an edit needed in a file outside the spec's Affected Files, do not make it: record it under Blockers in handoff.md.
 {{/selfCheck}}
 

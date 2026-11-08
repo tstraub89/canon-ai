@@ -68,6 +68,16 @@ Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC
 |---|---|---|---|---|
 | _(none — no red-first ACs / one row per red-first AC)_ | | | | |
 
+## Self-Check
+
+> One row per pre-handoff self-check, each with evidence a reviewer can check against the diff. **Test integrity:** each behavioral test added or changed, the assertion that pins its failure reason, and how you know it fails without the change (a Red-First Evidence row counts; regenerated snapshots and fixture-only edits are exempt and can be summarized in one line). **Restatement sweep:** the search pattern(s) you ran for each changed contract, and every hit outside Affected Files with how it was handled — updated, or recorded as a Blocker. **Sibling parity:** the parallel paths you examined for each added guard or branch, and whether each got the same treatment, or why not. A row may read `N/A — <reason>`. Write a literal pipe inside a cell as `\|`. Cite paths by the same file-citation rule as the rest of this handoff (full repository-root paths; the markdown-link form for a file that does not exist).
+
+| Check | Evidence |
+|---|---|
+| Test integrity | _(tests added or changed → the assertion that pins each failure reason → how you know it fails without the change)_ |
+| Restatement sweep | _(search pattern(s) run per changed contract → hits outside Affected Files and how each was handled)_ |
+| Sibling parity | _(parallel paths examined per added guard or branch → same treatment, or why not)_ |
+
 ## Validation Outcomes
 
 > All applicable checks must record a result before submitting for review. Result values:
@@ -128,6 +138,13 @@ _Include only when this round adds or changes a red-first test or adds missing e
 
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
+
+### Self-Check
+
+_Include only when this round makes an earlier Self-Check row incomplete or untrue, and include only the rows it updates. Each row restates that check's evidence for all work on the branch, not only this round, and supersedes every earlier version of that row (earlier rows stay in place as history). This subsection never replaces the baseline `## Self-Check` section._
+
+| Check | Evidence |
+|---|---|
 
 ### Re-run validation (only checks that re-ran)
 

@@ -389,7 +389,7 @@ export function promptImplementResume(state: PipelineState): string {
         '',
         'Your only remaining tasks:',
         '1. Run the project\'s validation commands (see the change-type → check-category validation matrix included below and each spec\'s "Validation Required" section) and record results.',
-        '2. Write handoff.md for each task (intent/rationale, deviations, AC coverage, validation outcomes).',
+        '2. Write handoff.md for each task (intent/rationale, deviations, AC coverage, the `## Self-Check` evidence table — test integrity, restatement sweep, sibling parity, each with evidence or `N/A — <reason>` — and validation outcomes).',
         '3. Run canon task to mark implement done for each task.',
         '',
         promptImplement(state, 'resume'),
