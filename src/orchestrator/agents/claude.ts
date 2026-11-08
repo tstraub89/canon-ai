@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { REPO_ROOT } from '../env.js';
 import { info, setExitReason, warn } from '../cli.js';
 import { recordMetric } from '../metrics.js';
-import { CLAUDE_HEADLESS, PHASE_ARTIFACT_COMPLETION, toResumePrompt } from '../prompts/helpers.js';
+import { CLAUDE_HEADLESS, makePromptArgSafe, PHASE_ARTIFACT_COMPLETION, toResumePrompt } from '../prompts/helpers.js';
 import { formatLiveTick, streamProcess } from './stream.js';
 import type { ClaudeRunResult } from '../types.js';
 
@@ -95,6 +95,7 @@ export async function runClaude(
     cwd = REPO_ROOT,
     wrapForResume = true,
 ): Promise<ClaudeRunResult> {
+    const safePrompt = makePromptArgSafe(prompt);
     info(resumeId ? `Calling Claude Code (resuming ${resumeId.slice(0, 8)}...)...` : 'Calling Claude Code...');
     info(interactive
         ? `Model: ${model} | Effort: ${effort} | Budget: uncapped (interactive)`
@@ -117,7 +118,7 @@ export async function runClaude(
             const args = ['--model', model, '--effort', effort, '--add-dir', REPO_ROOT];
             if (cwd !== REPO_ROOT) args.push('--add-dir', cwd);
             if (resumeId) args.push('--resume', resumeId);
-            args.push(resumeId && wrapForResume ? toResumePrompt(prompt) : prompt);
+            args.push(resumeId && wrapForResume ? toResumePrompt(safePrompt) : safePrompt);
             const exitCode = await runInteractiveClaude(args, cwd);
             if (exitCode !== 0) {
                 status = 'failed';
@@ -139,7 +140,7 @@ export async function runClaude(
         const attempt = async (useResumeId: string | null): Promise<{ resumeNotFound: boolean; result: ClaudeRunResult | null }> => {
             // A fresh fallback must never inherit the failed resume attempt's ID.
             let sessionId: string | null = null;
-            const renderedPrompt = useResumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
+            const renderedPrompt = useResumeId && wrapForResume ? toResumePrompt(safePrompt) : safePrompt;
             const effectivePrompt = `${CLAUDE_HEADLESS}\n\n${renderedPrompt}`;
             const args = [
                 '-p', effectivePrompt,

@@ -71,6 +71,11 @@ export function phaseCommands(taskIds: string[], phase: string, status: string, 
     }).join('\n');
 }
 
+// Embedded repository content can contain NULs, which subprocess argv cannot carry.
+export function makePromptArgSafe(prompt: string): string {
+    return prompt.replaceAll('\0', '\\0');
+}
+
 export function toResumePrompt(prompt: string): string {
     let trimmed = prompt;
     for (const block of [CLAUDE_STARTUP, CODEX_STARTUP, CLAUDE_IMPLEMENTER_STARTUP, QA_STARTUP]) {

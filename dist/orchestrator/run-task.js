@@ -2581,6 +2581,9 @@ function phaseCommands(taskIds, phase, status, verdict = "") {
     return `(cd '${resolveTaskCwd(id)}' && ${cmd})`;
   }).join("\n");
 }
+function makePromptArgSafe(prompt) {
+  return prompt.replaceAll("\0", "\\0");
+}
 function toResumePrompt(prompt) {
   let trimmed = prompt;
   for (const block of [CLAUDE_STARTUP, CODEX_STARTUP, CLAUDE_IMPLEMENTER_STARTUP, QA_STARTUP]) {
@@ -2787,6 +2790,7 @@ function runInteractiveClaude(args, cwd) {
   });
 }
 async function runClaude(prompt, interactive, resumeId, model, effort, budget, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
+  const safePrompt = makePromptArgSafe(prompt);
   info(resumeId ? `Calling Claude Code (resuming ${resumeId.slice(0, 8)}...)...` : "Calling Claude Code...");
   info(interactive ? `Model: ${model} | Effort: ${effort} | Budget: uncapped (interactive)` : `Model: ${model} | Effort: ${effort} | Budget: ${budget}`);
   const startMs = Date.now();
@@ -2805,7 +2809,7 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
       const args = ["--model", model, "--effort", effort, "--add-dir", REPO_ROOT];
       if (cwd !== REPO_ROOT) args.push("--add-dir", cwd);
       if (resumeId) args.push("--resume", resumeId);
-      args.push(resumeId && wrapForResume ? toResumePrompt(prompt) : prompt);
+      args.push(resumeId && wrapForResume ? toResumePrompt(safePrompt) : safePrompt);
       const exitCode = await runInteractiveClaude(args, cwd);
       if (exitCode !== 0) {
         status = "failed";
@@ -2825,7 +2829,7 @@ async function runClaude(prompt, interactive, resumeId, model, effort, budget, m
     }
     const attempt = async (useResumeId) => {
       let sessionId = null;
-      const renderedPrompt = useResumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
+      const renderedPrompt = useResumeId && wrapForResume ? toResumePrompt(safePrompt) : safePrompt;
       const effectivePrompt = `${CLAUDE_HEADLESS}
 
 ${renderedPrompt}`;
@@ -3036,7 +3040,8 @@ function invalidCodexEffortMessage(effort) {
 async function runCodex(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
   const invalidEffort = invalidCodexEffortMessage(effort);
   if (invalidEffort) die(invalidEffort);
-  const renderedPrompt = resumeId && wrapForResume ? toResumePrompt(prompt) : prompt;
+  const safePrompt = makePromptArgSafe(prompt);
+  const renderedPrompt = resumeId && wrapForResume ? toResumePrompt(safePrompt) : safePrompt;
   const effectivePrompt = interactive ? renderedPrompt : `${CODEX_HEADLESS}
 
 ${renderedPrompt}`;
