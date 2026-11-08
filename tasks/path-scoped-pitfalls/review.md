@@ -33,7 +33,7 @@ Lenses:
 | AC-2 | Pass | `tests/pitfalls.test.ts:45-52` covers the exact file, the directory prefix, and an unrelated entry listed as a title only. |
 | AC-3 | Pass | `:54-76` covers the glob-matched linked doc, the "Open" line, titles only when unmatched, and relative-link resolution. |
 | AC-4 | Pass | `:78-109` covers keyless rows, the `—` key cell, the matched marker, and a Trigger Table under an H3. The nested table carries a path token again. |
-| AC-5 | Pass | `:178-217` covers H2/H3 targets, exact-before-prefix, a mixed cell, and `docs/patterns.md §Testing` with no other titles from that doc. |
+| AC-5 | Pass | `:178-217` covers H2/H3 targets, exact-before-prefix, a mixed cell, and docs/patterns.md §Testing with no other titles from that doc. |
 | AC-6 | Pass | `:219-229` covers dedup. |
 | AC-7 | Pass | `:231-239` covers the lessons subheading, Example scope, a fenced `###`, and CRLF input. |
 | AC-8 | Pass | `:241-252` covers the token rules and the `:12-30` suffix strip. |
@@ -97,7 +97,7 @@ These are non-blocking. Consider each for a follow-up issue.
    - Fix: loosen the dash count to `-+`. This is a one-line change; add a test.
 3. **The content fallback can mistake a key cell for the target.** Flagged by anchored and cold-Claude, so 2 lenses. Location: `src/orchestrator/pitfalls.ts:484-506`.
    - This applies only to tables whose headers carry no hint.
-   - A `.md` key file in a key cell becomes a "linked doc" target. Example: `| Area | Rule | Files |` with `src/p/implement.md` in the Files cell.
+   - A `.md` key file in a key cell becomes a "linked doc" target. Example: `| Area | Rule | Files |` with src/p/implement.md in the Files cell.
    - A short area label prefix-matches an unrelated heading. For example, "K" matches "Known Pitfalls" and injects that whole H2.
    - Both behaviors are literal Amendment B.2 behavior (`spec.md:199`). The header hint protects every canon-documented layout.
    - Suggest adding this to Known Risks, or a follow-up that drops prefix matches shorter than N characters and drops `.md` candidates that sit next to another doc or section cell.
