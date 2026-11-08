@@ -76,10 +76,13 @@ void test('AC-3: linked docs match globs, retain titles, and resolve relative ma
 });
 
 void test('AC-4: every index row stays in the area index, including keyless and matched rows', () => {
-    const patterns = `## Known Pitfalls\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | Any new effect or timer — cross-cutting |\n\n### Entry with an explanatory table\n\nThis table is part of an entry, not an index.\n\n| Input | Output |\n|---|---|\n| source value | transformed value |\n\n## Trigger Table — Scan This First\n\n| Area | Section | Key files |\n|---|---|---|\n| No key | Shared Rules | — |\n| Affected | Shared Rules | \`src/a/b.ts\` |\n\n## Shared Rules\n\nSection body.\n`;
+    const patterns = `## Known Pitfalls\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | Any new effect or timer — cross-cutting |\n\n### Entry with an explanatory table\n\nThis table is part of an entry, not an index.\n\n| File | Why |\n|---|---|\n| \`src/z/q.ts\` | transformed value |\n\n## Trigger Table — Scan This First\n\n| Area | Section | Key files |\n|---|---|---|\n| No key | Shared Rules | — |\n| Affected | Shared Rules | \`src/a/b.ts\` |\n\n## Shared Rules\n\nSection body.\n`;
     const output = selectPitfalls(matchingInput(patterns));
     assert.match(output, /### Area index[\s\S]*`docs\/pitfalls\/effects\.md` — Any new effect or timer — cross-cutting/);
-    assert.doesNotMatch(output, /source value|transformed value/);
+    const areaStart = output.indexOf('### Area index');
+    const titleStart = output.indexOf('### Other pitfalls (titles only)', areaStart);
+    assert.doesNotMatch(output.slice(areaStart, titleStart), /transformed value/);
+    assert.match(output.slice(titleStart), /- Entry with an explanatory table/);
     assert.match(output, /Shared Rules — No key — —/);
     assert.match(output, /Shared Rules — Affected — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
 
@@ -88,19 +91,72 @@ void test('AC-4: every index row stays in the area index, including keyless and 
     assert.match(nestedTrigger, /## Interface Rules\n\nTRIGGER_TABLE_H3_SECTION/);
     assert.match(nestedTrigger, /Interface Rules — New interface — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
 
-    const indexAfterEntry = `## Known Pitfalls\n\n### Existing entry\n\nEXISTING_ENTRY_BODY has no matching path.\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | \`src/a/b.ts\` |\n`;
-    const trailingIndex = selectPitfalls(matchingInput(indexAfterEntry));
-    assert.match(trailingIndex, /`docs\/pitfalls\/effects\.md` — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
-    assert.match(trailingIndex, /### Other pitfalls \(titles only\)[\s\S]*- Existing entry/);
-    assert.doesNotMatch(trailingIndex, /EXISTING_ENTRY_BODY/);
+    const entryTable = `## Known Pitfalls\n\n### Existing entry\n\nEXISTING_ENTRY_BODY cites the table's \`src/a/b.ts\` path.\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | \`src/a/b.ts\` |\n`;
+    const tableInEntry = selectPitfalls(matchingInput(entryTable));
+    const fullStart = tableInEntry.indexOf('### Pitfalls and patterns that cite your files');
+    const areaIndexStart = tableInEntry.indexOf('### Area index');
+    const fullBlock = tableInEntry.slice(fullStart, areaIndexStart < 0 ? undefined : areaIndexStart);
+    assert.match(fullBlock, /### Existing entry[\s\S]*EXISTING_ENTRY_BODY[\s\S]*\| `docs\/pitfalls\/effects\.md` \| `src\/a\/b\.ts` \|/);
+    assert.ok(areaIndexStart < 0 || !tableInEntry.slice(areaIndexStart).includes('docs/pitfalls/effects.md'));
 
-    const unresolvableIndex = `## Known Pitfalls\n\n### Existing entry\n\nNo matching path.\n\n| Area | Section | Keys |\n|---|---|---|\n| Unmapped area | Future section | \`src/a/b.ts\` |\n`;
+    const unresolvableIndex = `## Known Pitfalls\n\n| Area | Section | Keys |\n|---|---|---|\n| Unmapped area | Future section | \`src/a/b.ts\` |\n\n### Existing entry\n\nNo matching path.\n`;
     const unresolved = selectPitfalls(matchingInput(unresolvableIndex));
-    assert.match(unresolved, /Unmapped area — Future section — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
+    assert.match(unresolved, /Future section — Unmapped area — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
 
     const noAffectedFiles = selectPitfalls({ ...matchingInput(patterns, []), affectedFiles: [] });
     assert.match(noAffectedFiles, /`docs\/pitfalls\/effects\.md` — Any new effect or timer — cross-cutting/);
     assert.match(noAffectedFiles, /Shared Rules — No key — —/);
+});
+
+void test('AC-15: Known Pitfalls index tables stop at the first H3', () => {
+    const entryTable = `## Known Pitfalls\n\n### Worker retries\n\nWorker retries can re-enter the queue.\n\n| File | Why |\n|---|---|\n| \`src/queue/worker.ts\` | retries re-enter |\n`;
+    const selectedEntry = selectPitfalls(matchingInput(entryTable, ['src/queue/worker.ts']));
+    const fullStart = selectedEntry.indexOf('### Pitfalls and patterns that cite your files');
+    const areaStart = selectedEntry.indexOf('### Area index');
+    const full = selectedEntry.slice(fullStart, areaStart < 0 ? undefined : areaStart);
+    assert.match(full, /### Worker retries[\s\S]*Worker retries can re-enter the queue\.[\s\S]*`src\/queue\/worker\.ts` \| retries re-enter/);
+    assert.ok(areaStart < 0 || !selectedEntry.slice(areaStart).includes('retries re-enter'));
+
+    const noSignals = `## Known Pitfalls\n\n| Area | Notes |\n|---|---|\n| Legacy area | ask the owner |\n\n### Legacy entry\n\nLegacy body.\n`;
+    const areaIndex = selectPitfalls(matchingInput(noSignals, []));
+    assert.match(areaIndex, /### Area index[\s\S]*Legacy area — ask the owner/);
+});
+
+void test('AC-16: the Read this doc header hint selects the linked-doc column', () => {
+    const linkedPath = 'docs/pitfalls/state.md';
+    const linkedDoc = `# State pitfalls\n\n### Store writes\n\nStore writes cite \`app/src/store/editor.ts\`.\n\n### Other state rule\n\nThis rule has no matching path.\n`;
+    const patterns = `## Known Pitfalls\n\n| Area | Read this doc | Key files |\n|---|---|---|\n| State | \`docs/pitfalls/state.md\` | \`app/src/store/**\` |\n\n## State Management Rules\n\nSTATE_MGMT_SENTINEL\n`;
+    const output = selectPitfalls(matchingInput(patterns, ['app/src/store/editor.ts'], repoPath => repoPath === linkedPath ? linkedDoc : null));
+    assert.match(output, /Open `docs\/pitfalls\/state\.md` — it covers files this task touches\./);
+    assert.match(output, /### Store writes[\s\S]*Store writes cite `app\/src\/store\/editor\.ts`\./);
+    assert.match(output, /- Other state rule/);
+    assert.doesNotMatch(output, /STATE_MGMT_SENTINEL/);
+});
+
+void test('AC-16: Section header wins when an Area cell exactly matches another heading', () => {
+    const patterns = tablePatterns(
+        '| Area touched | Section | Key files |\n|---|---|---|\n| Testing | Fixture Rules | `src/a/b.ts` |',
+        `## Testing\n\nTESTING_SENTINEL\n\n## Fixture Rules\n\nFIXTURE_SENTINEL\n`,
+    );
+    const output = selectPitfalls(matchingInput(patterns));
+    assert.match(output, /FIXTURE_SENTINEL/);
+    assert.doesNotMatch(output, /TESTING_SENTINEL/);
+});
+
+void test('AC-16: content fallback prefers a doc path over an exact heading', () => {
+    const linkedPath = 'docs/pitfalls/x.md';
+    const linkedDoc = `# Linked pitfall\n\n### Other rule\n\nNo matching file here.\n`;
+    const patterns = `## Known Pitfalls\n\n| A | B | C |\n|---|---|---|\n| Exact Heading | \`docs/pitfalls/x.md\` | \`src/a/b.ts\` |\n\n## Exact Heading\n\nEXACT_HEADING_SENTINEL\n`;
+    const output = selectPitfalls(matchingInput(patterns, ['src/a/b.ts'], repoPath => repoPath === linkedPath ? linkedDoc : null));
+    assert.match(output, /Open `docs\/pitfalls\/x\.md` — it covers files this task touches\./);
+    assert.doesNotMatch(output, /EXACT_HEADING_SENTINEL/);
+});
+
+void test('AC-16 pin: content fallback prefers an exact section over a prefix-only heading', () => {
+    const patterns = `## Trigger Table\n\n| A | B | C |\n|---|---|---|\n| Retry | Queue Discipline | \`src/a/b.ts\` |\n\n## Retry Rules (backoff)\n\nRETRY_PREFIX_SENTINEL\n\n## Queue Discipline\n\nQUEUE_EXACT_SENTINEL\n`;
+    const output = selectPitfalls(matchingInput(patterns));
+    assert.match(output, /QUEUE_EXACT_SENTINEL/);
+    assert.doesNotMatch(output, /RETRY_PREFIX_SENTINEL/);
 });
 
 void test('section cells outrank markdown paths in key cells, and markdown globs remain keys', () => {

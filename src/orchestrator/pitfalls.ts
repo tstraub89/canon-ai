@@ -51,6 +51,7 @@ type IndexRow = {
 type MarkdownTable = {
     startLine: number;
     endLine: number;
+    header: string[];
     rows: string[][];
 };
 
@@ -84,6 +85,8 @@ const CHANNEL_PRIORITY: Record<CandidateChannel, number> = {
 const DEMOTION_ORDER: CandidateChannel[] = ['lesson', 'section', 'linked', 'direct'];
 const PATTERNS_PATH = 'docs/patterns.md';
 const LESSONS_PATH = 'docs/lessons-learned.md';
+// Mirrors the Known Pitfalls index-table target-header hint rule.
+const TARGET_HEADER_HINT = /\b(?:sections?|docs?)\b|read this/i;
 
 function scanMarkdown(markdown: string, docPath: string): MarkdownDoc {
     markdown = markdown.replace(/\r\n?/g, '\n');
@@ -166,20 +169,12 @@ function sectionHeading(doc: MarkdownDoc, name: string): Heading | null {
         .sort((left, right) => left.text.length - right.text.length || left.start - right.start)[0] ?? null;
 }
 
-function knownPitfallEntries(patterns: MarkdownDoc, readDoc: (repoPath: string) => string | null): DocEntry[] {
+function knownPitfallEntries(patterns: MarkdownDoc): DocEntry[] {
     const result: DocEntry[] = [];
     for (const section of headingsAt(patterns, 2).filter(heading => heading.text.toLocaleLowerCase().startsWith('known pitfalls'))) {
-        const indexLines = new Set<number>();
-        for (const table of markdownTablesInSection(patterns, section)) {
-            if (!isIndexTable(table, patterns, readDoc)) continue;
-            for (let line = table.startLine; line < table.endLine; line++) indexLines.add(line);
-        }
         for (const heading of patterns.headings) {
             if (heading.level !== 3 || heading.start < section.start || heading.start >= section.end) continue;
-            const body = patterns.lines.slice(heading.startLine, heading.endLine)
-                .filter((_, index) => !indexLines.has(heading.startLine + index))
-                .join('\n').trim();
-            result.push({ doc: patterns, heading, title: heading.text, body });
+            result.push({ doc: patterns, heading, title: heading.text, body: headingBody(patterns, heading) });
         }
     }
     return result;
@@ -314,13 +309,6 @@ function isSeparatorRow(cells: readonly string[]): boolean {
     return cells.every(cell => /^:?-{3,}:?$/.test(cell.replaceAll(' ', '')));
 }
 
-function compareTargetCellScores(left: readonly number[], right: readonly number[]): number {
-    for (let index = 0; index < Math.min(left.length, right.length); index++) {
-        if (left[index] !== right[index]) return left[index] - right[index];
-    }
-    return 0;
-}
-
 function markdownTablesInSection(doc: MarkdownDoc, section: Heading): MarkdownTable[] {
     const result: MarkdownTable[] = [];
     let line = section.startLine + 1;
@@ -357,32 +345,23 @@ function markdownTablesInSection(doc: MarkdownDoc, section: Heading): MarkdownTa
             }
             line++;
         }
-        result.push({ startLine, endLine: line, rows: tableRows });
+        result.push({ startLine, endLine: line, header, rows: tableRows });
     }
     return result;
 }
 
-function isIndexTable(table: MarkdownTable, patterns: MarkdownDoc, readDoc: (repoPath: string) => string | null): boolean {
-    return table.rows.some(cells => cells.some(cell => {
-        const value = cell.trim();
-        return /^(?:—|no keys?)$/i.test(value)
-            || pathTokens(value, patterns.path).length > 0
-            || splitTargetItems(value).some(item => parseTargetFromItem(item, patterns, readDoc) !== null);
-    }));
+function knownPitfallsIndexTables(doc: MarkdownDoc, section: Heading): MarkdownTable[] {
+    const firstH3Line = doc.headings.find(heading => heading.level === 3
+        && heading.start >= section.start && heading.start < section.end)?.startLine ?? section.endLine;
+    return markdownTablesInSection(doc, section).filter(table => table.startLine < firstH3Line);
 }
 
 function tableRowsInSection(
     doc: MarkdownDoc,
     section: Heading,
-    readDoc: (repoPath: string) => string | null,
-): string[][] {
-    const tables = markdownTablesInSection(doc, section);
-    const isKnownPitfalls = section.text.toLocaleLowerCase().startsWith('known pitfalls');
-    // Known Pitfalls can contain explanatory tables inside entries. Recognize index tables by
-    // their target content, while Trigger Table tables are indexes by location at any heading depth.
-    return tables
-        .filter(table => !isKnownPitfalls || isIndexTable(table, doc, readDoc))
-        .flatMap(table => table.rows);
+): MarkdownTable[] {
+    if (section.text.toLocaleLowerCase().startsWith('known pitfalls')) return knownPitfallsIndexTables(doc, section);
+    return markdownTablesInSection(doc, section);
 }
 
 function stripParenthetical(value: string): string {
@@ -412,9 +391,17 @@ function parseDocPathItem(item: string): { path: string } | null {
     return null;
 }
 
+function docSectionMatch(item: string): RegExpMatchArray | null {
+    return stripParenthetical(item).match(/^\s*(`[^`]+`|\[[^\]]+\]\([^)]+\))\s*§\s*(.+?)\s*$/);
+}
+
+function isDocSectionItem(item: string): boolean {
+    return docSectionMatch(item) !== null;
+}
+
 function parseTargetFromItem(item: string, patterns: MarkdownDoc, readDoc: (repoPath: string) => string | null): ParsedTarget | null {
     const clean = stripParenthetical(item);
-    const docSection = clean.match(/^\s*(`[^`]+`|\[[^\]]+\]\([^)]+\))\s*§\s*(.+?)\s*$/);
+    const docSection = docSectionMatch(item);
     if (docSection) {
         const parsed = parseDocPathItem(docSection[1]);
         if (!parsed) return null;
@@ -485,39 +472,52 @@ function buildIndexRows(patterns: MarkdownDoc | null, affectedFiles: readonly st
     ));
     const rows: IndexRow[] = [];
     for (const section of sections) {
-        for (const cells of tableRowsInSection(patterns, section, readDoc)) {
-            if (cells.length === 1) {
-                rows.push({ line: `- ${cells[0]}`, targets: [], keys: [], matched: false });
-                continue;
-            }
-            let winner: { index: number; targets: Target[]; score: [number, number, number, number, number] } | undefined;
-            for (let index = 0; index < cells.length; index++) {
-                const items = splitTargetItems(cells[index]);
-                const parsed = items.map(item => parseTargetFromItem(item, patterns, readDoc));
-                const resolved = parsed.filter((item): item is ParsedTarget => item !== null);
-                if (resolved.length === 0) continue;
-                // Keep path-bearing cells available as keys, then prefer exact targets and the leftmost tie.
-                const remainingPathKeys = cells.reduce((count, cell, cellIndex) =>
-                    count + (cellIndex === index ? 0 : pathTokens(cell, patterns.path).length), 0);
-                const score: [number, number, number, number, number] = [
-                    remainingPathKeys,
-                    resolved.length === items.length && resolved.every(item => item.specificity > 0) ? 1 : 0,
-                    resolved.reduce((total, item) => total + item.specificity, 0),
-                    resolved.length,
-                    -index,
-                ];
-                if (!winner || compareTargetCellScores(score, winner.score) > 0) {
-                    winner = { index, targets: resolved.map(item => item.target), score };
+        for (const table of tableRowsInSection(patterns, section)) {
+            const targetHint = table.header.findIndex(cell => TARGET_HEADER_HINT.test(cell.replaceAll('`', '').replaceAll('*', '')));
+            for (const cells of table.rows) {
+                if (cells.length === 1) {
+                    rows.push({ line: `- ${cells[0]}`, targets: [], keys: [], matched: false });
+                    continue;
                 }
+
+                let targetCell = targetHint >= 0 && targetHint < cells.length ? targetHint : 0;
+                if (targetHint < 0) {
+                    const hasDocPathOrSectionReference = (item: string): boolean => {
+                        if (isDocSectionItem(item)) return true;
+                        const docPath = parseDocPathItem(stripParenthetical(item));
+                        return docPath !== null && docPath.path !== PATTERNS_PATH;
+                    };
+                    const isExactSection = (item: string): boolean => {
+                        const parsed = parseTargetFromItem(item, patterns, readDoc);
+                        return parsed !== null && parsed.specificity === 2 && parsed.target.kind !== 'linked';
+                    };
+                    const isPrefixSection = (item: string): boolean => {
+                        const parsed = parseTargetFromItem(item, patterns, readDoc);
+                        return parsed !== null && parsed.specificity === 0 && parsed.target.kind !== 'linked';
+                    };
+                    const tiers = [hasDocPathOrSectionReference, isExactSection, isPrefixSection];
+                    for (const matchesTier of tiers) {
+                        const index = cells.findIndex(cell => splitTargetItems(cell).some(matchesTier));
+                        if (index >= 0) {
+                            targetCell = index;
+                            break;
+                        }
+                    }
+                }
+
+                const targets = targetHint >= 0 && targetHint >= cells.length
+                    ? []
+                    : splitTargetItems(cells[targetCell])
+                        .map(item => parseTargetFromItem(item, patterns, readDoc))
+                        .filter((item): item is ParsedTarget => item !== null)
+                        .map(item => item.target);
+                const keys = cells.flatMap((cell, index) => index === targetCell ? [] : pathTokens(cell, patterns.path));
+                const matched = rowMatches(keys, affectedFiles);
+                const targetText = cells[targetCell];
+                const otherText = cells.filter((_, index) => index !== targetCell).join(' — ');
+                const line = `- ${targetText}${otherText ? ` — ${otherText}` : ''}${matched ? ' **(matches this task)**' : ''}`;
+                rows.push({ line, targets, keys, matched });
             }
-            const targetCell = winner?.index ?? 0;
-            const targets = winner?.targets ?? [];
-            const keys = cells.flatMap((cell, index) => index === targetCell ? [] : pathTokens(cell, patterns.path));
-            const matched = rowMatches(keys, affectedFiles);
-            const targetText = cells[targetCell];
-            const otherText = cells.filter((_, index) => index !== targetCell).join(' — ');
-            const line = `- ${targetText}${otherText ? ` — ${otherText}` : ''}${matched ? ' **(matches this task)**' : ''}`;
-            rows.push({ line, targets, keys, matched });
         }
     }
     return rows;
@@ -648,7 +648,7 @@ function selectPitfallsInternal(input: PitfallsInput): string {
 
     const candidates: Candidate[] = [];
     const titleEntries = new Map<string, DocEntry[]>();
-    const patternsEntries = patterns ? knownPitfallEntries(patterns, repoPath => readLinkedDoc(repoPath)?.text ?? null) : [];
+    const patternsEntries = patterns ? knownPitfallEntries(patterns) : [];
     if (patterns) titleEntries.set(patterns.path, patternsEntries);
     if (patterns) {
         for (const entry of patternsEntries) {
