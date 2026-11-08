@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import {
     BYTE_CAP,
+    CANDIDATE_CAP,
     PER_ENTRY_LIMIT,
     TOKEN_CAP,
     buildBlastRadiusBlock,
@@ -362,6 +363,22 @@ void test('a grep whose file list overflows the buffer drops only that entry', (
         assert.deepEqual(gitGrep(fixture.root, ['-F', '-w'], 'commonToken', 64), []);
         assert.deepEqual(gitGrep(fixture.root, ['-F', '-w'], 'rareToken', 64), ['lib/other.ts']);
         assert.equal(gitGrep(fixture.root, ['-F', '-w'], 'commonToken').length, 50);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+void test('entries past the candidate cap count toward the remainder without an attribute check', () => {
+    const files: Record<string, string> = { '.gitattributes': 'gen/** linguist-generated\n', 'src/use.ts': 'manyToken\n' };
+    for (let index = 0; index < 5; index += 1) files[`gen/out-${index}.js`] = 'manyToken\n';
+    for (let index = 0; index < CANDIDATE_CAP + 3; index += 1) files[`z/file-${String(index).padStart(4, '0')}.ts`] = 'manyToken\n';
+    const fixture = createFixture({ design: '`manyToken`', files });
+    try {
+        const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
+        // 5 generated paths are dropped; the 3 paths past the cap are counted, not checked.
+        const remaining = 1 + CANDIDATE_CAP + 3 - PER_ENTRY_LIMIT;
+        assert.match(block, new RegExp(`\`manyToken\`: \`src/use\\.ts\`, .*\\+${remaining} more$`, 'm'));
+        assert.doesNotMatch(block, /gen\/out-/);
     } finally {
         fixture.cleanup();
     }
