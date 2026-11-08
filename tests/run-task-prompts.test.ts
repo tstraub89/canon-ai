@@ -494,6 +494,25 @@ void test('implement self-check appears in authoring prompts at the required poi
     assert.ok(!goldens.promptImplementRevisions.includes(BLAST_RADIUS_HEADING));
 });
 
+void test('numbered implement self-check items stay identical across prompt variants', () => {
+    const prompts = [
+        promptImplement(baseState),
+        promptImplementReroute(rerouteState),
+        promptImplementRevisions(iterState, [], 'main'),
+    ];
+    const numberedItems = prompts.map(prompt => {
+        const start = prompt.indexOf('**Pre-handoff self-check**');
+        const end = prompt.indexOf('\n\nIf a check finds an edit needed', start);
+        assert.ok(start >= 0 && end > start, 'prompt should contain the full self-check block');
+        const block = prompt.slice(start, end);
+        return [...block.matchAll(/^\d+\. \*\*[^\n]+$/gm)].map(match => match[0]).join('\n');
+    });
+    assert.match(numberedItems[0], /^1\. \*\*Test integrity\./);
+    assert.equal((numberedItems[0].match(/^\d+\./gm) ?? []).length, 3);
+    assert.equal(numberedItems[1], numberedItems[0]);
+    assert.equal(numberedItems[2], numberedItems[0]);
+});
+
 void test('self-check and blast-radius framing stay adopter-neutral across providers', () => {
     for (const provider of ['mixed', 'claude'] as const) {
         const state: PipelineState = { ...baseState, provider };

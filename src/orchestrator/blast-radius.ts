@@ -7,6 +7,7 @@ import { extractSectionBodies } from './markdown-table.js';
 import { taskDirFor } from './state.js';
 import { getActiveCwd } from './worktree.js';
 
+// Test-only override for deterministic prompt fixtures; this is not a user-facing setting.
 export const BLAST_RADIUS_ROOT_ENV = 'CANON_BLAST_RADIUS_ROOT';
 export const BLAST_RADIUS_HEADING = '## Blast Radius (files outside Affected Files to check)';
 export const BLAST_RADIUS_FRAMING = 'These files are surfaces to check for restatements and sibling paths. Editing a file outside Affected Files still requires recording a Blocker in handoff.md.';
@@ -32,7 +33,7 @@ function tokensFromBodies(bodies: readonly string[]): string[] {
             } else {
                 const hadParens = token.endsWith('()');
                 const name = hadParens ? token.slice(0, -2) : token;
-                const shaped = hadParens || /[a-z0-9][A-Z]/.test(name) || /[A-Za-z0-9]_[A-Za-z0-9]/.test(name);
+                const shaped = hadParens || /[a-z0-9][A-Z]/.test(name) || /[A-Z]{2,}[a-z]/.test(name) || /[A-Za-z0-9]_[A-Za-z0-9]/.test(name);
                 if (name.length >= 3 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && shaped) normalized = name;
             }
             if (normalized && !seen.has(normalized)) {

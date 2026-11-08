@@ -6,8 +6,6 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-    BLAST_RADIUS_FRAMING,
-    BLAST_RADIUS_HEADING,
     BYTE_CAP,
     PER_ENTRY_LIMIT,
     TOKEN_CAP,
@@ -136,10 +134,13 @@ void test('identifier entries search amendments, calls, and flags while excludin
     const fixture = createFixture({
         affected: ['lib/foo.ts', 'vendor/'],
         amendment: 'The amended behavior uses `amendOnlyToken`.',
-        design: 'Call `parseWidget()` with `--dry-run`, while `lib/foo.ts` documents `true`.',
+        design: 'Call `parseWidget()` with `--dry-run`, while `lib/foo.ts` documents `true`; inspect `URLParser`, `JSONValue`, and `HTTPServer` too.',
         files: {
             'lib/foo.ts': 'export function parseWidget() {}\n',
             'src/use.ts': 'parseWidget(x);\n',
+            'api/url-parser.ts': 'URLParser(value);\n',
+            'api/json-value.ts': 'JSONValue(value);\n',
+            'api/http-server.ts': 'HTTPServer(value);\n',
             'docs/cli.md': 'Pass --dry-run to inspect without writing.\n',
             'vendor/w.ts': 'parseWidget(x);\n',
             'docs/am.md': 'amendOnlyToken\n',
@@ -150,6 +151,9 @@ void test('identifier entries search amendments, calls, and flags while excludin
         const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
         const identifiers = identifierSection(block);
         assert.match(identifiers, /`parseWidget`: `src\/use\.ts`/);
+        assert.match(identifiers, /`URLParser`: `api\/url-parser\.ts`/);
+        assert.match(identifiers, /`JSONValue`: `api\/json-value\.ts`/);
+        assert.match(identifiers, /`HTTPServer`: `api\/http-server\.ts`/);
         assert.match(identifiers, /`--dry-run`: `docs\/cli\.md`/);
         assert.match(identifiers, /`amendOnlyToken`: `docs\/am\.md`/);
         assert.doesNotMatch(identifiers, /`vendor\/w\.ts`|`lib\/foo\.ts`|`docs\/t\.md`/);
@@ -158,10 +162,10 @@ void test('identifier entries search amendments, calls, and flags while excludin
         const extracted = extractSpecTokens([
             '## Amendment', '`olderToken`',
             '## Amendment Round 2', '`newestToken`',
-            '## Design', '`parseWidget()` `PascalCase` `snake_case` `true` `lib/foo.ts`',
+            '## Design', '`parseWidget()` `PascalCase` `snake_case` `URLParser` `JSONValue` `HTTPServer` `true` `lib/foo.ts`',
         ].join('\n'));
         assert.deepEqual(extracted.amendment, ['newestToken', 'olderToken']);
-        assert.deepEqual(extracted.design, ['parseWidget', 'PascalCase', 'snake_case']);
+        assert.deepEqual(extracted.design, ['parseWidget', 'PascalCase', 'snake_case', 'URLParser', 'JSONValue', 'HTTPServer']);
     } finally {
         fixture.cleanup();
     }
@@ -233,30 +237,61 @@ void test('the whole map stays within its byte cap and reports truncated entries
     try {
         const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
         assert.ok(Buffer.byteLength(block) <= BYTE_CAP);
-        assert.match(block, /- … \d+ more entries omitted to stay under the size limit\./);
+        const keptEntries = identifierSection(block).split('\n').filter(line => line.startsWith('- `longToken'));
+        const truncation = block.match(/- … (\d+) more entries omitted to stay under the size limit\./);
+        assert.ok(keptEntries.length > 0, 'at least one identifier entry should survive truncation');
+        assert.ok(keptEntries.length < tokens.length, 'the oversized fixture should omit some identifier entries');
+        assert.ok(truncation);
+        assert.equal(Number(truncation[1]), TOKEN_CAP - keptEntries.length);
     } finally {
         fixture.cleanup();
     }
 });
 
 void test('empty maps, non-git roots, missing roots, and git failures fail open', () => {
-    const fixture = createFixture({ design: '`missingWidget()`' });
+    const fixture = createFixture();
     const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-non-git-'));
     try {
         assert.equal(buildBlastRadiusBlock(fixture.taskIds, fixture.root), '');
         assert.equal(buildBlastRadiusBlock(fixture.taskIds, nonGit), '');
         assert.equal(buildBlastRadiusBlock(fixture.taskIds, path.join(nonGit, 'missing')), '');
 
-        const failingGit = path.join(nonGit, 'git');
-        fs.writeFileSync(failingGit, '#!/bin/sh\nexit 2\n', { mode: 0o755 });
+        fixture.writeFile(`tasks/${TASK_ID}/spec.md`, specMarkdown({
+            affected: ['lib/foo.ts'],
+            design: 'Call `parseWidget()`.',
+        }));
+        fixture.writeFile('lib/foo.ts', 'export const foo = 1;\n');
+        fixture.writeFile('refs/caller.ts', "import { foo } from '../lib/foo.js';\nparseWidget(foo);\n");
+
         const priorPath = process.env.PATH;
+        const priorFailureCommand = process.env.CANON_BLAST_RADIUS_TEST_GIT_ARGS;
+        const realGit = (priorPath ?? '').split(path.delimiter).map(directory => path.join(directory, 'git'))
+            .find(candidate => fs.existsSync(candidate));
+        assert.ok(realGit, 'the test process must be able to resolve git');
+        const failingGit = path.join(nonGit, 'git');
+        fs.writeFileSync(failingGit, [
+            '#!/usr/bin/env node',
+            "const { spawnSync } = require('node:child_process');",
+            'const [realGit, failCommand] = process.env.CANON_BLAST_RADIUS_TEST_GIT_ARGS.split("\\n");',
+            'if (process.argv[2] === failCommand) { process.stderr.write("simulated git failure\\n"); process.exit(2); }',
+            'const result = spawnSync(realGit, process.argv.slice(2), { encoding: "utf8" });',
+            'if (result.stdout) process.stdout.write(result.stdout);',
+            'if (result.stderr) process.stderr.write(result.stderr);',
+            'process.exit(result.status ?? 2);',
+            '',
+        ].join('\n'), { mode: 0o755 });
         process.env.PATH = `${nonGit}${path.delimiter}${priorPath ?? ''}`;
         try {
-            assert.doesNotThrow(() => buildBlastRadiusBlock(fixture.taskIds, fixture.root));
-            assert.equal(buildBlastRadiusBlock(fixture.taskIds, fixture.root), '');
+            for (const command of ['grep', 'check-attr']) {
+                process.env.CANON_BLAST_RADIUS_TEST_GIT_ARGS = `${realGit}\n${command}`;
+                assert.doesNotThrow(() => buildBlastRadiusBlock(fixture.taskIds, fixture.root));
+                assert.equal(buildBlastRadiusBlock(fixture.taskIds, fixture.root), '');
+            }
         } finally {
             if (priorPath === undefined) delete process.env.PATH;
             else process.env.PATH = priorPath;
+            if (priorFailureCommand === undefined) delete process.env.CANON_BLAST_RADIUS_TEST_GIT_ARGS;
+            else process.env.CANON_BLAST_RADIUS_TEST_GIT_ARGS = priorFailureCommand;
         }
     } finally {
         fixture.cleanup();
@@ -290,14 +325,29 @@ void test('the explicit root controls which tracked files appear in the map', ()
 });
 
 void test('blast-radius framing strings are adopter-neutral and role-neutral', () => {
-    const fixture = createFixture();
+    const tokens = Array.from({ length: 20 }, (_, index) => `longToken${String(index).padStart(2, '0')}`);
+    const files: Record<string, string> = {
+        'lib/widget.ts': 'export const widget = true;\n',
+        'refs/caller.ts': "import widget from '../lib/widget.js';\n",
+    };
+    for (const token of tokens) {
+        for (let index = 0; index < 10; index += 1) {
+            files[`deep/nested/directory/structure/${token}-file-${String(index).padStart(2, '0')}-padding.ts`] = `${token}\n`;
+        }
+    }
+    const fixture = createFixture({
+        affected: ['lib/widget.ts'],
+        design: tokens.map(token => `\`${token}\``).join(' '),
+        files,
+    });
     try {
         const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
-        const framing = [BLAST_RADIUS_HEADING, BLAST_RADIUS_FRAMING, '### Files referencing Affected Files', '### Files containing spec-named identifiers', '- … N more entries omitted to stay under the size limit.'].join('\n');
-        assert.equal(block, '');
-        for (const text of [framing]) {
-            assert.doesNotMatch(text, /src\/|scripts\/|tests\/|templates\/|Codex|Claude/);
-        }
+        assert.ok(block.length > 0);
+        assert.match(block, /### Files referencing Affected Files/);
+        assert.match(block, /### Files containing spec-named identifiers/);
+        assert.match(block, /- … \d+ more entries omitted to stay under the size limit\./);
+        assert.match(block, /`refs\/caller\.ts`/);
+        assert.doesNotMatch(block, /src\/|scripts\/|tests\/|templates\/|Codex|Claude/);
     } finally {
         fixture.cleanup();
     }
