@@ -7,3 +7,4 @@ Raw observations from any phase. Prefix with phase name. Distilled into the task
 - [plan] `getActiveCwd` can `die()` (process.exit) on a missing expected worktree, so the map can't fail-open around it; `buildKnownPitfalls` already calls it unguarded in the same render, so no new exit path. Accepted.
 - [plan] Interpretation: PascalCase = ≥2 humps (single capitalized words like `Widget` not searched); revision prompt's "per-round steps" = the hasReviewFindings/hasPreflightFindings sections, self-check placed before them.
 - [plan] Spec-review nit (park-resume map coverage) addressed by an explicit assertion in plan Step 7.
+- [implement] `resolveBlastRadiusRoot()` uses `getActiveCwd()`, which can terminate on an expected but unavailable task worktree; prompt construction already calls `buildKnownPitfalls()` through the same resolver first, so this does not add a new failure path.
