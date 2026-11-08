@@ -11,6 +11,7 @@ import {
     TOKEN_CAP,
     buildBlastRadiusBlock,
     extractSpecTokens,
+    gitGrep,
 } from '../src/orchestrator/blast-radius.js';
 
 const TASK_ID = 'blast-radius-fixture';
@@ -348,6 +349,19 @@ void test('blast-radius framing strings are adopter-neutral and role-neutral', (
         assert.match(block, /- … \d+ more entries omitted to stay under the size limit\./);
         assert.match(block, /`refs\/caller\.ts`/);
         assert.doesNotMatch(block, /src\/|scripts\/|tests\/|templates\/|Codex|Claude/);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+void test('a grep whose file list overflows the buffer drops only that entry', () => {
+    const files: Record<string, string> = { 'lib/other.ts': 'rareToken\n' };
+    for (let index = 0; index < 50; index += 1) files[`common/file-${String(index).padStart(2, '0')}.ts`] = 'commonToken\n';
+    const fixture = createFixture({ files });
+    try {
+        assert.deepEqual(gitGrep(fixture.root, ['-F', '-w'], 'commonToken', 64), []);
+        assert.deepEqual(gitGrep(fixture.root, ['-F', '-w'], 'rareToken', 64), ['lib/other.ts']);
+        assert.equal(gitGrep(fixture.root, ['-F', '-w'], 'commonToken').length, 50);
     } finally {
         fixture.cleanup();
     }

@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -60,11 +61,28 @@ function excludedPath(file: string, affectedFiles: readonly string[], directoryE
     return affectedFiles.includes(file) || directoryEntries.some(directory => file.startsWith(directory)) || file.startsWith('tasks/');
 }
 
-function gitGrep(root: string, modeFlags: readonly string[], pattern: string): string[] {
-    const result = gitSafeAtRaw(root, 'grep', '-l', '-I', '-z', ...modeFlags, '-e', pattern);
-    if (result.ok) return result.stdout.split('\0').filter(Boolean);
-    if (!result.stderr) return [];
-    throw new Error(`git grep failed: ${result.stderr}`);
+export const GREP_MAX_BUFFER = 16 * 1024 * 1024;
+
+/**
+ * List tracked files matching `pattern`. A pattern whose filename list overflows the buffer
+ * matches too much of the repo to be a useful pointer, so that one entry is dropped rather
+ * than failing the whole map.
+ */
+export function gitGrep(root: string, modeFlags: readonly string[], pattern: string, maxBuffer = GREP_MAX_BUFFER): string[] {
+    const result = spawnSync('git', ['grep', '-l', '-I', '-z', ...modeFlags, '-e', pattern], {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer,
+    });
+    if (result.error) {
+        if ((result.error as NodeJS.ErrnoException).code === 'ENOBUFS') return [];
+        throw result.error;
+    }
+    if (result.status === 0) return (result.stdout ?? '').split('\0').filter(Boolean);
+    const stderr = (result.stderr ?? '').trim();
+    if (!stderr) return [];
+    throw new Error(`git grep failed: ${stderr}`);
 }
 
 function escapeEre(value: string): string {

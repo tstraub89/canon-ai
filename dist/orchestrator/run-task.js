@@ -2425,7 +2425,7 @@ function resolveDocsFreshness(config3, diff) {
 }
 
 // src/orchestrator/main.ts
-import { spawnSync as spawnSync7 } from "child_process";
+import { spawnSync as spawnSync8 } from "child_process";
 import { createHash } from "crypto";
 import fs26 from "fs";
 import os from "os";
@@ -4892,6 +4892,7 @@ import fs16 from "fs";
 import path14 from "path";
 
 // src/orchestrator/blast-radius.ts
+import { spawnSync as spawnSync5 } from "child_process";
 import fs13 from "fs";
 import path11 from "path";
 
@@ -5166,11 +5167,22 @@ function extractSpecTokens(specMarkdown) {
 function excludedPath(file, affectedFiles, directoryEntries) {
   return affectedFiles.includes(file) || directoryEntries.some((directory) => file.startsWith(directory)) || file.startsWith("tasks/");
 }
-function gitGrep(root, modeFlags, pattern) {
-  const result = gitSafeAtRaw(root, "grep", "-l", "-I", "-z", ...modeFlags, "-e", pattern);
-  if (result.ok) return result.stdout.split("\0").filter(Boolean);
-  if (!result.stderr) return [];
-  throw new Error(`git grep failed: ${result.stderr}`);
+var GREP_MAX_BUFFER = 16 * 1024 * 1024;
+function gitGrep(root, modeFlags, pattern, maxBuffer = GREP_MAX_BUFFER) {
+  const result = spawnSync5("git", ["grep", "-l", "-I", "-z", ...modeFlags, "-e", pattern], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer
+  });
+  if (result.error) {
+    if (result.error.code === "ENOBUFS") return [];
+    throw result.error;
+  }
+  if (result.status === 0) return (result.stdout ?? "").split("\0").filter(Boolean);
+  const stderr = (result.stderr ?? "").trim();
+  if (!stderr) return [];
+  throw new Error(`git grep failed: ${stderr}`);
 }
 function escapeEre(value) {
   return value.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
@@ -6485,12 +6497,12 @@ function promptQa(state, prTemplate, docs = { editable: DEFAULT_PROTECTED_DOCS, 
 }
 
 // src/task/index.ts
-import { spawnSync as spawnSync6 } from "child_process";
+import { spawnSync as spawnSync7 } from "child_process";
 import fs19 from "fs";
 import path17 from "path";
 
 // src/orchestrator/canon-snapshot.ts
-import { spawnSync as spawnSync5 } from "child_process";
+import { spawnSync as spawnSync6 } from "child_process";
 import fs17 from "fs";
 import path15 from "path";
 var CANON_UPSTREAM_REPO = "tstraub89/canon-ai";
@@ -6512,7 +6524,7 @@ function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   return captureGitOutput(path15.resolve(parentToplevel), ["rev-parse", "HEAD"], runGitAt) || upstreamCommit;
 }
 function defaultRunCommand(command, args) {
-  const result = spawnSync5(command, args, {
+  const result = spawnSync6(command, args, {
     cwd: REPO_ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
@@ -9260,7 +9272,7 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
   pushScaffoldBaseCommits(taskIds, cwd, createPR);
   const docsRefsScript = path24.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
   if (fs26.existsSync(docsRefsScript)) {
-    const docsRefsResult = spawnSync7("node", [docsRefsScript], {
+    const docsRefsResult = spawnSync8("node", [docsRefsScript], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8"
@@ -11020,7 +11032,7 @@ Scope was not checked. Fix the base branch or repository history before choosing
 function checkDeps(taskIds, skipAgentDeps = false) {
   if (!skipAgentDeps) {
     for (const dep of requiredAgentBackends(assignmentForTasks(taskIds))) {
-      const result = spawnSync7("which", [dep], { stdio: "ignore" });
+      const result = spawnSync8("which", [dep], { stdio: "ignore" });
       if (result.error || result.status !== 0) {
         const label = dep === "claude" ? "Claude Code CLI" : dep === "codex" ? "Codex CLI" : dep;
         die(`${label} is required`);
