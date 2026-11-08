@@ -7,8 +7,8 @@ import test from 'node:test';
 
 import {
     BYTE_CAP,
-    CANDIDATE_CAP,
     PER_ENTRY_LIMIT,
+    REFERENCE_FILE_CAP,
     TOKEN_CAP,
     buildBlastRadiusBlock,
     extractSpecTokens,
@@ -284,7 +284,7 @@ void test('empty maps, non-git roots, missing roots, and git failures fail open'
         ].join('\n'), { mode: 0o755 });
         process.env.PATH = `${nonGit}${path.delimiter}${priorPath ?? ''}`;
         try {
-            for (const command of ['grep', 'check-attr']) {
+            for (const command of ['grep']) {
                 process.env.CANON_BLAST_RADIUS_TEST_GIT_ARGS = `${realGit}\n${command}`;
                 assert.doesNotThrow(() => buildBlastRadiusBlock(fixture.taskIds, fixture.root));
                 assert.equal(buildBlastRadiusBlock(fixture.taskIds, fixture.root), '');
@@ -368,17 +368,43 @@ void test('a grep whose file list overflows the buffer drops only that entry', (
     }
 });
 
-void test('entries past the candidate cap count toward the remainder without an attribute check', () => {
-    const files: Record<string, string> = { '.gitattributes': 'gen/** linguist-generated\n', 'src/use.ts': 'manyToken\n' };
-    for (let index = 0; index < 5; index += 1) files[`gen/out-${index}.js`] = 'manyToken\n';
-    for (let index = 0; index < CANDIDATE_CAP + 3; index += 1) files[`z/file-${String(index).padStart(4, '0')}.ts`] = 'manyToken\n';
+void test('generated matches never crowd out source matches', () => {
+    const files: Record<string, string> = { '.gitattributes': 'dist/** linguist-generated\n', 'src/use.ts': 'manyToken\n' };
+    for (let index = 0; index < 30; index += 1) files[`dist/out-${String(index).padStart(2, '0')}.js`] = 'manyToken\n';
     const fixture = createFixture({ design: '`manyToken`', files });
     try {
         const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
-        // 5 generated paths are dropped; the 3 paths past the cap are counted, not checked.
-        const remaining = 1 + CANDIDATE_CAP + 3 - PER_ENTRY_LIMIT;
-        assert.match(block, new RegExp(`\`manyToken\`: \`src/use\\.ts\`, .*\\+${remaining} more$`, 'm'));
-        assert.doesNotMatch(block, /gen\/out-/);
+        assert.match(block, /^- `manyToken`: `src\/use\.ts`$/m);
+        assert.doesNotMatch(block, /dist\/out-/);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+void test('reference scans stop at the affected-file cap and report the rest as omitted', () => {
+    const affected = Array.from({ length: REFERENCE_FILE_CAP + 2 }, (_, index) => `lib/mod${String(index).padStart(2, '0')}.ts`);
+    const files: Record<string, string> = {};
+    for (const file of affected) files[file] = 'export {};\n';
+    files['refs/all.ts'] = affected.map(file => `import '../${file.replace('.ts', '.js')}';`).join('\n') + '\n';
+    const fixture = createFixture({ affected, files });
+    try {
+        const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
+        assert.match(block, /`lib\/mod00\.ts`: `refs\/all\.ts`/);
+        assert.doesNotMatch(block, new RegExp(`lib/mod${REFERENCE_FILE_CAP}\\.ts`));
+        assert.match(block, /^- … 2 more Affected Files were not scanned for references \(scan limit\)\.$/m);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+void test('a capped scan is reported even when no entries were found', () => {
+    const affected = Array.from({ length: REFERENCE_FILE_CAP + 1 }, (_, index) => `lib/mod${String(index).padStart(2, '0')}.ts`);
+    const files: Record<string, string> = {};
+    for (const file of affected) files[file] = 'export {};\n';
+    const fixture = createFixture({ affected, files });
+    try {
+        const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
+        assert.match(block, /^- … 1 more Affected Files were not scanned for references \(scan limit\)\.$/m);
     } finally {
         fixture.cleanup();
     }

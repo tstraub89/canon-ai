@@ -15,13 +15,14 @@ export const BLAST_RADIUS_FRAMING = 'These files are surfaces to check for resta
 export const PER_ENTRY_LIMIT = 10;
 export const TOKEN_CAP = 20;
 export const BYTE_CAP = 6144;
-export const CANDIDATE_CAP = 2000;
+export const REFERENCE_FILE_CAP = 40;
 
 const GENERIC_STEMS = new Set(['index', 'types']);
-const GENERATED_ATTRIBUTE_VALUES = new Set(['set', 'true']);
+// Pathspecs that keep linguist-generated files (set or =true) out of every grep.
+const NON_GENERATED_PATHSPECS = ['.', ':(exclude,attr:linguist-generated)', ':(exclude,attr:linguist-generated=true)'];
 
 type BlastRadiusPart = 'references' | 'identifiers';
-type BlastRadiusEntry = { part: BlastRadiusPart; label: string; files: string[]; overflow: number };
+type BlastRadiusEntry = { part: BlastRadiusPart; label: string; files: string[] };
 
 function tokensFromBodies(bodies: readonly string[]): string[] {
     const tokens: string[] = [];
@@ -70,7 +71,7 @@ export const GREP_MAX_BUFFER = 16 * 1024 * 1024;
  * than failing the whole map.
  */
 export function gitGrep(root: string, modeFlags: readonly string[], pattern: string, maxBuffer = GREP_MAX_BUFFER): string[] {
-    const result = spawnSync('git', ['grep', '-l', '-I', '-z', ...modeFlags, '-e', pattern], {
+    const result = spawnSync('git', ['grep', '-l', '-I', '-z', ...modeFlags, '-e', pattern, '--', ...NON_GENERATED_PATHSPECS], {
         cwd: root,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -127,41 +128,13 @@ function specTokens(taskIds: readonly string[]): string[] {
     return ordered;
 }
 
-function generatedFiles(root: string, candidates: readonly string[]): Set<string> {
-    // Entries are capped by capEntry, so one streamed query stays small.
-    const result = spawnSync('git', ['check-attr', '--stdin', '-z', 'linguist-generated'], {
-        cwd: root,
-        encoding: 'utf8',
-        input: candidates.map(file => `${file}\0`).join(''),
-        stdio: ['pipe', 'pipe', 'pipe'],
-        maxBuffer: 64 * 1024 * 1024,
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(`git check-attr failed: ${(result.stderr ?? '').trim() || 'unknown error'}`);
-    const generated = new Set<string>();
-    const fields = (result.stdout ?? '').split('\0');
-    for (let index = 0; index + 2 < fields.length; index += 3) {
-        if (GENERATED_ATTRIBUTE_VALUES.has(fields[index + 2])) generated.add(fields[index]);
-    }
-    return generated;
-}
-
-/**
- * Keep only the paths an entry could display, plus a margin for generated files the
- * attribute check removes. Paths past the cap count toward "+N more" unchecked, which
- * bounds the attribute query no matter how common a token is.
- */
-function capEntry(part: BlastRadiusPart, label: string, files: string[]): BlastRadiusEntry {
-    return { part, label, files: files.slice(0, CANDIDATE_CAP), overflow: Math.max(0, files.length - CANDIDATE_CAP) };
-}
-
 function formatEntry(entry: BlastRadiusEntry): string {
     const shown = entry.files.slice(0, PER_ENTRY_LIMIT).map(file => `\`${file}\``);
-    const remaining = entry.files.length + entry.overflow - shown.length;
+    const remaining = entry.files.length - shown.length;
     return `- \`${entry.label}\`: ${shown.join(', ')}${remaining > 0 ? `, +${remaining} more` : ''}`;
 }
 
-function renderEntries(entries: readonly BlastRadiusEntry[], omitted = 0): string {
+function renderEntries(entries: readonly BlastRadiusEntry[], omitted: number, skipped: number): string {
     let block = `\n${BLAST_RADIUS_HEADING}\n\n${BLAST_RADIUS_FRAMING}\n\n`;
     for (const [part, heading] of [
         ['references', '### Files referencing Affected Files'],
@@ -171,13 +144,14 @@ function renderEntries(entries: readonly BlastRadiusEntry[], omitted = 0): strin
         if (partEntries.length === 0) continue;
         block += `${heading}\n${partEntries.map(formatEntry).join('\n')}\n\n`;
     }
+    if (skipped > 0) block += `- … ${skipped} more Affected Files were not scanned for references (scan limit).\n`;
     if (omitted > 0) block += `- … ${omitted} more entries omitted to stay under the size limit.\n`;
     return block;
 }
 
-function boundedBlock(entries: BlastRadiusEntry[]): string {
-    if (entries.length === 0) return '';
-    const full = renderEntries(entries);
+function boundedBlock(entries: BlastRadiusEntry[], skipped = 0): string {
+    if (entries.length === 0 && skipped === 0) return '';
+    const full = renderEntries(entries, 0, skipped);
     if (Buffer.byteLength(full) <= BYTE_CAP) return full;
 
     const retained = [...entries];
@@ -185,10 +159,10 @@ function boundedBlock(entries: BlastRadiusEntry[]): string {
     while (retained.length > 0) {
         retained.pop();
         omitted += 1;
-        const candidate = renderEntries(retained, omitted);
+        const candidate = renderEntries(retained, omitted, skipped);
         if (Buffer.byteLength(candidate) <= BYTE_CAP) return candidate;
     }
-    const truncated = renderEntries([], entries.length);
+    const truncated = renderEntries([], entries.length, skipped);
     return Buffer.byteLength(truncated) <= BYTE_CAP ? truncated : '';
 }
 
@@ -201,29 +175,28 @@ export function buildBlastRadiusBlock(taskIds: string[], root: string): string {
         const directoryEntries = affectedFiles.filter(file => file.endsWith('/'));
         const entries: BlastRadiusEntry[] = [];
 
-        for (const file of affectedFiles) {
-            if (file.endsWith('/')) continue;
+        const rootPrefix = path.resolve(root) + path.sep;
+        const scannable = affectedFiles.filter(file => {
+            if (file.endsWith('/')) return false;
             const absolute = path.resolve(root, file);
-            const rootPrefix = path.resolve(root) + path.sep;
-            if (!absolute.startsWith(rootPrefix) || !fs.statSync(absolute, { throwIfNoEntry: false })?.isFile()) continue;
+            return absolute.startsWith(rootPrefix) && Boolean(fs.statSync(absolute, { throwIfNoEntry: false })?.isFile());
+        });
+        // Each scanned file costs whole-repo greps, so a large manifest scans only its first files.
+        const skipped = Math.max(0, scannable.length - REFERENCE_FILE_CAP);
+        for (const file of scannable.slice(0, REFERENCE_FILE_CAP)) {
             const matches = new Set(trackedReferenceFiles(root, file));
             const files = [...matches].filter(candidate => !excludedPath(candidate, affectedFiles, directoryEntries)).sort();
-            if (files.length > 0) entries.push(capEntry('references', file, files));
+            if (files.length > 0) entries.push({ part: 'references', label: file, files });
         }
 
         for (const token of specTokens(taskIds)) {
             const files = gitGrep(root, ['-F', '-w'], token)
                 .filter(file => !excludedPath(file, affectedFiles, directoryEntries))
                 .sort();
-            if (files.length > 0) entries.push(capEntry('identifiers', token, [...new Set(files)]));
+            if (files.length > 0) entries.push({ part: 'identifiers', label: token, files: [...new Set(files)] });
         }
 
-        const candidates = [...new Set(entries.flatMap(entry => entry.files))];
-        if (candidates.length > 0) {
-            const generated = generatedFiles(root, candidates);
-            for (const entry of entries) entry.files = entry.files.filter(file => !generated.has(file));
-        }
-        return boundedBlock(entries.filter(entry => entry.files.length > 0));
+        return boundedBlock(entries, skipped);
     } catch {
         return '';
     }

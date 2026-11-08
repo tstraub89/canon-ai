@@ -5129,9 +5129,9 @@ var BLAST_RADIUS_FRAMING = "These files are surfaces to check for restatements a
 var PER_ENTRY_LIMIT = 10;
 var TOKEN_CAP = 20;
 var BYTE_CAP = 6144;
-var CANDIDATE_CAP = 2e3;
+var REFERENCE_FILE_CAP = 40;
 var GENERIC_STEMS = /* @__PURE__ */ new Set(["index", "types"]);
-var GENERATED_ATTRIBUTE_VALUES = /* @__PURE__ */ new Set(["set", "true"]);
+var NON_GENERATED_PATHSPECS = [".", ":(exclude,attr:linguist-generated)", ":(exclude,attr:linguist-generated=true)"];
 function tokensFromBodies(bodies) {
   const tokens = [];
   const seen = /* @__PURE__ */ new Set();
@@ -5170,7 +5170,7 @@ function excludedPath(file, affectedFiles, directoryEntries) {
 }
 var GREP_MAX_BUFFER = 16 * 1024 * 1024;
 function gitGrep(root, modeFlags, pattern, maxBuffer = GREP_MAX_BUFFER) {
-  const result = spawnSync5("git", ["grep", "-l", "-I", "-z", ...modeFlags, "-e", pattern], {
+  const result = spawnSync5("git", ["grep", "-l", "-I", "-z", ...modeFlags, "-e", pattern, "--", ...NON_GENERATED_PATHSPECS], {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -5221,32 +5221,12 @@ function specTokens(taskIds) {
   }
   return ordered;
 }
-function generatedFiles(root, candidates) {
-  const result = spawnSync5("git", ["check-attr", "--stdin", "-z", "linguist-generated"], {
-    cwd: root,
-    encoding: "utf8",
-    input: candidates.map((file) => `${file}\0`).join(""),
-    stdio: ["pipe", "pipe", "pipe"],
-    maxBuffer: 64 * 1024 * 1024
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`git check-attr failed: ${(result.stderr ?? "").trim() || "unknown error"}`);
-  const generated = /* @__PURE__ */ new Set();
-  const fields = (result.stdout ?? "").split("\0");
-  for (let index = 0; index + 2 < fields.length; index += 3) {
-    if (GENERATED_ATTRIBUTE_VALUES.has(fields[index + 2])) generated.add(fields[index]);
-  }
-  return generated;
-}
-function capEntry(part, label, files) {
-  return { part, label, files: files.slice(0, CANDIDATE_CAP), overflow: Math.max(0, files.length - CANDIDATE_CAP) };
-}
 function formatEntry(entry) {
   const shown = entry.files.slice(0, PER_ENTRY_LIMIT).map((file) => `\`${file}\``);
-  const remaining = entry.files.length + entry.overflow - shown.length;
+  const remaining = entry.files.length - shown.length;
   return `- \`${entry.label}\`: ${shown.join(", ")}${remaining > 0 ? `, +${remaining} more` : ""}`;
 }
-function renderEntries(entries, omitted = 0) {
+function renderEntries(entries, omitted, skipped) {
   let block = `
 ${BLAST_RADIUS_HEADING}
 
@@ -5264,23 +5244,25 @@ ${partEntries.map(formatEntry).join("\n")}
 
 `;
   }
+  if (skipped > 0) block += `- \u2026 ${skipped} more Affected Files were not scanned for references (scan limit).
+`;
   if (omitted > 0) block += `- \u2026 ${omitted} more entries omitted to stay under the size limit.
 `;
   return block;
 }
-function boundedBlock(entries) {
-  if (entries.length === 0) return "";
-  const full = renderEntries(entries);
+function boundedBlock(entries, skipped = 0) {
+  if (entries.length === 0 && skipped === 0) return "";
+  const full = renderEntries(entries, 0, skipped);
   if (Buffer.byteLength(full) <= BYTE_CAP) return full;
   const retained = [...entries];
   let omitted = 0;
   while (retained.length > 0) {
     retained.pop();
     omitted += 1;
-    const candidate = renderEntries(retained, omitted);
+    const candidate = renderEntries(retained, omitted, skipped);
     if (Buffer.byteLength(candidate) <= BYTE_CAP) return candidate;
   }
-  const truncated = renderEntries([], entries.length);
+  const truncated = renderEntries([], entries.length, skipped);
   return Buffer.byteLength(truncated) <= BYTE_CAP ? truncated : "";
 }
 function buildBlastRadiusBlock(taskIds, root) {
@@ -5290,25 +5272,23 @@ function buildBlastRadiusBlock(taskIds, root) {
     const affectedFiles = [...new Set(taskIds.flatMap((taskId) => extractAffectedFiles(taskId)))];
     const directoryEntries = affectedFiles.filter((file) => file.endsWith("/"));
     const entries = [];
-    for (const file of affectedFiles) {
-      if (file.endsWith("/")) continue;
+    const rootPrefix = path11.resolve(root) + path11.sep;
+    const scannable = affectedFiles.filter((file) => {
+      if (file.endsWith("/")) return false;
       const absolute = path11.resolve(root, file);
-      const rootPrefix = path11.resolve(root) + path11.sep;
-      if (!absolute.startsWith(rootPrefix) || !fs13.statSync(absolute, { throwIfNoEntry: false })?.isFile()) continue;
+      return absolute.startsWith(rootPrefix) && Boolean(fs13.statSync(absolute, { throwIfNoEntry: false })?.isFile());
+    });
+    const skipped = Math.max(0, scannable.length - REFERENCE_FILE_CAP);
+    for (const file of scannable.slice(0, REFERENCE_FILE_CAP)) {
       const matches = new Set(trackedReferenceFiles(root, file));
       const files = [...matches].filter((candidate) => !excludedPath(candidate, affectedFiles, directoryEntries)).sort();
-      if (files.length > 0) entries.push(capEntry("references", file, files));
+      if (files.length > 0) entries.push({ part: "references", label: file, files });
     }
     for (const token of specTokens(taskIds)) {
       const files = gitGrep(root, ["-F", "-w"], token).filter((file) => !excludedPath(file, affectedFiles, directoryEntries)).sort();
-      if (files.length > 0) entries.push(capEntry("identifiers", token, [...new Set(files)]));
+      if (files.length > 0) entries.push({ part: "identifiers", label: token, files: [...new Set(files)] });
     }
-    const candidates = [...new Set(entries.flatMap((entry) => entry.files))];
-    if (candidates.length > 0) {
-      const generated = generatedFiles(root, candidates);
-      for (const entry of entries) entry.files = entry.files.filter((file) => !generated.has(file));
-    }
-    return boundedBlock(entries.filter((entry) => entry.files.length > 0));
+    return boundedBlock(entries, skipped);
   } catch {
     return "";
   }
