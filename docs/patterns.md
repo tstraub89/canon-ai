@@ -7,7 +7,7 @@
 This is the project's hard-won implementation knowledge. It has two main sections:
 
 1. **Trigger Table** — at the top, an index agents skim to jump to the relevant section. If your task touches an area listed here, the pointed-at section is likely load-bearing for what you're doing.
-2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. The orchestrator pre-injects task-relevant pitfalls into the implementer's prompt; agents still need this file open for spec authorship and code review.
+2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. Implement prompts select full pitfalls and Trigger Table sections that match the spec's Affected Files, plus lessons that cite those files; other pitfall titles and a one-line index of the tables remain visible. Cite full repository paths, directory prefixes, or globs in each entry. Agents still need this file open for spec authorship and code review.
 
 > **Layering rule.** This file is **project-specific** — it holds patterns and pitfalls unique to canon-ai's own internals (or, for adopters, unique to their stack). **Canon-supplied universal rules** (agent discipline, harness behavior, spec/review rules of thumb) are delivered just in time through skills, per-phase prompt templates, and agent charters. Conversational-operator norms for canon-ai live in [`CLAUDE.md`](../CLAUDE.md), which Claude auto-loads at session start. If you're tempted to add a rule here that would apply to *every* canon project, it belongs in a skill or prompt template, not patterns.
 

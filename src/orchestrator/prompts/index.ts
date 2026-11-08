@@ -6,7 +6,8 @@ import path from 'node:path';
 import { config } from '../env.js';
 import { buildBlastRadiusBlock, resolveBlastRadiusRoot } from '../blast-radius.js';
 import { getBaseBranch, type ScopedDiff } from '../git.js';
-import { buildContextBlock, buildImplementStateHeader, buildKnownPitfalls, buildKnownRisks } from '../context.js';
+import { buildContextBlock, buildImplementStateHeader, buildKnownRisks } from '../context.js';
+import { buildRelevantPitfalls } from '../pitfalls.js';
 import { taskDirFor } from '../state.js';
 import { findNewestReviewArchive } from '../review-archive.js';
 import { CLAUDE_STARTUP, implementationStartup, QA_STARTUP, phaseCommands, taskList } from './helpers.js';
@@ -357,7 +358,7 @@ export function promptImplement(
         stateHeader: buildImplementStateHeader(state, mode),
         startup: implementationStartup(state.provider),
         risksBlock: buildKnownRisks(taskIds),
-        pitfallsBlock: buildKnownPitfalls(taskIds),
+        pitfallsBlock: buildRelevantPitfalls(taskIds),
         contextBlock: buildContextBlock(taskIds),
         selfCheck: mode === 'fresh',
         blastRadiusBlock: mode === 'fresh' ? buildBlastRadiusBlock(taskIds, resolveBlastRadiusRoot(taskIds)) : '',
@@ -528,7 +529,7 @@ export function promptImplementReroute(
         preamble,
         groundingRule,
         risksBlock: buildKnownRisks(taskIds),
-        pitfallsBlock: buildKnownPitfalls(taskIds),
+        pitfallsBlock: buildRelevantPitfalls(taskIds),
         contextBlock: buildContextBlock(taskIds),
         blastRadiusBlock: buildBlastRadiusBlock(taskIds, resolveBlastRadiusRoot(taskIds)),
         affectedFilesBlock: buildAffectedFilesBlock(affectedFiles, baseBranch),

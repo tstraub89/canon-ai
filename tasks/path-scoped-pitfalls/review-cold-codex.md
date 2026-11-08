@@ -1,0 +1,1 @@
+The changed selection and prompt-injection paths appear consistent with the documented behavior. Type checking, linting, and template synchronization passed; no actionable regression was identified.

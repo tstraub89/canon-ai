@@ -7,7 +7,6 @@ import { getEffectiveSize, getNominalSize } from './policy.js';
 import { taskDirFor } from './state.js';
 import type { ImplementMode, PipelineState } from './types.js';
 import { parseAffectedFilesFromSpec } from './validation.js';
-import { getActiveCwd } from './worktree.js';
 
 // Delegates to parseAffectedFilesFromSpec so the implement-prompt preload uses
 // the same section coverage (## Design + ## Amendment bodies), cell formats
@@ -65,18 +64,6 @@ export function buildContextBlock(taskIds: string[]): string {
         block += `### \`${file}\`\n\`\`\`${ext}\n${content}\n\`\`\`\n\n`;
     }
     return block;
-}
-
-export function buildKnownPitfalls(taskIds: string[]): string {
-    const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path.join(getActiveCwd(taskIds), 'docs/patterns.md');
-    try {
-        const content = fs.readFileSync(patternsPath, 'utf8');
-        const match = content.match(/## Known Pitfalls\n\n([\s\S]*?)(?:\n## |\n---|\n# |$)/);
-        if (!match) return '';
-        return `\n## Known Codebase Pitfalls (from docs/patterns.md — read before touching these areas)\n\n${match[1].trimEnd()}\n\n`;
-    } catch {
-        return '';
-    }
 }
 
 export function buildKnownRisks(taskIds: string[]): string {

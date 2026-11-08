@@ -201,3 +201,82 @@ Files: `docs/patterns.md`, `templates/docs/patterns.md`, `.claude/skills/canon-i
 
 - Lessons scope after `## Example entry` ends at the first `---` (see Approach). If the human prefers a different rule (for example "only the first H3 under an Example H2"), only `lessonEntries` and the AC-7 fixture change.
 - Within-channel demotion goes largest first. This is not specified; it's an author choice.
+
+## Reroute Plan
+
+### Round Scope
+
+Scope: Amendment 1 (A: Known Pitfalls index-table scope; B: target-cell precedence), AC-15 and AC-16, and the two round-3 spec gaps in `review-prior-1.md` (A and B), which the amendment supersedes. All other prior findings are already resolved in the worktree (rounds 1–2 verified addressed in `review-prior-1.md`) or are optional nits / human-decision risks (legacy H3-less Known Pitfalls stays as the spec defines it; not re-planned). Steps 1–10 of the original plan are implemented; only the index-table classifier, target-cell selection, their tests, one guidance sentence, and `dist/` change this round.
+
+- **Exists:** grep-verified in `src/orchestrator/pitfalls.ts`: `markdownTablesInSection` (:324, returns `{ startLine, endLine, rows }`, header row discarded), `isIndexTable` (:365), `tableRowsInSection` (:374), `knownPitfallEntries` (:169, strips `indexLines` from entry bodies), `buildIndexRows` (:480, five-tuple scoring with `remainingPathKeys`), `compareTargetCellScores` (:317), `parseTargetFromItem` (:415), `parseDocPathItem` (:400), `splitTargetItems` (:449), `sectionHeading` (:158). Tests: `tests/pitfalls.test.ts` AC-4 test (:78, includes `indexAfterEntry` and `unresolvableIndex` cases), Lint/glob-key test (:106), AC-13 real-doc test (:382).
+- **Real path:** `buildRelevantPitfalls` → `selectPitfalls` → `selectPitfallsInternal` → `buildIndexRows` (area index + section/linked targets) and `knownPitfallEntries` (direct-match bodies). Both route through `isIndexTable`; that is the only classifier to replace.
+- **Callers:** `isIndexTable` — `knownPitfallEntries` and `tableRowsInSection` only (removed). `tableRowsInSection` — `buildIndexRows` only. `markdownTablesInSection` — those two plus nothing else; adding a `header` field is additive. `compareTargetCellScores` — `buildIndexRows` only (removed). No export changes; `selectPitfalls`/`buildRelevantPitfalls` contracts unchanged.
+- **Tests that can fail:** listed per test in Step 3; each new AC-15/AC-16 case except the "exact beats prefix" fallback pin fails at HEAD (`f8af39d`). That one passes at HEAD because the current tuple already ranks exact over prefix; it is a pin, not red-first.
+- **Predicates:** header hint = first header cell matching `/\b(?:sections?|docs?)\b|read this/i` (word match, case-insensitive; plurals accepted — judgment call, see below). "Section in this file", "Section / doc", "Read this doc", "Section" match; "Before touching", "Key files", "Keys", "Area", "Documentation" do not. Header with zero data rows → no rows. Hinted cell that resolves nothing → row still listed, `targets: []`. Single-cell malformed rows keep the existing `cells.length === 1` path. "Before its first H3": tables whose `startLine` is in `[H2 line, first H3 line within the H2)`; no H3 → the whole H2. A table under an H4 before the first H3 counts as index (no H3 yet).
+- **Scope:** every file below is in Affected Files (`src/orchestrator/pitfalls.ts`, `tests/pitfalls.test.ts`, `.claude/skills/canon-init/write-guide.md` + its `templates/` mirror via sync, `dist/`). Goldens should not change (the stub has no tables).
+- **Async/stateful:** N/A (pure, synchronous).
+
+**Spec-review nit (dangling "AC-4 fixture's nested table" reference).** Interpretation: it means the `### Entry with an explanatory table` fixture inside the AC-4 test (`tests/pitfalls.test.ts:79`), which round 3 found was changed to a path-free table. Restore a path token there (a non-matching one, `` `src/z/q.ts` ``) so the "entry table is not an index" assertion would fail under a content classifier. Recorded in `notes.md`.
+
+### Step R1: Classify Known Pitfalls index tables by position (Amendment A, AC-15)
+
+File: `src/orchestrator/pitfalls.ts`
+
+- Add `header: string[]` to `MarkdownTable`; set it from the parsed header row in `markdownTablesInSection`.
+- New `knownPitfallsIndexTables(doc, section)`: `markdownTablesInSection(doc, section)` filtered to tables with `startLine < firstH3Line`, where `firstH3Line` is the `startLine` of the first level-3 heading with `start` inside `[section.start, section.end)`, or `section.endLine` if none.
+- `tableRowsInSection`: Known Pitfalls sections use `knownPitfallsIndexTables`; Trigger Table sections keep every table at any depth (unchanged rule). Return tables (with headers), not flattened rows, so Step R2 can read the header per table. Drop the `readDoc` parameter.
+- Delete `isIndexTable` and its comment at :381.
+- `knownPitfallEntries`: drop the `indexLines` stripping and the `readDoc` parameter; entry body = `headingBody(patterns, heading)`. Index tables are now never inside an H3 span, so nothing needs stripping. Update the call site in `selectPitfallsInternal`. Run lint for newly unused params/imports.
+
+### Step R2: Header-hint target column with fixed content fallback (Amendment B, AC-16)
+
+File: `src/orchestrator/pitfalls.ts` (`buildIndexRows`)
+
+Per table: `hintIndex = table.header.findIndex(cell => TARGET_HEADER_HINT.test(stripMarkdown(cell)))` (strip backticks/`*` before testing). Per row:
+
+1. **Hint** (`hintIndex >= 0` and the row has that cell): target cell = `hintIndex`. Targets = resolved `parseTargetFromItem` items of that cell (prefix resolution allowed here). Nothing resolved → `targets: []`, row still listed.
+2. **Fallback** (no hint), in order, leftmost wins within each tier:
+   - (a) a cell with an item that is a doc path (`parseDocPathItem` non-null, not `docs/patterns.md`) or a `§` reference (the existing `docSection` regex in `parseTargetFromItem` — factor it into `isDocSectionItem(item)`);
+   - (b) a cell with an item whose `parseTargetFromItem` result is a section/doc-section with `specificity === 2` (exact heading);
+   - (c) a cell with an item that resolves by prefix (`specificity === 0`).
+   No tier matches → target cell 0 with no targets (current behavior). Tier (a) is syntactic: an unreadable linked doc still wins the cell (the doc is then skipped at selection, as AC-10 requires). A `*.md` glob is not a doc path (`parseDocPathItem` rejects `*`), so it stays a key.
+3. Keys = `pathTokens` of every cell except the target cell; line rendering, `matched`, and `IndexRow` unchanged.
+
+Delete `compareTargetCellScores`, the five-tuple score, and the `remainingPathKeys` reduction. `ParsedTarget.specificity` stays (used by tiers b/c); the linked value `1` is no longer compared and can stay. Add `const TARGET_HEADER_HINT = /\b(?:sections?|docs?)\b|read this/i;` near the other constants with a one-line comment that it mirrors Amendment B.
+
+### Step R3: Tests
+
+File: `tests/pitfalls.test.ts`. Inline fixtures via `matchingInput` / `tablePatterns`; `readDoc` from a `Record`.
+
+- **AC-4 test edits** (existing, :78):
+  - Fixture's explanatory table row becomes `` | `src/z/q.ts` | transformed value | ``. Replace the `doesNotMatch(/source value|transformed value/)` assertion with: the `### Area index` subsection contains no `transformed value`, and `- Entry with an explanatory table` appears under the titles. Fails at HEAD: `isIndexTable` sees the path token and moves the row into the area index.
+  - `indexAfterEntry`: rewrite to pin "not supported": the table after `### Existing entry` is entry content, so with Affected File `src/a/b.ts` the entry is injected in full (`EXISTING_ENTRY_BODY` present in the full-body subsection) and no area-index line for `docs/pitfalls/effects.md` appears. Remove the old trailing-index assertions.
+  - `unresolvableIndex`: move the table directly under `## Known Pitfalls` (before `### Existing entry`). Header `| Area | Section | Keys |` hints column 2, so assert `- Future section — Unmapped area — \`src/a/b.ts\` **(matches this task)**`.
+- **New `test('AC-15: Known Pitfalls index tables are only those before the first H3')`:**
+  - `### Worker retries` with body text plus `| File | Why |` / `` | `src/queue/worker.ts` | retries re-enter | ``; Affected `src/queue/worker.ts`. Assert the full entry, including the table row, is under `### Pitfalls and patterns that cite your files`, and no area-index line contains `retries re-enter`. Fails at HEAD (table classified as index, stripped, entry shows only as a title).
+  - A table directly under `## Known Pitfalls` before any H3: `| Area | Notes |` / `| Legacy area | ask the owner |`, then an H3 entry. Assert `### Area index` contains `Legacy area — ask the owner`. Fails at HEAD (no signal → dropped).
+- **New `test('AC-16: target column comes from the header hint, then a fixed content precedence')`:**
+  - Lint row: covered by the existing :106 test and AC-13; leave unchanged, must stay green.
+  - State row: `## Known Pitfalls` with `| Area | Read this doc | Key files |` / `` | State | `docs/pitfalls/state.md` | `app/src/store/**` | ``, plus `## State Management Rules` with `STATE_MGMT_SENTINEL`. `readDoc` returns a state doc with `### Store writes` citing `` `app/src/store/editor.ts` `` and `### Other state rule` citing nothing. Affected `app/src/store/editor.ts`. Assert the "Open `docs/pitfalls/state.md`" line, `Store writes` body in full, `Other state rule` as a title, and `STATE_MGMT_SENTINEL` absent. Fails at HEAD (area cell "State" wins by `remainingPathKeys`).
+  - Exact-area row: `tablePatterns('| Area touched | Section | Key files |…| Testing | Fixture Rules | \`src/a/b.ts\` |', '## Testing\n\nTESTING_SENTINEL\n\n## Fixture Rules\n\nFIXTURE_SENTINEL\n')`. Assert `FIXTURE_SENTINEL` present and `TESTING_SENTINEL` absent. Fails at HEAD (leftmost tie-break picks "Testing").
+  - No-hint fallback, doc beats exact: `| A | B | C |` / `` | Exact Heading | `docs/pitfalls/x.md` | `src/a/b.ts` | `` with `## Exact Heading` + sentinel and a readable `docs/pitfalls/x.md`. Assert the Open line for `docs/pitfalls/x.md` and the sentinel absent. Fails at HEAD (`remainingPathKeys` favors cell 1).
+  - No-hint fallback, exact beats prefix: `` | Retry | Queue Discipline | `src/a/b.ts` | `` with `## Retry Rules (backoff)` and `## Queue Discipline` sentinels. Assert Queue Discipline injected, Retry Rules not. Pin only: passes at HEAD.
+- Run the AC-3, AC-5, Lint/glob-key, AC-9, AC-10, AC-13 tests unchanged; all use hinted headers (`Read this doc`, `Section`, `Section / doc`) and must stay green. If one fails, investigate before editing its assertion.
+
+### Step R4: Guidance restatement
+
+Files: `.claude/skills/canon-init/write-guide.md` (root; mirror via `npm run sync-templates`)
+
+Line 57: change "add a Known Pitfalls table mapping each doc…" to "add a table directly under the Known Pitfalls heading, before the H3 entries, with a `Read this doc` column, mapping each doc to the paths or globs that should trigger it." This brings the guide in line with Amendment A/B and with `templates/docs/patterns.md:79`, which already says this (no change there). `docs/patterns.md` "How to use this doc" does not restate table placement; no change.
+
+### Step R5: Build and validate
+
+`npm run build` (stage `dist/`), `npm run type-check`, `npm run lint`, `npm test` (twice; goldens must not change — if `tests/run-task-prompts.golden.json` moves, investigate), `npm run sync-templates:check`, `npm run docs-refs-check`. Record each new test's HEAD-failure status in the handoff's Self-Check (round 2 flagged a missing Self-Check), marking the exact-beats-prefix case as a pin.
+
+### Judgment Calls (this round)
+
+| Call | Chosen | Why |
+|---|---|---|
+| Header hint word match | `\b(?:sections?\|docs?)\b` plus the phrase "read this", case-insensitive | Spec says "the word"; plurals ("Sections", "Docs") are the obvious variant and harmless. "Documentation" does not match. |
+| Doc-path tier in the fallback | Syntactic, regardless of readability | Amendment B ranks by what the cell "holds"; AC-10 already handles a missing linked doc at selection time. |
+| H4 before first H3 in Known Pitfalls | Its tables are index tables | "Before its first H3" is positional; no H3 has started. |
