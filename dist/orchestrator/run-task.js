@@ -5338,6 +5338,7 @@ var DEMOTION_ORDER = ["lesson", "section", "linked", "direct"];
 var PATTERNS_PATH = "docs/patterns.md";
 var LESSONS_PATH = "docs/lessons-learned.md";
 function scanMarkdown(markdown, docPath) {
+  markdown = markdown.replace(/\r\n?/g, "\n");
   const lines = markdown.split("\n");
   const lineStarts = [];
   const outsideFence = [];
@@ -5348,7 +5349,8 @@ function scanMarkdown(markdown, docPath) {
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     lineStarts.push(offset);
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    const fence = fenceMatch && !(fenceMatch[1][0] === "`" && fenceMatch[2].includes("`")) ? fenceMatch : null;
     if (fenceChar) {
       outsideFence.push(false);
       const closing = fence && fence[1][0] === fenceChar && fence[1].length >= fenceLength && /^\s*$/.test(fence[2]);
@@ -5362,9 +5364,9 @@ function scanMarkdown(markdown, docPath) {
       fenceLength = fence[1].length;
     } else {
       outsideFence.push(true);
-      const match = line.match(/^ {0,3}(#{1,3})[ \t]+(.+?)\s*#*\s*$/);
+      const match = line.match(/^ {0,3}(#{1,3})[ \t]+(.+?)[ \t]*$/);
       if (match) {
-        const title = match[2].trim();
+        const title = match[2].replace(/[ \t]+#+[ \t]*$/, "").trim();
         headings.push({
           level: match[1].length,
           text: title,
@@ -5535,11 +5537,22 @@ function splitCells(line) {
 function isSeparatorRow2(cells) {
   return cells.every((cell) => /^:?-{3,}:?$/.test(cell.replaceAll(" ", "")));
 }
+function compareTargetCellScores(left, right) {
+  for (let index = 0; index < Math.min(left.length, right.length); index++) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
 function tableRowsInSection(doc, section) {
   const result = [];
+  const pitfallEntryLines = /* @__PURE__ */ new Set();
+  for (const heading of doc.headings) {
+    if (heading.level !== 3 || heading.startLine <= section.startLine || heading.startLine >= section.endLine) continue;
+    for (let entryLine = heading.startLine; entryLine < heading.endLine; entryLine++) pitfallEntryLines.add(entryLine);
+  }
   let line = section.startLine + 1;
   while (line < section.endLine) {
-    if (!doc.outsideFence[line]) {
+    if (!doc.outsideFence[line] || pitfallEntryLines.has(line)) {
       line++;
       continue;
     }
@@ -5551,7 +5564,7 @@ function tableRowsInSection(doc, section) {
     }
     line += 2;
     while (line < section.endLine) {
-      if (!doc.outsideFence[line]) break;
+      if (!doc.outsideFence[line] || pitfallEntryLines.has(line)) break;
       const cells = splitCells(doc.lines[line]);
       if (!cells) {
         const raw = doc.lines[line].trim();
@@ -5596,28 +5609,36 @@ function parseDocPathItem(item) {
   }
   return null;
 }
-function parseTargetsFromItem(item, patterns, readDoc) {
+function parseTargetFromItem(item, patterns, readDoc) {
   const clean = stripParenthetical(item);
   const docSection = clean.match(/^\s*(`[^`]+`|\[[^\]]+\]\([^)]+\))\s*§\s*(.+?)\s*$/);
   if (docSection) {
     const parsed = parseDocPathItem(docSection[1]);
-    if (!parsed) return [];
+    if (!parsed) return null;
     const sectionName2 = docSection[2].replaceAll("`", "").trim();
     const doc = parsed.path === PATTERNS_PATH ? patterns : (() => {
       const text = readDoc(parsed.path);
       return text === null ? null : scanMarkdown(text, parsed.path);
     })();
     const heading2 = doc ? sectionHeading(doc, sectionName2) : null;
-    return heading2 && doc ? [{ kind: "doc-section", path: parsed.path, section: heading2.text }] : [];
+    if (!heading2 || !doc) return null;
+    return {
+      target: { kind: "doc-section", path: parsed.path, section: heading2.text },
+      specificity: heading2.text.toLocaleLowerCase() === sectionName2.toLocaleLowerCase() ? 2 : 0
+    };
   }
   const docPath = parseDocPathItem(clean);
   if (docPath) {
-    if (docPath.path === PATTERNS_PATH) return [];
-    return [{ kind: "linked", path: docPath.path }];
+    if (docPath.path === PATTERNS_PATH) return null;
+    return { target: { kind: "linked", path: docPath.path }, specificity: 3 };
   }
   const sectionName = clean.replaceAll("`", "").trim();
   const heading = sectionHeading(patterns, sectionName);
-  return heading ? [{ kind: "section", doc: patterns, heading }] : [];
+  if (!heading) return null;
+  return {
+    target: { kind: "section", doc: patterns, heading },
+    specificity: heading.text.toLocaleLowerCase() === sectionName.toLocaleLowerCase() ? 2 : 0
+  };
 }
 function splitTargetItems(value) {
   const items = [];
@@ -5659,17 +5680,24 @@ function buildIndexRows(patterns, affectedFiles, readDoc) {
         rows.push({ line: `- ${cells[0]}`, targets: [], keys: [], matched: false });
         continue;
       }
-      let targetCell = -1;
-      let targets = [];
+      let winner;
       for (let index = 0; index < cells.length; index++) {
-        const parsed = splitTargetItems(cells[index]).flatMap((item) => parseTargetsFromItem(item, patterns, readDoc));
-        if (parsed.length > 0) {
-          targetCell = index;
-          targets = parsed;
-          break;
+        const items = splitTargetItems(cells[index]);
+        const parsed = items.map((item) => parseTargetFromItem(item, patterns, readDoc));
+        const resolved = parsed.filter((item) => item !== null);
+        if (resolved.length === 0) continue;
+        const score = [
+          resolved.length === items.length && resolved.every((item) => item.specificity > 0) ? 1 : 0,
+          resolved.reduce((total, item) => total + item.specificity, 0),
+          resolved.length,
+          index
+        ];
+        if (!winner || compareTargetCellScores(score, winner.score) > 0) {
+          winner = { index, targets: resolved.map((item) => item.target), score };
         }
       }
-      if (targetCell < 0) targetCell = 0;
+      const targetCell = winner?.index ?? 0;
+      const targets = winner?.targets ?? [];
       const keys = cells.flatMap((cell, index) => index === targetCell ? [] : pathTokens(cell, patterns.path));
       const matched = rowMatches(keys, affectedFiles);
       const targetText = cells[targetCell];
@@ -5727,7 +5755,14 @@ function isPathInsideRoot(root, repoPath) {
   if (path12.isAbsolute(repoPath) || repoPath.split(/[\\/]/).includes("..")) return false;
   const resolvedRoot = path12.resolve(root);
   const resolved = path12.resolve(resolvedRoot, ...repoPath.split("/"));
-  return resolved.startsWith(`${resolvedRoot}${path12.sep}`);
+  if (!resolved.startsWith(`${resolvedRoot}${path12.sep}`)) return false;
+  try {
+    const realRoot = fs14.realpathSync(resolvedRoot);
+    const realPath = fs14.realpathSync(resolved);
+    return realPath.startsWith(`${realRoot}${path12.sep}`);
+  } catch {
+    return false;
+  }
 }
 function titleGroupsFor(entriesByDoc, active, demoted, matchedLinkedDocs) {
   const byDoc = /* @__PURE__ */ new Map();
@@ -5745,6 +5780,17 @@ function titleGroupsFor(entriesByDoc, active, demoted, matchedLinkedDocs) {
 }
 function bodyByteLength(value) {
   return Buffer.byteLength(value, "utf8");
+}
+function utf8Prefix(value, byteLimit) {
+  let bytes = 0;
+  let end = 0;
+  for (const character of value) {
+    const length = Buffer.byteLength(character, "utf8");
+    if (bytes + length > byteLimit) break;
+    bytes += length;
+    end += character.length;
+  }
+  return value.slice(0, end);
 }
 function selectPitfallsInternal(input) {
   const affectedFiles = [...new Set(input.affectedFiles.map(normalizeAffectedFile).filter((value) => value !== null))];
@@ -5814,7 +5860,6 @@ function selectPitfallsInternal(input) {
     }
   }
   const lessonEntries = lessonsDoc ? lessonsEntries(lessonsDoc) : [];
-  if (lessonsDoc && lessonEntries.length > 0) titleEntries.set(lessonsDoc.path, []);
   if (lessonsDoc) {
     for (const entry of lessonEntries) {
       if (pathTokens(entry.body, lessonsDoc.path).some((token) => rowMatches([token], affectedFiles))) {
@@ -5826,16 +5871,17 @@ function selectPitfallsInternal(input) {
   const demoted = [];
   const titleLimitState = { perDoc: Number.POSITIVE_INFINITY };
   const areaLimitState = { count: indexRows.length };
-  const cap = input.cap ?? PITFALLS_BYTE_CAP;
+  const requestedCap = input.cap ?? PITFALLS_BYTE_CAP;
+  const cap = Number.isFinite(requestedCap) ? Math.max(0, Math.floor(requestedCap)) : PITFALLS_BYTE_CAP;
   let capped = false;
   function render4() {
     const full = visibleCandidates(active);
     const pitfallFull = full.filter((candidate) => candidate.channel !== "lesson");
     const lessonFull = full.filter((candidate) => candidate.channel === "lesson");
-    const groups = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
+    const groups2 = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
     const titleLines = [];
     let droppedTitles = 0;
-    for (const group of groups) {
+    for (const group of groups2) {
       const shown = group.titles.slice(0, titleLimitState.perDoc);
       const omitted = group.titles.length - shown.length;
       droppedTitles += omitted;
@@ -5896,8 +5942,8 @@ ${sections.join("\n\n")}${note}
     demoted.push(selected);
   }
   if (bodyByteLength(render4()) > cap) {
-    const groups = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
-    const largest = Math.max(0, ...groups.map((group) => group.titles.length));
+    const groups2 = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
+    const largest = Math.max(0, ...groups2.map((group) => group.titles.length));
     for (let keep = largest - 1; keep >= 0 && bodyByteLength(render4()) > cap; keep--) {
       titleLimitState.perDoc = keep;
     }
@@ -5907,12 +5953,24 @@ ${sections.join("\n\n")}${note}
       areaLimitState.count = keep;
     }
   }
-  return render4();
+  const rendered = render4();
+  if (bodyByteLength(rendered) <= cap) return rendered;
+  const groups = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
+  const titleCount = groups.reduce((total, group) => total + group.titles.length, 0);
+  const summary = `
+${PITFALLS_HEADING}
+
+_Pitfalls block capped at ${cap} bytes: ${demoted.length} full candidates demoted; ${titleCount} titles and ${indexRows.length} index rows dropped._
+
+`;
+  return utf8Prefix(summary, cap);
 }
 function selectPitfalls(input) {
   try {
     return selectPitfallsInternal(input);
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`Unable to select relevant pitfalls and lessons: ${detail}`);
     return "";
   }
 }

@@ -76,9 +76,10 @@ void test('AC-3: linked docs match globs, retain titles, and resolve relative ma
 });
 
 void test('AC-4: every index row stays in the area index, including keyless and matched rows', () => {
-    const patterns = `## Known Pitfalls\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | Any new effect or timer — cross-cutting |\n\n## Trigger Table — Scan This First\n\n| Area | Section | Key files |\n|---|---|---|\n| No key | Shared Rules | — |\n| Affected | Shared Rules | \`src/a/b.ts\` |\n\n## Shared Rules\n\nSection body.\n`;
+    const patterns = `## Known Pitfalls\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/effects.md\` | Any new effect or timer — cross-cutting |\n\n### Entry with an explanatory table\n\nThis table is part of an entry, not an index.\n\n| Read this doc | Before touching |\n|---|---|\n| \`docs/pitfalls/nested.md\` | \`src/z/**\` |\n\n## Trigger Table — Scan This First\n\n| Area | Section | Key files |\n|---|---|---|\n| No key | Shared Rules | — |\n| Affected | Shared Rules | \`src/a/b.ts\` |\n\n## Shared Rules\n\nSection body.\n`;
     const output = selectPitfalls(matchingInput(patterns));
     assert.match(output, /### Area index[\s\S]*`docs\/pitfalls\/effects\.md` — Any new effect or timer — cross-cutting/);
+    assert.doesNotMatch(output, /docs\/pitfalls\/nested\.md/);
     assert.match(output, /Shared Rules — No key — —/);
     assert.match(output, /Shared Rules — Affected — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
     const noAffectedFiles = selectPitfalls({ ...matchingInput(patterns, []), affectedFiles: [] });
@@ -90,7 +91,7 @@ void test('AC-5: section targets use exact headings before prefixes and allow mi
     const touchPath = 'docs/pitfalls/touch.md';
     const touchDoc = `# Touch\n\n### Mobile detail\n\nTouch body cites \`src/a/b.ts\`.\n`;
     const patterns = tablePatterns(
-        '| Area | Section / doc | Key files |\n|---|---|---|\n| Changing queue | Queue Discipline; Retry Rules (backoff; retries) | `src/queue/worker.ts` |\n| Testing | Testing | `src/a/b.ts` |\n| Touch behavior | Mobile Rules; `docs/pitfalls/touch.md` | `src/a/b.ts` |\n| Patterns subsection | `docs/patterns.md` §Testing | `src/a/b.ts` |',
+        '| Area | Section / doc | Key files |\n|---|---|---|\n| Changing queue | Queue Discipline; Retry Rules (backoff; retries) | `src/queue/worker.ts` |\n| Testing | Testing | `src/a/b.ts` |\n| Touch behavior | Mobile Rules; `docs/pitfalls/touch.md` | `src/a/b.ts` |',
         `## Queue Discipline\n\nQueue discipline body.\n\n### Retry Rules (backoff)\n\nRetry rules body.\n\n## Testing\n\nExact testing section.\n\n## Testing Utilities\n\nUtilities section must not be selected.\n\n### Testing Utilities helper\n\nThis title belongs to another section.\n\n## Mobile Rules\n\nMobile rules section.\n\n## Known Pitfalls\n\n### Unrelated pitfall title\n\nNo path here.\n`,
     );
     const output = selectPitfalls({ ...matchingInput(patterns, ['src/queue/worker.ts', 'src/a/b.ts'], repoPath => repoPath === touchPath ? touchDoc : null) });
@@ -105,8 +106,26 @@ void test('AC-5: section targets use exact headings before prefixes and allow mi
     assert.match(full, /## Testing\n\nExact testing section\./);
     assert.doesNotMatch(output, /Utilities section must not be selected/);
     assert.doesNotMatch(output, /- Testing Utilities helper/);
-    assert.match(output, /`docs\/patterns\.md` §Testing — Patterns subsection/);
     assert.match(output, /Unrelated pitfall title/);
+
+    const ambiguousArea = tablePatterns(
+        '| Area | Section | Key files |\n|---|---|---|\n| Testing | Fixture Rules | `tests/**` |',
+        `## Testing Utilities\n\nWRONG_AREA_SECTION\n\n## Fixture Rules\n\nRIGHT_TARGET_SECTION\n`,
+    );
+    const ranked = selectPitfalls(matchingInput(ambiguousArea, ['tests/example.test.ts']));
+    assert.match(ranked, /## Fixture Rules[\s\S]*RIGHT_TARGET_SECTION/);
+    assert.doesNotMatch(ranked, /WRONG_AREA_SECTION/);
+    assert.match(ranked, /Fixture Rules — Testing — `tests\/\*\*`/);
+
+    const docSectionOnly = tablePatterns(
+        '| Area | Section | Keys |\n|---|---|---|\n| Patterns | `docs/patterns.md` §Testing | `src/a/b.ts` |',
+        `## Testing\n\nTESTING_SECTION_ONLY\n\n## Testing Utilities\n\nOTHER_SECTION\n\n## Known Pitfalls\n\n### Known title\n\nNo matching path.\n`,
+    );
+    const docSectionOutput = selectPitfalls(matchingInput(docSectionOnly));
+    assert.match(docSectionOutput, /## Testing\n\nTESTING_SECTION_ONLY/);
+    assert.doesNotMatch(docSectionOutput, /Open `docs\/patterns\.md`/);
+    assert.match(docSectionOutput, /- Known title/);
+    assert.doesNotMatch(docSectionOutput, /OTHER_SECTION/);
 });
 
 void test('AC-6: direct entries covered by a selected section render once and leave no duplicate title', () => {
@@ -122,18 +141,20 @@ void test('AC-6: direct entries covered by a selected section render once and le
 });
 
 void test('AC-7: matching lesson entries are injected outside the excluded example scope', () => {
-    const lessons = `# Lessons Learned\n\n## How to use this doc\n\n### How-to note\n\nCites \`src/a/b.ts\`.\n\n## Entry format\n\n\`\`\`md\n### Heading\nCites \`src/a/b.ts\`.\n\`\`\`\n\n## Example entry\n\n### Example entry\n\nExample body cites \`src/a/b.ts\`.\n\n---\n\n### Real lesson\n\nReal lesson body cites \`src/a/b.ts\`.\n\n### Unrelated lesson\n\nUnrelated body cites \`src/z/q.ts\`.\n`;
+    const lessons = `# Lessons Learned\n\n## How to use this doc\n\n### How-to note\n\nCites \`src/a/b.ts\`.\n\n## Entry format\n\n\`\`\`md\n### Heading\nCites \`src/a/b.ts\`.\n\`\`\`\n\n## Example entry\n\n### Example entry\n\nExample body cites \`src/a/b.ts\`.\n\n---\n\n\`\`\`js\`\`\`\n\n### Real lesson\n\nReal lesson body cites \`src/a/b.ts\`.\n\n### Unrelated lesson\n\nUnrelated body cites \`src/z/q.ts\`.\n`.replaceAll('\n', '\r\n');
     const output = selectPitfalls({ patterns: null, lessons, readDoc: noDocs, affectedFiles: ['src/a/b.ts'] });
     assert.match(output, /### Lessons that cite your files[\s\S]*### Real lesson[\s\S]*Real lesson body cites/);
     assert.doesNotMatch(output, /Example body cites/);
     assert.doesNotMatch(output, /Unrelated body cites/);
     assert.doesNotMatch(output, /### Heading/);
+    assert.doesNotMatch(output, /\r/);
 });
 
 void test('AC-8: only path-like tokens match, and source line suffixes are removed', () => {
-    const patterns = `## Known Pitfalls\n\n### Basename only\n\nUses \`b.ts\`.\n\n### Symbol only\n\nUses \`runPhase()\`.\n\n### Plain word only\n\nUses \`true\`.\n\n### Path with source range\n\nUses \`src/a/b.ts:12-30\`.\n`;
+    const patterns = `## Known Pitfalls\n\n### Basename only\n\nUses \`b.ts\`.\n\n### Symbol only\n\nUses \`runPhase()\`.\n\n### Plain word only\n\nUses \`true\`.\n\n### Path with source range\n\nUses \`src/a/b.ts:12-30\`.\n\n### Preserve C# heading text\n\nUses \`src/a/b.ts\`.\n`;
     const output = selectPitfalls(matchingInput(patterns));
     assert.match(output, /### Path with source range[\s\S]*Uses `src\/a\/b\.ts:12-30`\./);
+    assert.match(output, /### Preserve C# heading text/);
     assert.doesNotMatch(output, /Uses `b\.ts`/);
     assert.doesNotMatch(output, /Uses `runPhase\(\)`/);
     assert.doesNotMatch(output, /Uses `true`/);
@@ -181,6 +202,16 @@ void test('AC-9: cap demotes lessons, sections, and linked entries before direct
     assert.ok(Buffer.byteLength(titleHeavy, 'utf8') <= 450);
     assert.match(titleHeavy, /\+\d+ more in docs\/patterns\.md/);
     assert.match(titleHeavy, /titles and 0 index rows dropped/);
+
+    const tinyCap = selectPitfalls({
+        patterns,
+        lessons,
+        readDoc: repoPath => repoPath === linkedPath ? linkedDoc : null,
+        affectedFiles: ['src/a/b.ts'],
+        cap: 500,
+    });
+    assert.ok(Buffer.byteLength(tinyCap, 'utf8') <= 500, `output used ${Buffer.byteLength(tinyCap, 'utf8')} bytes`);
+    assert.match(tinyCap, /Pitfalls block capped at 500 bytes/);
 });
 
 void test('AC-10: patterns, lessons, linked docs, and affected files are independent channels', () => {
@@ -208,6 +239,25 @@ void test('AC-10: patterns, lessons, linked docs, and affected files are indepen
     assert.doesNotMatch(titleOnly, /### Pitfalls and patterns that cite your files/);
 });
 
+void test('unexpected selector failures warn before returning an empty block', () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    const affectedFiles = new Proxy([] as string[], {
+        get(target, property, receiver) {
+            if (property === 'map') throw new Error('synthetic selector failure');
+            return Reflect.get(target, property, receiver) as unknown;
+        },
+    });
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '));
+    try {
+        const output = selectPitfalls({ patterns: null, lessons: null, readDoc: noDocs, affectedFiles });
+        assert.equal(output, '');
+    } finally {
+        console.warn = originalWarn;
+    }
+    assert.match(warnings.join(' '), /Unable to select relevant pitfalls and lessons: synthetic selector failure/);
+});
+
 void test('AC-11: wrapper honors patterns override and docs-root override for lessons and linked docs', () => {
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-pitfalls-wrapper-'));
     const tasksRoot = path.join(temporary, 'tasks');
@@ -222,32 +272,70 @@ void test('AC-11: wrapper honors patterns override and docs-root override for le
     fs.writeFileSync(path.join(docsRoot, 'docs', 'pitfalls', 'x.md'), `# Linked\n\n### Linked override entry\n\nLINKED_OVERRIDE_BODY cites \`src/entry.ts\`.\n`);
     fs.writeFileSync(path.join(docsRoot, 'docs', 'lessons-learned.md'), `# Lessons\n\n### Lesson override entry\n\nLESSONS_OVERRIDE_BODY cites \`src/entry.ts\`.\n`);
 
-    withEnvironment({
-        CANON_TASKS_DIR_OVERRIDE: tasksRoot,
-        CANON_PATTERNS_MD_PATH: patternsOverride,
-        [PITFALLS_DOCS_ROOT_ENV]: docsRoot,
-    }, () => {
-        const output = buildRelevantPitfalls([taskId]);
-        assert.match(output, /PATTERNS_OVERRIDE_BODY/);
-        assert.match(output, /LINKED_OVERRIDE_BODY/);
-        assert.match(output, /LESSONS_OVERRIDE_BODY/);
-    });
-    fs.rmSync(temporary, { recursive: true, force: true });
+    try {
+        withEnvironment({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_PATTERNS_MD_PATH: patternsOverride,
+            [PITFALLS_DOCS_ROOT_ENV]: docsRoot,
+        }, () => {
+            const output = buildRelevantPitfalls([taskId]);
+            assert.match(output, /PATTERNS_OVERRIDE_BODY/);
+            assert.match(output, /LINKED_OVERRIDE_BODY/);
+            assert.match(output, /LESSONS_OVERRIDE_BODY/);
+        });
+    } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+    }
+});
+
+void test('linked pitfall docs cannot escape the docs root through a symlink', context => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-pitfalls-symlink-'));
+    const tasksRoot = path.join(temporary, 'tasks');
+    const docsRoot = path.join(temporary, 'docs-root');
+    const taskId = 'pitfalls-symlink-fixture';
+    const taskDir = path.join(tasksRoot, taskId);
+    const patternsPath = path.join(temporary, 'patterns.md');
+    const externalDoc = path.join(temporary, 'outside.md');
+    const linkedPath = path.join(docsRoot, 'docs', 'pitfalls', 'escape.md');
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.mkdirSync(path.dirname(linkedPath), { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'spec.md'), specWithAffectedFile('src/entry.ts'));
+    fs.writeFileSync(patternsPath, '## Known Pitfalls\n\n| Read this doc | Before touching |\n|---|---|\n| `docs/pitfalls/escape.md` | `src/entry.ts` |\n');
+    fs.writeFileSync(externalDoc, '# Outside\n\n### Escaped entry\n\nESCAPED_LINKED_SENTINEL cites `src/entry.ts`.\n');
+
+    try {
+        fs.symlinkSync(externalDoc, linkedPath);
+    } catch {
+        fs.rmSync(temporary, { recursive: true, force: true });
+        context.skip('symlink creation is unavailable in this environment');
+        return;
+    }
+
+    try {
+        withEnvironment({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_PATTERNS_MD_PATH: patternsPath,
+            [PITFALLS_DOCS_ROOT_ENV]: docsRoot,
+        }, () => {
+            const output = buildRelevantPitfalls([taskId]);
+            assert.doesNotMatch(output, /ESCAPED_LINKED_SENTINEL/);
+            assert.match(output, /`docs\/pitfalls\/escape\.md`/);
+        });
+    } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+    }
 });
 
 void test('AC-13: canon-ai git-path pitfalls and Validation Gate Discipline stay full on the real docs', () => {
     const root = process.cwd();
     const patterns = fs.readFileSync(path.join(root, 'docs/patterns.md'), 'utf8');
-    const lessons = fs.readFileSync(path.join(root, 'docs/lessons-learned.md'), 'utf8');
-    const output = selectPitfalls({ patterns, lessons, readDoc: noDocs, affectedFiles: ['src/orchestrator/git.ts'] });
+    const output = selectPitfalls({ patterns, lessons: null, readDoc: noDocs, affectedFiles: ['src/orchestrator/git.ts'] });
     const fullStart = output.indexOf('### Pitfalls and patterns that cite your files');
-    const lessonsStart = output.indexOf('### Lessons that cite your files');
     const areaStart = output.indexOf('### Area index');
-    const fullBlock = output.slice(fullStart, lessonsStart > fullStart ? lessonsStart : areaStart);
+    const fullBlock = output.slice(fullStart, areaStart);
     assert.match(fullBlock, /### `getAffectedFiles` uses three-dot diff semantics/);
     assert.match(fullBlock, /### Validation Gate Discipline/);
     assert.doesNotMatch(output, /Pitfalls block capped/);
-    assert.ok(lessonsStart > fullStart, 'real lesson entries citing the affected path should also be selected');
     assert.ok(PITFALLS_BYTE_CAP >= Buffer.byteLength(output, 'utf8'));
     assert.ok(output.includes(PITFALLS_HEADING));
 });

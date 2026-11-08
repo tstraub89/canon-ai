@@ -39,6 +39,7 @@ type SectionTarget = { kind: 'section'; doc: MarkdownDoc; heading: Heading };
 type LinkedTarget = { kind: 'linked'; path: string };
 type DocSectionTarget = { kind: 'doc-section'; path: string; section: string };
 type Target = SectionTarget | LinkedTarget | DocSectionTarget;
+type ParsedTarget = { target: Target; specificity: number };
 
 type IndexRow = {
     line: string;
@@ -79,6 +80,7 @@ const PATTERNS_PATH = 'docs/patterns.md';
 const LESSONS_PATH = 'docs/lessons-learned.md';
 
 function scanMarkdown(markdown: string, docPath: string): MarkdownDoc {
+    markdown = markdown.replace(/\r\n?/g, '\n');
     const lines = markdown.split('\n');
     const lineStarts: number[] = [];
     const outsideFence: boolean[] = [];
@@ -90,7 +92,8 @@ function scanMarkdown(markdown: string, docPath: string): MarkdownDoc {
     for (let index = 0; index < lines.length; index++) {
         const line = lines[index];
         lineStarts.push(offset);
-        const fence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+        const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+        const fence = fenceMatch && !(fenceMatch[1][0] === '`' && fenceMatch[2].includes('`')) ? fenceMatch : null;
         if (fenceChar) {
             outsideFence.push(false);
             const closing = fence && fence[1][0] === fenceChar && fence[1].length >= fenceLength && /^\s*$/.test(fence[2]);
@@ -104,9 +107,9 @@ function scanMarkdown(markdown: string, docPath: string): MarkdownDoc {
             fenceLength = fence[1].length;
         } else {
             outsideFence.push(true);
-            const match = line.match(/^ {0,3}(#{1,3})[ \t]+(.+?)\s*#*\s*$/);
+            const match = line.match(/^ {0,3}(#{1,3})[ \t]+(.+?)[ \t]*$/);
             if (match) {
-                const title = match[2].trim();
+                const title = match[2].replace(/[ \t]+#+[ \t]*$/, '').trim();
                 headings.push({
                     level: match[1].length as 1 | 2 | 3,
                     text: title,
@@ -297,11 +300,23 @@ function isSeparatorRow(cells: readonly string[]): boolean {
     return cells.every(cell => /^:?-{3,}:?$/.test(cell.replaceAll(' ', '')));
 }
 
+function compareTargetCellScores(left: readonly number[], right: readonly number[]): number {
+    for (let index = 0; index < Math.min(left.length, right.length); index++) {
+        if (left[index] !== right[index]) return left[index] - right[index];
+    }
+    return 0;
+}
+
 function tableRowsInSection(doc: MarkdownDoc, section: Heading): string[][] {
     const result: string[][] = [];
+    const pitfallEntryLines = new Set<number>();
+    for (const heading of doc.headings) {
+        if (heading.level !== 3 || heading.startLine <= section.startLine || heading.startLine >= section.endLine) continue;
+        for (let entryLine = heading.startLine; entryLine < heading.endLine; entryLine++) pitfallEntryLines.add(entryLine);
+    }
     let line = section.startLine + 1;
     while (line < section.endLine) {
-        if (!doc.outsideFence[line]) {
+        if (!doc.outsideFence[line] || pitfallEntryLines.has(line)) {
             line++;
             continue;
         }
@@ -313,7 +328,7 @@ function tableRowsInSection(doc: MarkdownDoc, section: Heading): string[][] {
         }
         line += 2;
         while (line < section.endLine) {
-            if (!doc.outsideFence[line]) break;
+            if (!doc.outsideFence[line] || pitfallEntryLines.has(line)) break;
             const cells = splitCells(doc.lines[line]);
             if (!cells) {
                 const raw = doc.lines[line].trim();
@@ -362,30 +377,38 @@ function parseDocPathItem(item: string): { path: string } | null {
     return null;
 }
 
-function parseTargetsFromItem(item: string, patterns: MarkdownDoc, readDoc: (repoPath: string) => string | null): Target[] {
+function parseTargetFromItem(item: string, patterns: MarkdownDoc, readDoc: (repoPath: string) => string | null): ParsedTarget | null {
     const clean = stripParenthetical(item);
     const docSection = clean.match(/^\s*(`[^`]+`|\[[^\]]+\]\([^)]+\))\s*§\s*(.+?)\s*$/);
     if (docSection) {
         const parsed = parseDocPathItem(docSection[1]);
-        if (!parsed) return [];
+        if (!parsed) return null;
         const sectionName = docSection[2].replaceAll('`', '').trim();
         const doc = parsed.path === PATTERNS_PATH ? patterns : (() => {
             const text = readDoc(parsed.path);
             return text === null ? null : scanMarkdown(text, parsed.path);
         })();
         const heading = doc ? sectionHeading(doc, sectionName) : null;
-        return heading && doc ? [{ kind: 'doc-section', path: parsed.path, section: heading.text }] : [];
+        if (!heading || !doc) return null;
+        return {
+            target: { kind: 'doc-section', path: parsed.path, section: heading.text },
+            specificity: heading.text.toLocaleLowerCase() === sectionName.toLocaleLowerCase() ? 2 : 0,
+        };
     }
 
     const docPath = parseDocPathItem(clean);
     if (docPath) {
-        if (docPath.path === PATTERNS_PATH) return [];
-        return [{ kind: 'linked', path: docPath.path }];
+        if (docPath.path === PATTERNS_PATH) return null;
+        return { target: { kind: 'linked', path: docPath.path }, specificity: 3 };
     }
 
     const sectionName = clean.replaceAll('`', '').trim();
     const heading = sectionHeading(patterns, sectionName);
-    return heading ? [{ kind: 'section', doc: patterns, heading }] : [];
+    if (!heading) return null;
+    return {
+        target: { kind: 'section', doc: patterns, heading },
+        specificity: heading.text.toLocaleLowerCase() === sectionName.toLocaleLowerCase() ? 2 : 0,
+    };
 }
 
 function splitTargetItems(value: string): string[] {
@@ -432,17 +455,24 @@ function buildIndexRows(patterns: MarkdownDoc | null, affectedFiles: readonly st
                 rows.push({ line: `- ${cells[0]}`, targets: [], keys: [], matched: false });
                 continue;
             }
-            let targetCell = -1;
-            let targets: Target[] = [];
+            let winner: { index: number; targets: Target[]; score: [number, number, number, number] } | undefined;
             for (let index = 0; index < cells.length; index++) {
-                const parsed = splitTargetItems(cells[index]).flatMap(item => parseTargetsFromItem(item, patterns, readDoc));
-                if (parsed.length > 0) {
-                    targetCell = index;
-                    targets = parsed;
-                    break;
+                const items = splitTargetItems(cells[index]);
+                const parsed = items.map(item => parseTargetFromItem(item, patterns, readDoc));
+                const resolved = parsed.filter((item): item is ParsedTarget => item !== null);
+                if (resolved.length === 0) continue;
+                const score: [number, number, number, number] = [
+                    resolved.length === items.length && resolved.every(item => item.specificity > 0) ? 1 : 0,
+                    resolved.reduce((total, item) => total + item.specificity, 0),
+                    resolved.length,
+                    index,
+                ];
+                if (!winner || compareTargetCellScores(score, winner.score) > 0) {
+                    winner = { index, targets: resolved.map(item => item.target), score };
                 }
             }
-            if (targetCell < 0) targetCell = 0;
+            const targetCell = winner?.index ?? 0;
+            const targets = winner?.targets ?? [];
             const keys = cells.flatMap((cell, index) => index === targetCell ? [] : pathTokens(cell, patterns.path));
             const matched = rowMatches(keys, affectedFiles);
             const targetText = cells[targetCell];
@@ -511,7 +541,14 @@ function isPathInsideRoot(root: string, repoPath: string): boolean {
     if (path.isAbsolute(repoPath) || repoPath.split(/[\\/]/).includes('..')) return false;
     const resolvedRoot = path.resolve(root);
     const resolved = path.resolve(resolvedRoot, ...repoPath.split('/'));
-    return resolved.startsWith(`${resolvedRoot}${path.sep}`);
+    if (!resolved.startsWith(`${resolvedRoot}${path.sep}`)) return false;
+    try {
+        const realRoot = fs.realpathSync(resolvedRoot);
+        const realPath = fs.realpathSync(resolved);
+        return realPath.startsWith(`${realRoot}${path.sep}`);
+    } catch {
+        return false;
+    }
 }
 
 function titleGroupsFor(entriesByDoc: Map<string, DocEntry[]>, active: readonly Candidate[], demoted: readonly Candidate[], matchedLinkedDocs: Set<string>): Array<{
@@ -535,6 +572,18 @@ function titleGroupsFor(entriesByDoc: Map<string, DocEntry[]>, active: readonly 
 
 function bodyByteLength(value: string): number {
     return Buffer.byteLength(value, 'utf8');
+}
+
+function utf8Prefix(value: string, byteLimit: number): string {
+    let bytes = 0;
+    let end = 0;
+    for (const character of value) {
+        const length = Buffer.byteLength(character, 'utf8');
+        if (bytes + length > byteLimit) break;
+        bytes += length;
+        end += character.length;
+    }
+    return value.slice(0, end);
 }
 
 function selectPitfallsInternal(input: PitfallsInput): string {
@@ -609,7 +658,6 @@ function selectPitfallsInternal(input: PitfallsInput): string {
     }
 
     const lessonEntries = lessonsDoc ? lessonsEntries(lessonsDoc) : [];
-    if (lessonsDoc && lessonEntries.length > 0) titleEntries.set(lessonsDoc.path, []);
     if (lessonsDoc) {
         for (const entry of lessonEntries) {
             if (pathTokens(entry.body, lessonsDoc.path).some(token => rowMatches([token], affectedFiles))) {
@@ -622,7 +670,8 @@ function selectPitfallsInternal(input: PitfallsInput): string {
     const demoted: Candidate[] = [];
     const titleLimitState = { perDoc: Number.POSITIVE_INFINITY };
     const areaLimitState = { count: indexRows.length };
-    const cap = input.cap ?? PITFALLS_BYTE_CAP;
+    const requestedCap = input.cap ?? PITFALLS_BYTE_CAP;
+    const cap = Number.isFinite(requestedCap) ? Math.max(0, Math.floor(requestedCap)) : PITFALLS_BYTE_CAP;
     let capped = false;
 
     function render(): string {
@@ -698,13 +747,21 @@ function selectPitfallsInternal(input: PitfallsInput): string {
         }
     }
 
-    return render();
+    const rendered = render();
+    if (bodyByteLength(rendered) <= cap) return rendered;
+
+    const groups = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
+    const titleCount = groups.reduce((total, group) => total + group.titles.length, 0);
+    const summary = `\n${PITFALLS_HEADING}\n\n_Pitfalls block capped at ${cap} bytes: ${demoted.length} full candidates demoted; ${titleCount} titles and ${indexRows.length} index rows dropped._\n\n`;
+    return utf8Prefix(summary, cap);
 }
 
 export function selectPitfalls(input: PitfallsInput): string {
     try {
         return selectPitfallsInternal(input);
-    } catch {
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn(`Unable to select relevant pitfalls and lessons: ${detail}`);
         return '';
     }
 }

@@ -74,11 +74,9 @@ Never add a suppression comment without a written justification on the same line
 >
 > **TODO[canon]: This is where the project's accumulated wisdom lives. Each pitfall should follow the format below. Initially empty for new projects — entries land here when a human promotes durable lessons from `docs/lessons-learned.md` during a sweep (see that file → "How to use this doc"). QA only appends lessons (to its task's fragment, which `--ship` folds into the buffer); it never promotes into this doc.**
 
-### Pitfall format
-
-Write each pitfall as its own H3. Make the heading the short imperative rule, then explain the failure it prevents and the concrete check that avoids it. Cite full repository paths, directory prefixes, or globs in the body; bare basenames and symbols do not select a pitfall for an Affected File. For example, a state rule may cite `app/src/store/**`.
-
-If the pitfall corpus is split across documents, add a table under this heading with columns `Read this doc` and `Before touching`. Give each document its own row and map it to the paths or globs that make an implementer open it.
+> **Pitfall format.** Write each pitfall as its own H3. Make the heading the short imperative rule, then explain the failure it prevents and the concrete check that avoids it. Cite full repository paths, directory prefixes, or globs in the body; bare basenames and symbols do not select a pitfall for an Affected File. When a symbol matters, pair it with the full repository path that owns it.
+>
+> **Split pitfall docs.** If the corpus is split across documents, put a table directly under `## Known Pitfalls`, before the H3 entries, with columns `Read this doc` and `Before touching`. Give each document its own row and map it to the paths or globs that make an implementer open it.
 
 ### Reset derived state when a source identifier changes
 
