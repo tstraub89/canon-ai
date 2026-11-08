@@ -1,7 +1,7 @@
 {
   "id": "handoff-self-check-evidence",
   "title": "Handoff Self-Check evidence section with pre-flight and anchored verification",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-08",
   "updated": "2026-11-08",
   "branch": "task/handoff-self-check-evidence",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
