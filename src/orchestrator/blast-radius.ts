@@ -59,6 +59,12 @@ export function extractSpecTokens(specMarkdown: string): { amendment: string[]; 
     };
 }
 
+/** Match git's repo-relative spelling: `./src/a.ts` becomes `src/a.ts`; a trailing `/` is kept. */
+function toRepoRelative(file: string): string {
+    const normalized = path.posix.normalize(file.replace(/\\/g, '/'));
+    return file.endsWith('/') && !normalized.endsWith('/') ? `${normalized}/` : normalized;
+}
+
 function excludedPath(file: string, affectedFiles: readonly string[], directoryEntries: readonly string[]): boolean {
     return affectedFiles.includes(file) || directoryEntries.some(directory => file.startsWith(directory)) || file.startsWith('tasks/');
 }
@@ -171,7 +177,7 @@ export function buildBlastRadiusBlock(taskIds: string[], root: string): string {
         const repository = gitSafeAt(root, 'rev-parse', '--is-inside-work-tree');
         if (!repository.ok || repository.stdout !== 'true') return '';
 
-        const affectedFiles = [...new Set(taskIds.flatMap(taskId => extractAffectedFiles(taskId)))];
+        const affectedFiles = [...new Set(taskIds.flatMap(taskId => extractAffectedFiles(taskId)).map(toRepoRelative))];
         const directoryEntries = affectedFiles.filter(file => file.endsWith('/'));
         const entries: BlastRadiusEntry[] = [];
 

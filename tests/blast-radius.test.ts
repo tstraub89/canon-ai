@@ -409,3 +409,23 @@ void test('a capped scan is reported even when no entries were found', () => {
         fixture.cleanup();
     }
 });
+
+void test('dot-prefixed Affected Files are excluded like their git spelling', () => {
+    const fixture = createFixture({
+        affected: ['./lib/widget.ts', './gen/'],
+        design: '`sharedToken`',
+        files: {
+            'lib/widget.ts': 'sharedToken\n',
+            'gen/out.ts': 'sharedToken\n',
+            'src/use.ts': "import '../lib/widget.js';\nsharedToken\n",
+        },
+    });
+    try {
+        const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
+        assert.match(block, /^- `sharedToken`: `src\/use\.ts`$/m);
+        assert.match(block, /^- `lib\/widget\.ts`: `src\/use\.ts`$/m);
+        assert.doesNotMatch(block, /`gen\/out\.ts`|: `lib\/widget\.ts`/);
+    } finally {
+        fixture.cleanup();
+    }
+});

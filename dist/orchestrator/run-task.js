@@ -5165,6 +5165,10 @@ function extractSpecTokens(specMarkdown) {
     ac: tokensFromBodies(ac)
   };
 }
+function toRepoRelative(file) {
+  const normalized = path11.posix.normalize(file.replace(/\\/g, "/"));
+  return file.endsWith("/") && !normalized.endsWith("/") ? `${normalized}/` : normalized;
+}
 function excludedPath(file, affectedFiles, directoryEntries) {
   return affectedFiles.includes(file) || directoryEntries.some((directory) => file.startsWith(directory)) || file.startsWith("tasks/");
 }
@@ -5269,7 +5273,7 @@ function buildBlastRadiusBlock(taskIds, root) {
   try {
     const repository = gitSafeAt(root, "rev-parse", "--is-inside-work-tree");
     if (!repository.ok || repository.stdout !== "true") return "";
-    const affectedFiles = [...new Set(taskIds.flatMap((taskId) => extractAffectedFiles(taskId)))];
+    const affectedFiles = [...new Set(taskIds.flatMap((taskId) => extractAffectedFiles(taskId)).map(toRepoRelative))];
     const directoryEntries = affectedFiles.filter((file) => file.endsWith("/"));
     const entries = [];
     const rootPrefix = path11.resolve(root) + path11.sep;
