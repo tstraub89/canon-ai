@@ -1607,3 +1607,11 @@
 | 2026-11-09T02:21:40.368Z | support-node-26 | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 22.6s | 234166 | ok |
 | 2026-11-09T02:21:40.370Z | support-node-26 | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 34.3s | 438985 | ok |
 | 2026-11-09T02:22:44.691Z | support-node-26 | qa | claude | claude-haiku-5-5 | 0 | 64.3s | 646053 | ok |
+| 2026-11-09T02:19:37.319Z | pitfalls-coverage-gaps | spec_review | codex | gpt-6-luna | 0 | 81.4s | 540639 | ok |
+| 2026-11-09T02:21:12.054Z | pitfalls-coverage-gaps | plan | claude | sonnet | 0 | 94.6s | 711721 | ok |
+| 2026-11-09T02:34:49.108Z | pitfalls-coverage-gaps | implement | codex | gpt-6-luna | 0 | 816.2s | 3993743 | ok |
+| 2026-11-09T02:35:40.899Z | pitfalls-coverage-gaps | code_review | codex | gpt-6-luna | 0 | 50.8s | - | ok |
+| 2026-11-09T02:36:50.392Z | pitfalls-coverage-gaps | code_review | claude | sonnet | 0 | 69.5s | 321140 | ok |
+| 2026-11-09T02:36:50.396Z | pitfalls-coverage-gaps | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 37.9s | 474527 | ok |
+| 2026-11-09T02:36:50.399Z | pitfalls-coverage-gaps | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 36.3s | 177078 | ok |
+| 2026-11-09T02:37:54.678Z | pitfalls-coverage-gaps | qa | claude | claude-haiku-5-5 | 0 | 64.3s | 804272 | ok |
