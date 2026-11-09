@@ -169,14 +169,16 @@ function formatPhaseTransition(from: CurrentPhase, to: CurrentPhase): string {
     return `${from}→${to}`;
 }
 
-function formatPhasePointerTransition(from: CurrentPhase, to: CurrentPhase): string {
-    // A backwards pointer move is always the orchestrator routing a task
-    // back after a changes_requested review — label it so the operator
-    // doesn't read it as the pipeline running phases out of order.
+function formatPhasePointerTransition(from: CurrentPhase, to: CurrentPhase, humanReroute: boolean): string {
+    // Label a backwards pointer move so the operator doesn't read it as the
+    // pipeline running phases out of order. It is a review loop (the
+    // orchestrator routing back after changes_requested / needs_re_review)
+    // unless a human reroute reset the task in this window.
     const fromIdx = PHASE_ORDER.indexOf(from as Phase);
     const toIdx = PHASE_ORDER.indexOf(to as Phase);
-    const reroute = fromIdx !== -1 && toIdx !== -1 && toIdx < fromIdx;
-    return `${from} → ${to}${reroute ? ' (reroute)' : ''}`;
+    const backwards = fromIdx !== -1 && toIdx !== -1 && toIdx < fromIdx;
+    if (!backwards) return `${from} → ${to}`;
+    return `${from} → ${to} ${humanReroute ? '(reroute)' : '(review loop)'}`;
 }
 
 function displayedPhasePointer(ctx: RunContext): CurrentPhase | null {
@@ -184,7 +186,15 @@ function displayedPhasePointer(ctx: RunContext): CurrentPhase | null {
     return deriveTopLevelStatus(ctx.statusResult.status);
 }
 
-// True while status.json is mid-reroute: a review phase sits 'done' with a
+// A human reroute increments implement.reroute_count (never
+// reset); a review loop leaves it unchanged. Comparing it across polls tells
+// the two backwards moves apart.
+function rerouteCount(ctx: RunContext): number {
+    if (ctx.statusResult.kind !== 'ok' || !isStatusJson(ctx.statusResult.status)) return 0;
+    return ctx.statusResult.status.phases.implement?.reroute_count ?? 0;
+}
+
+// True while status.json is mid-review-loop: a review phase sits 'done' with a
 // changes_requested/needs_re_review verdict, meaning the orchestrator's
 // post-phase hook is about to route the pointer backwards (routeBackTo
 // clears both the verdict and the 'done' stamp in one atomic write). In
@@ -196,17 +206,17 @@ function displayedPhasePointer(ctx: RunContext): CurrentPhase | null {
 // Only the verdicts checkAndRoute actually routes back on: holding on any
 // other done+verdict combination (e.g. spec_review + needs_re_review, which
 // advances to plan) would wedge pointer reporting on a settled status.
-const REROUTE_VERDICTS: Record<'spec_review' | 'code_review', readonly Verdict[]> = {
+const REVIEW_LOOP_VERDICTS: Record<'spec_review' | 'code_review', readonly Verdict[]> = {
     spec_review: ['changes_requested'],
     code_review: ['changes_requested', 'needs_re_review'],
 };
 
-function pointerIsMidReroute(ctx: RunContext): boolean {
+function pointerIsMidReviewLoop(ctx: RunContext): boolean {
     if (ctx.statusResult.kind !== 'ok' || !isStatusJson(ctx.statusResult.status)) return false;
     for (const phase of ['spec_review', 'code_review'] as const) {
         const entry = ctx.statusResult.status.phases[phase];
         if (entry?.status !== 'done') continue;
-        if (entry.verdict != null && REROUTE_VERDICTS[phase].includes(entry.verdict)) return true;
+        if (entry.verdict != null && REVIEW_LOOP_VERDICTS[phase].includes(entry.verdict)) return true;
     }
     return false;
 }
@@ -792,19 +802,24 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
     }
 
     let previousPhasePointer = displayedPhasePointer(ctx);
+    let previousRerouteCount = rerouteCount(ctx);
 
     // Report a pointer change, holding the previous pointer while status.json
-    // is mid-reroute — the transient forward pointer in that window (see
-    // pointerIsMidReroute) would otherwise report phases that never run.
+    // is mid-review-loop — the transient forward pointer in that window (see
+    // pointerIsMidReviewLoop) would otherwise report phases that never run.
     const reportPhasePointer = (pollCtx: RunContext): void => {
         let currentPhase = displayedPhasePointer(pollCtx);
-        if (currentPhase != null && previousPhasePointer != null && pointerIsMidReroute(pollCtx)) {
-            currentPhase = previousPhasePointer;
-        }
+        const holding = currentPhase != null && previousPhasePointer != null && pointerIsMidReviewLoop(pollCtx);
+        if (holding) currentPhase = previousPhasePointer;
+        const currentRerouteCount = rerouteCount(pollCtx);
         if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
-            stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}\n`);
+            const humanReroute = currentRerouteCount > previousRerouteCount;
+            stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase, humanReroute)}\n`);
         }
         previousPhasePointer = currentPhase;
+        // While the pointer is held, keep the pre-hold count so a reroute
+        // that landed during the hold still labels the transition it releases.
+        if (!holding) previousRerouteCount = currentRerouteCount;
     };
 
     if (initialAttach.kind === 'launch_window') {
@@ -832,6 +847,7 @@ export function watchCmd(args: string[], deps: WatchCmdDeps = {}): void {
                 return reportInitialFailure(postWaitAttach);
             }
             previousPhasePointer = displayedPhasePointer(ctx);
+            previousRerouteCount = rerouteCount(ctx);
         } else if (waitResult.kind === 'pid-died') {
             emitSummary(stdout, { state: 'in_progress', reason: 'death' });
             return exit(4);

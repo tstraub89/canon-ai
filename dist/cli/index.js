@@ -2977,26 +2977,31 @@ function findPreviousDonePhase(status, beforePhase) {
 function formatPhaseTransition(from, to) {
   return `${from}\u2192${to}`;
 }
-function formatPhasePointerTransition(from, to) {
+function formatPhasePointerTransition(from, to, humanReroute) {
   const fromIdx = PHASE_ORDER.indexOf(from);
   const toIdx = PHASE_ORDER.indexOf(to);
-  const reroute = fromIdx !== -1 && toIdx !== -1 && toIdx < fromIdx;
-  return `${from} \u2192 ${to}${reroute ? " (reroute)" : ""}`;
+  const backwards = fromIdx !== -1 && toIdx !== -1 && toIdx < fromIdx;
+  if (!backwards) return `${from} \u2192 ${to}`;
+  return `${from} \u2192 ${to} ${humanReroute ? "(reroute)" : "(review loop)"}`;
 }
 function displayedPhasePointer(ctx) {
   if (ctx.statusResult.kind !== "ok" || !isStatusJson(ctx.statusResult.status)) return null;
   return deriveTopLevelStatus(ctx.statusResult.status);
 }
-var REROUTE_VERDICTS = {
+function rerouteCount(ctx) {
+  if (ctx.statusResult.kind !== "ok" || !isStatusJson(ctx.statusResult.status)) return 0;
+  return ctx.statusResult.status.phases.implement?.reroute_count ?? 0;
+}
+var REVIEW_LOOP_VERDICTS = {
   spec_review: ["changes_requested"],
   code_review: ["changes_requested", "needs_re_review"]
 };
-function pointerIsMidReroute(ctx) {
+function pointerIsMidReviewLoop(ctx) {
   if (ctx.statusResult.kind !== "ok" || !isStatusJson(ctx.statusResult.status)) return false;
   for (const phase of ["spec_review", "code_review"]) {
     const entry = ctx.statusResult.status.phases[phase];
     if (entry?.status !== "done") continue;
-    if (entry.verdict != null && REROUTE_VERDICTS[phase].includes(entry.verdict)) return true;
+    if (entry.verdict != null && REVIEW_LOOP_VERDICTS[phase].includes(entry.verdict)) return true;
   }
   return false;
 }
@@ -3489,16 +3494,19 @@ ${unknownOptionMessage("watch", preScan.argument).split("\n")[1]}` : "";
     return reportInitialFailure(initialAttach);
   }
   let previousPhasePointer = displayedPhasePointer(ctx);
+  let previousRerouteCount = rerouteCount(ctx);
   const reportPhasePointer = (pollCtx) => {
     let currentPhase = displayedPhasePointer(pollCtx);
-    if (currentPhase != null && previousPhasePointer != null && pointerIsMidReroute(pollCtx)) {
-      currentPhase = previousPhasePointer;
-    }
+    const holding = currentPhase != null && previousPhasePointer != null && pointerIsMidReviewLoop(pollCtx);
+    if (holding) currentPhase = previousPhasePointer;
+    const currentRerouteCount = rerouteCount(pollCtx);
     if (previousPhasePointer != null && currentPhase != null && previousPhasePointer !== currentPhase) {
-      stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase)}
+      const humanReroute = currentRerouteCount > previousRerouteCount;
+      stderr(`canon watch: phase ${formatPhasePointerTransition(previousPhasePointer, currentPhase, humanReroute)}
 `);
     }
     previousPhasePointer = currentPhase;
+    if (!holding) previousRerouteCount = currentRerouteCount;
   };
   if (initialAttach.kind === "launch_window") {
     const remaining = remainingTimeoutMs();
@@ -3525,6 +3533,7 @@ ${unknownOptionMessage("watch", preScan.argument).split("\n")[1]}` : "";
         return reportInitialFailure(postWaitAttach);
       }
       previousPhasePointer = displayedPhasePointer(ctx);
+      previousRerouteCount = rerouteCount(ctx);
     } else if (waitResult.kind === "pid-died") {
       emitSummary(stdout, { state: "in_progress", reason: "death" });
       return exit(4);
