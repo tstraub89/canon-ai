@@ -1,0 +1,5 @@
+### A directory-matching glob must be tested at the directory's depth, not just under its prefix
+
+*(date 2026-11-08, source: pitfalls-coverage-gaps)*
+
+When a matcher asks "could some path inside this directory match this glob," a glob with the directory's exact segment count (`src/*` against `src/a/`) matches the directory itself, not anything inside it, and a prefix-only test would say yes for every leading-wildcard glob. The implementation had to require a deeper segment, and the plan's example said the opposite. Prevention: when a matcher decides whether a glob reaches inside a directory, write a boundary case for each of: the glob equal in depth to the directory, the glob one level deeper, a `**` segment, and a sibling directory sharing a name prefix (`src/ab/**` against `src/a/`). Judge the spec's example against the boundary rule before copying it into a plan. Canonical example: `globCouldMatchInsideDir` in `src/orchestrator/pitfalls.ts`, with its boundary cases in `tests/pitfalls.test.ts`.

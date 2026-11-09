@@ -1,0 +1,1 @@
+The changed selection logic and its directory-aware matching are covered by the focused tests, which pass. I found no actionable regressions in the diff.
