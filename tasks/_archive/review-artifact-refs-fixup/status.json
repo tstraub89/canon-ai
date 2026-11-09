@@ -1,7 +1,7 @@
 {
   "id": "review-artifact-refs-fixup",
   "title": "Code review: citation rule and docs-refs fix-up for review.md",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-09",
   "updated": "2026-11-09",
   "branch": "task/review-artifact-refs-fixup",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

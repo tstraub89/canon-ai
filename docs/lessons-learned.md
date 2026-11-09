@@ -310,3 +310,11 @@ When a matcher asks "could some path inside this directory match this glob," a g
 *(date 2026-11-08, source: post-ship-cleanup)*
 
 The Self-Check placeholder check moved from matching the template's exact `_(` prefix to rejecting any Evidence cell that is entirely parenthesized. That also rejects real evidence written the same way, such as `(verified both entry points against the diff)`. Two cold reviewers flagged it. The spec had accepted the shape rule as a Known Risk, so it shipped with the cost. Rule of thumb: when a check moves from exact-text matching to shape matching, list the real values that share the shape (parenthesized prose, a bare `(N/A)`) in the spec, and either accept each one or keep the exact match. Canonical example: `checkSelfCheckEvidence` in `src/orchestrator/validation.ts`, with its tests in `tests/run-task-validation.test.ts`.
+
+---
+
+### Give every writer of a checked artifact the same post-write check, and list the writers in the spec
+
+*(2026-11-08, source: review-artifact-refs-fixup)*
+
+The first spec for this fix added a reference fix-up after the code-review reviewer session, the one writer of `review.md` it had considered. spec_review round 1 found a second writer, the one-shot recovery session that runs when the reviewer returns with code review not done, so the same gap would have stayed open after the first fix. Rounds 2 and 3 found two more cases the first pass had not enumerated: a blocked review that must not be fixed up, and the archived `review-prior-N.md` that a reset leaves behind. Rule of thumb: before writing a decision that adds a check to an artifact, grep every call site that runs an agent with the role that writes that artifact (here `runSession` and `backend.run` for the reviewer role, in `runPhase` and `retryAgentForPhase`), and state in the spec which writers get the check and which do not, with a reason. Prevention: one AC per writer that can reach the artifact, so a missed writer fails a test rather than a later `--pr`. Canonical example: the `fixUpOwnArtifactRefs` call sites in `src/orchestrator/main.ts` and the spec's Known Risks entry "Two writers of `review.md`".
