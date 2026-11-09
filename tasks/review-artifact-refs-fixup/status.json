@@ -1,15 +1,15 @@
 {
   "id": "review-artifact-refs-fixup",
   "title": "Code review: citation rule and docs-refs fix-up for review.md",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-09",
   "updated": "2026-11-09",
-  "branch": "",
+  "branch": "task/review-artifact-refs-fixup",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "b68e1078806882debb7fe1188fd6c49d6f76a55e",
+    "orchestrator_commit": "bbaa05350145ae810000e8c294e9f2c0dfc5296e",
     "canon_version": "3.18.0",
     "codex_cli": "codex-cli 0.167.0",
     "claude_code": "2.1.319 (Claude Code)"
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -73,7 +74,9 @@
   ],
   "sessions": {
     "spec_reviewer": "01a1be6d-73e6-7482-984c-7b44a070771e",
-    "author": "787c964b-8792-4eb0-aaef-bcff61e22684"
+    "author": "787c964b-8792-4eb0-aaef-bcff61e22684",
+    "implementer": "01a1be75-e6b0-7022-a6a1-4cab4f303134",
+    "reviewer": "9819de9c-b651-460e-b87e-20885daab916"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
@@ -81,6 +84,8 @@
   "provider": "mixed",
   "session_backends": {
     "spec_reviewer": "codex",
-    "author": "claude"
+    "author": "claude",
+    "implementer": "codex",
+    "reviewer": "claude"
   }
 }
