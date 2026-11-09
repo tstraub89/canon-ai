@@ -7,6 +7,11 @@
       "docs/product-context.md",
       "docs/decisions.md",
       "docs/pipeline-orchestrator.md"
-    ]
+    ],
+    "paths": {
+      "docs/pipeline-orchestrator.md": [
+        "templates/docs/pipeline-orchestrator.md"
+      ]
+    }
   }
 }
