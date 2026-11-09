@@ -59,7 +59,7 @@ Canon is what happens when you treat those failure modes as engineering problems
 |---|---|
 | Agent jumps to implementation before requirements are clear | **Spec phase** before code, written conversationally with grilling for non-trivial tasks |
 | Agent silently drops a requirement | **Two-stage code review** — Stage 1 is a spec-compliance gate that fails the whole review if any AC is missing from the cross-reference table |
-| Agent reinvents an existing pattern | **`docs/patterns.md` trigger table** + pitfalls and lessons selected by spec Affected Files and injected into implement prompts |
+| Agent reinvents an existing pattern | **`docs/patterns.md` trigger table** + pitfalls and lessons selected by spec Affected Files and injected into implement prompts; a Known Pitfalls section without `###` entries is injected whole except blockquotes, and a directory in Affected Files selects pitfalls citing paths inside it |
 | Agent re-debates a settled decision | **`docs/decisions.md`** — agents read, don't re-propose |
 | Agent forgets a past mistake | **`docs/lessons-learned.md`** — distilled cross-task wisdom that promotes into permanent rules over time |
 | Reviews loop forever on the same disagreement | **Auto-block on runaway review loops** — per-size caps (see `pipeline-policy.ts`), escalation to human after the cap |
