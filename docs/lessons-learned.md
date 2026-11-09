@@ -302,3 +302,11 @@ A branch ruleset that requires a CI job by name keeps waiting on that name after
 *(date 2026-11-08, source: pitfalls-coverage-gaps)*
 
 When a matcher asks "could some path inside this directory match this glob," a glob with the directory's exact segment count (`src/*` against `src/a/`) matches the directory itself, not anything inside it, and a prefix-only test would say yes for every leading-wildcard glob. The implementation had to require a deeper segment, and the plan's example said the opposite. Prevention: when a matcher decides whether a glob reaches inside a directory, write a boundary case for each of: the glob equal in depth to the directory, the glob one level deeper, a `**` segment, and a sibling directory sharing a name prefix (`src/ab/**` against `src/a/`). Judge the spec's example against the boundary rule before copying it into a plan. Canonical example: `globCouldMatchInsideDir` in `src/orchestrator/pitfalls.ts`, with its boundary cases in `tests/pitfalls.test.ts`.
+
+---
+
+### Check the legitimate values of a shape before replacing an exact-text placeholder match
+
+*(date 2026-11-08, source: post-ship-cleanup)*
+
+The Self-Check placeholder check moved from matching the template's exact `_(` prefix to rejecting any Evidence cell that is entirely parenthesized. That also rejects real evidence written the same way, such as `(verified both entry points against the diff)`. Two cold reviewers flagged it. The spec had accepted the shape rule as a Known Risk, so it shipped with the cost. Rule of thumb: when a check moves from exact-text matching to shape matching, list the real values that share the shape (parenthesized prose, a bare `(N/A)`) in the spec, and either accept each one or keep the exact match. Canonical example: `checkSelfCheckEvidence` in `src/orchestrator/validation.ts`, with its tests in `tests/run-task-validation.test.ts`.

@@ -1,7 +1,7 @@
 {
   "id": "post-ship-cleanup",
   "title": "Cleanup of trivial leftovers from blast-radius, self-check evidence, and path-scoped pitfalls",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-09",
   "updated": "2026-11-09",
   "branch": "task/post-ship-cleanup",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

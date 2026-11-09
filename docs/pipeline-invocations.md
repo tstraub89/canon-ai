@@ -1615,3 +1615,9 @@
 | 2026-11-09T02:36:50.396Z | pitfalls-coverage-gaps | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 37.9s | 474527 | ok |
 | 2026-11-09T02:36:50.399Z | pitfalls-coverage-gaps | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 36.3s | 177078 | ok |
 | 2026-11-09T02:37:54.678Z | pitfalls-coverage-gaps | qa | claude | claude-haiku-5-5 | 0 | 64.3s | 804272 | ok |
+| 2026-11-09T03:11:28.813Z | post-ship-cleanup | implement | codex | gpt-6-luna | 0 | 914.3s | 9194301 | ok |
+| 2026-11-09T03:12:39.426Z | post-ship-cleanup | code_review | codex | gpt-6-luna | 0 | 69.6s | - | ok |
+| 2026-11-09T03:13:39.961Z | post-ship-cleanup | code_review | claude | sonnet | 0 | 60.5s | 442547 | ok |
+| 2026-11-09T03:13:39.966Z | post-ship-cleanup | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 25.3s | 405660 | ok |
+| 2026-11-09T03:13:39.968Z | post-ship-cleanup | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 23.8s | 294196 | ok |
+| 2026-11-09T03:15:15.929Z | post-ship-cleanup | qa | claude | claude-haiku-5-5 | 0 | 95.9s | 1078150 | ok |
