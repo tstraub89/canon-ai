@@ -1,10 +1,10 @@
 {
   "id": "support-node-26",
   "title": "Support Node 26 alongside Node 24",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-08",
   "updated": "2026-11-09",
-  "branch": "",
+  "branch": "task/support-node-26",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,13 +66,17 @@
   },
   "escalations": [],
   "sessions": {
-    "spec_reviewer": "01a1bbb6-bf7b-7d60-86fe-e5d2577093f7"
+    "spec_reviewer": "01a1bbb6-bf7b-7d60-86fe-e5d2577093f7",
+    "implementer": "01a1be0f-7892-7bd0-b599-1c2c1491d9da",
+    "reviewer": "3b1a34ac-e3dd-4cb1-a27e-9709ba3603c2"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
   "provider": "mixed",
   "session_backends": {
-    "spec_reviewer": "codex"
+    "spec_reviewer": "codex",
+    "implementer": "codex",
+    "reviewer": "claude"
   }
 }
