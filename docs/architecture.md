@@ -20,7 +20,7 @@ Anything that would change if you migrated to a different framework belongs here
 ## Tech Stack
 
 - **Language**: TypeScript (strict, ES2022, ESM) — `tsconfig.json`
-- **Runtime**: Node.js 24.x — `package.json` `engines`
+- **Runtime**: Node.js 24.x or 26.x — `package.json` `engines`
 - **Test runner**: Node built-in `node --test` with `tsx` import hook for direct TS execution
 - **Type checker**: `tsc --noEmit` for fast validation; `tsup` (via `npm run build`) emits the published CLI bundle in `dist/` from `src/`. `canon run` spawns the built `dist/orchestrator/run-task.js`; `tsx` is used for tests and `scripts/sync-canon-templates.mjs`.
 - **Task management CLI**: `canon task` subcommands (`src/task/index.ts`) for status.json updates and phase transitions
@@ -29,7 +29,7 @@ Anything that would change if you migrated to a different framework belongs here
 - **State machine**: `status.json` per task, with phases as nodes (see `.canon/templates/status.json`)
 - **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
-- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests, runs on Node 24.x. A `checks` job runs `npm ci`, a lockfile regenerate-and-diff check, a CHANGELOG date check (PRs to `main` only), `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`, the shell-completion tests (after installing `zsh fish tcsh` via apt), a committed-`dist/` freshness check and the git-install smoke test; in parallel, three `test` shards each run a third of the remaining `npm test` files.
+- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests. The `checks` job runs on Node 24.x; three test shards run on each of Node 24.x and 26.x (six test jobs total). `checks` runs `npm ci`, a lockfile regenerate-and-diff check, a CHANGELOG date check (PRs to `main` only), `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`, the shell-completion tests (after installing `zsh fish tcsh` via apt), a committed-`dist/` freshness check and the git-install smoke test; the six test jobs each run a shard of the remaining `npm test` files.
 
 ## High-Level Architecture
 
@@ -145,7 +145,7 @@ The bindings below say what each category means concretely for canon-ai. The uni
 | End-to-end tests | N/A — no UI surface, no end-to-end runtime to test against. The orchestrator's behavior is exercised by unit tests on `pipeline-policy.ts` and parsers in `src/orchestrator/git.ts` and `src/orchestrator/validation.ts`. |
 | Prerender / sitemap / feed | N/A — no static-site or content-distribution surface. |
 | Migration runner | N/A — `status.json` schema changes are manual. When the schema changes, update `.canon/templates/status.json`, update parsers in `src/orchestrator/state.ts`, `src/orchestrator/git.ts`, and `src/orchestrator/validation.ts`, and add a row to `tests/run-task-validation.test.ts`. |
-| Cross-platform | Node 24.x is the supported version (declared in `package.json` `engines`). CI runs 24.x via `.github/workflows/ci.yml`. |
+| Cross-platform | Node 24.x and 26.x are the supported versions (declared in `package.json` `engines`). CI runs tests on both via `.github/workflows/ci.yml`. |
 
 **Spec authors**: when filling a task's "Validation Required" section, reference the categories that apply. The orchestrator and reviewers cross-check against this table to know what command corresponds to what category.
 
@@ -155,10 +155,10 @@ CI is configured via `.github/workflows/ci.yml`.
 
 **Triggers**: every pull request (no branch or path filter, so each PR reports the required checks), plus pushes to `main`. Push runs use path filters that opt out of doc/task paths, then re-include root operator docs (`AGENTS.md`, `CLAUDE.md`) and canon-owned docs that should still run validation (`docs/pipeline-orchestrator.md`).
 
-**Jobs**: Node 24.x only. Two jobs run in parallel:
+**Jobs**: `checks` runs on Node 24.x only, the oldest supported version, so accidental 26-only usage fails there. Six test jobs run in parallel across Node 24.x and 26.x:
 
 - `checks` runs in order: `npm ci` → lockfile integrity (`npm install --package-lock-only` must leave `package-lock.json` unchanged) → (PRs to `main` only) CHANGELOG date check (`CHANGELOG.md` must have a dated `## [<package.json version>]` block) → `npm audit --omit=dev` → `npm run lint` → `npm run type-check` → `npm run sync-templates:check` → `npm run docs-refs-check` → `npm run build` → apt install `zsh fish tcsh` → `tests/completion.test.ts` → committed-`dist/` freshness check → git-install smoke test.
-- `test (shard N/3)` is a three-way matrix: `npm ci` → `npm run build` → the `npm test` command with `--test-shard=N/3` over every test file except `tests/completion.test.ts`. Node assigns whole test files to shards and runs a file's tests serially, so a very large test file becomes its shard's critical path; split it rather than letting it grow.
+- `test (node N, shard M/3)` is a six-job matrix: Node 24.x and 26.x × three shards. Each job runs `npm ci` → `npm run build` → the `npm test` command with `--test-shard=M/3` over every test file except `tests/completion.test.ts`. Node assigns whole test files to shards and runs a file's tests serially, so a very large test file becomes its shard's critical path; split it rather than letting it grow.
 
 Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-check` to their own GitHub Actions workflow file. canon does not ship `.github/workflows/` files to adopter repos, but `canon upgrade` does ship `scripts/docs-refs-check.mjs`, the adopter-owned `scripts/docs-refs-config.mjs` scaffold, and the npm script entry that invokes the checker.
 
@@ -166,7 +166,7 @@ Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-che
 
 **Concurrency**: runs on the same `github.ref` cancel in-flight runs when a new push lands.
 
-**Merge gate**: the `main` ruleset requires `checks`, `test (shard 1/3)`, `test (shard 2/3)` and `test (shard 3/3)` to pass before a PR merges (branches need not be up to date). Repository admins bypass the ruleset, which keeps canon's direct pushes to `main` (task scaffolds, archives, changelog bullets) working; for admins a red PR is a warning, not a block, and a bad direct push shows up as a red `main` run after it lands.
+**Merge gate**: the `main` ruleset requires `checks` plus `test (node 24.x, shard 1/3)`, `test (node 24.x, shard 2/3)`, `test (node 24.x, shard 3/3)`, `test (node 26.x, shard 1/3)`, `test (node 26.x, shard 2/3)`, and `test (node 26.x, shard 3/3)` to pass before a PR merges (branches need not be up to date). Before this change merges, a human must replace the three previous shard checks in the ruleset with these six Node-labelled checks, keeping `checks` required.
 
 ## Cross-Cutting Concerns
 

@@ -6,7 +6,7 @@ This is canon-ai's shared project overview. It gives both agents the same starti
 
 ## Commands
 
-Node 24 (`engines`), TypeScript, ESM, built with `tsup`; unit tests use the Node native test runner with `tsx`.
+Node 24 or 26 (`engines`), TypeScript, ESM, built with `tsup`; unit tests use the Node native test runner with `tsx`.
 
 ```bash
 npm run build && npm run type-check && npm run lint && npm test

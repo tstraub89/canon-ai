@@ -1925,14 +1925,24 @@ function checkPlatform() {
     detail: "Windows without WSL \u2014 canon is untested here; use WSL for best results"
   };
 }
-function checkNodeVersion() {
-  const match = process.version.match(/^v(\d+)/);
+var SUPPORTED_NODE_MAJORS = [24, 26];
+var NODE_BUILD_FLOOR = 24;
+function checkNodeVersion(version = process.version) {
+  const match = version.match(/^v(\d+)/);
   const major = match ? parseInt(match[1], 10) : 0;
-  if (major >= 24) return { label: `node ${process.version}`, status: "pass" };
+  const label = `node ${version}`;
+  if (major < NODE_BUILD_FLOOR) {
+    return {
+      label,
+      status: "fail",
+      detail: "node 24+ required \u2014 https://nodejs.org"
+    };
+  }
+  if (SUPPORTED_NODE_MAJORS.includes(major)) return { label, status: "pass" };
   return {
-    label: `node ${process.version}`,
-    status: "fail",
-    detail: "node 24+ required \u2014 https://nodejs.org"
+    label,
+    status: "warn",
+    detail: `untested Node major; canon supports ${SUPPORTED_NODE_MAJORS.join(" and ")} \u2014 https://nodejs.org`
   };
 }
 function checkBinary(cmd, required, hint) {

@@ -22,8 +22,8 @@ on:
       - '!.github/**/*.md'
   pull_request:
     # No `branches:` or `paths:` filter — CI is cheap for canon, and the main
-    # ruleset requires `checks` and the `test` shards, so every PR must report
-    # them. A path-filtered PR would never report and stay blocked.
+    # ruleset requires `checks` and all six Node-versioned `test` jobs, so every
+    # PR must report them. A path-filtered PR would never report and stay blocked.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -138,17 +138,18 @@ jobs:
   # assigns whole test files to shards. Within a file tests run serially, so
   # keep any single test file small enough not to dominate its shard.
   test:
-    name: test (shard ${{ matrix.shard }}/3)
+    name: test (node ${{ matrix.node }}, shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        node: ['24.x', '26.x']
         shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24.x'
+          node-version: ${{ matrix.node }}
           cache: 'npm'
       - run: npm ci
       - run: npm run build

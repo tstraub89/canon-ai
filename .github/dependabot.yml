@@ -33,9 +33,8 @@ updates:
     #
     # Two consequences of ignoring majors here:
     #   - `@types/node` no longer follows the runtime on its own. It must
-    #     track `engines.node` (and the CI matrix) by hand — a types major
-    #     ahead of the runtime describes APIs that aren't there, and one
-    #     behind hides APIs that are.
+    #     track the `engines` floor (the oldest supported major) by hand — a
+    #     types major ahead of that runtime describes APIs that aren't there.
     #   - `typescript` majors (e.g. 5 -> 7, the native port) are a
     #     deliberate manual upgrade like any other.
     ignore:

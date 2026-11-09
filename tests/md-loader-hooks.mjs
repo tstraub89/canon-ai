@@ -1,8 +1,8 @@
-import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 
-export async function load(url, context, nextLoad) {
+export function load(url, context, nextLoad) {
     if (url.endsWith('.md')) {
-        const content = await readFile(new URL(url), 'utf8');
+        const content = readFileSync(new URL(url), 'utf8');
         return {
             format: 'module',
             shortCircuit: true,
