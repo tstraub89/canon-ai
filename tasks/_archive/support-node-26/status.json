@@ -1,7 +1,7 @@
 {
   "id": "support-node-26",
   "title": "Support Node 26 alongside Node 24",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-08",
   "updated": "2026-11-09",
   "branch": "task/support-node-26",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

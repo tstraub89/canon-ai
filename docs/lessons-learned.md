@@ -286,3 +286,11 @@ When a gate reads an artifact that accumulates across review rounds, define the 
 *(2026-11-08, source: path-scoped-pitfalls)*
 
 A parser that decides whether a markdown table is an index (a lookup of docs or sections) by sniffing its cells misclassified tables in three consecutive review rounds. Each content rule (a path token, an em dash, a heading-like cell) fixed the layout the last reviewer reported and broke one the previous rule handled, because an explanatory table inside an entry can carry the same signals as an index. The rule that settled it was positional: only tables directly under the section heading, before the first entry, are indexes; a table inside an entry is entry content. The same pattern held for choosing a row's target cell: a header hint ("Read this doc", "Section") beat any content precedence. Prevention: when a spec needs to tell two kinds of table apart, write the rule as position or header text in the spec before implementing, and pin each real layout in a test. Do not add a content heuristic to a parser already in review. Canonical example: `knownPitfallsIndexTables` in `src/orchestrator/pitfalls.ts`, with the rule stated in `tasks/_archive/path-scoped-pitfalls/spec.md` Amendment 1.
+
+---
+
+### Renaming a required CI job strands the branch ruleset until a human edits it
+
+*(2026-11-08, source: support-node-26)*
+
+A branch ruleset that requires a CI job by name keeps waiting on that name after a rename: the old check never reports again, so PRs sit at "Expected — waiting" and a plain `gh pr merge` can be refused. The ruleset lives outside the repo, so no file change fixes it. Before merging a task that renames or adds required-check jobs, list the old and new names in `done.md` as a pending human step that comes before `--ship`, and confirm the new names have reported green on the PR. The worked example is the `test (shard N/3)` → `test (node N, shard M/3)` rename in `.github/workflows/ci.yml`.
