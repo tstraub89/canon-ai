@@ -60,7 +60,7 @@ The change is small, contained in `src/orchestrator/pitfalls.ts`, and matches th
 ## Dismissed Cold Findings
 
 - Dismissed (cold-Claude): Placeholder/`TODO[canon]` stubs in an un-customized adopter `patterns.md` get injected - the spec deliberately strips blockquotes (where the scaffold keeps its TODO and format guidance) and records this as a decided tradeoff; non-blockquote stubs are the adopter's content.
-- Dismissed (cold-Claude): A pitfall citing the directory without a trailing slash (`src/a`) does not match directory `src/a/` - the spec's boundary treats `src/a/` as the directory form; no test or AC requires the slashless form, confidence low.
+- Dismissed (cold-Claude): A pitfall citing the directory without a trailing slash (src/a) does not match directory `src/a/` - the spec's boundary treats `src/a/` as the directory form; no test or AC requires the slashless form, confidence low.
 - Dismissed (cold-Claude): Brace/`?` glob syntax in `globCouldMatchInsideDir` untested - speculative; `matchesDocsGlob` is the existing per-segment matcher and the new helper only delegates to it.
 - Dismissed (cold-Codex): none raised; no actionable regressions reported.
 
