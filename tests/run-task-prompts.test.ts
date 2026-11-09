@@ -1451,6 +1451,31 @@ void test('judgment-call guidance stays aligned across spec surfaces', () => {
     assert.ok(promptSpecReview(baseState).includes(B));
 });
 
+void test('term-renames guidance stays aligned across spec surfaces', () => {
+    const worktreeRoot = process.cwd();
+    const readRepoFile = (relPath: string): string => fs.readFileSync(path.join(worktreeRoot, relPath), 'utf8');
+    const title = 'Codebase-wide term renames: gate per string family, not per enumerated hit';
+    const carriers = [
+        '.claude/skills/canon-spec/SKILL.md',
+        'templates/.claude/skills/canon-spec/SKILL.md',
+        'src/orchestrator/prompts/templates/spec.md',
+        'src/orchestrator/prompts/templates/spec-revision.md',
+    ];
+
+    for (const file of carriers) {
+        assert.ok(readRepoFile(file).includes(title), `${file} is missing ${title}`);
+    }
+
+    const specLines = readRepoFile('src/orchestrator/prompts/templates/spec.md').split('\n').filter((line) => line.includes(title));
+    const revisionLines = readRepoFile('src/orchestrator/prompts/templates/spec-revision.md').split('\n').filter((line) => line.includes(title));
+    assert.equal(specLines.length, 1, 'spec.md must contain one term-renames bullet');
+    assert.equal(revisionLines.length, 1, 'spec-revision.md must contain one term-renames bullet');
+    assert.equal(specLines[0], revisionLines[0], 'term-renames bullets must be identical');
+
+    assert.ok(promptSpec(baseState).includes(title));
+    assert.ok(promptSpecRevision(specRevisionState).includes(title));
+});
+
 void test('interactive runClaude omits --max-budget-usd', { concurrency: false }, async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-claude-args-'));
     const binDir = path.join(tempDir, 'bin');
