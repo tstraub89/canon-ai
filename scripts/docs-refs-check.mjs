@@ -502,6 +502,9 @@ function stripLineCitation(target) {
 //    pointing at a wrong path). Spec ref hygiene at archive time is
 //    the Stage 1 code reviewer's job; once archived, the dir moves to
 //    `tasks/_archive/` which the directory walker already excludes.
+//    Raw `review-cold-codex.md` output and superseded `review-prior-N.md`
+//    archives are exempt because the foreman's live `review.md` is the
+//    checked code-review record.
 //    (CI can't distinguish "active task being shipped now" from
 //    "parked task describing future work." Per Codex P1 review on
 //    PR #100 — the carve-out is intentional.) `<id>` here matches the
@@ -518,7 +521,8 @@ function isNoisySourceFile(relPath, skipPaths = []) {
         relPath === 'docs/BACKLOG.md' ||
         /(?:^|\/)templates\/(?:.*\/)?(spec|plan|notes|spec-review)\.md$/.test(relPath) ||
         /^tasks\/[^/]+\/(spec|plan|notes|spec-review)\.md$/.test(relPath) ||
-        /^tasks\/[^/]+\/review-cold-codex-run-\d+\.md$/.test(relPath)
+        /^tasks\/[^/]+\/review-cold-codex(?:-run-\d+)?\.md$/.test(relPath) ||
+        /^tasks\/[^/]+\/review-prior-\d+\.md$/.test(relPath)
     );
 }
 
