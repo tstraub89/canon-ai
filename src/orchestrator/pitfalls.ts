@@ -380,6 +380,8 @@ function knownPitfallsIndexTables(doc: MarkdownDoc, section: Heading): MarkdownT
     return markdownTablesInSection(doc, section).filter(table => table.startLine < firstH3Line);
 }
 
+const BLOCK_START = /^ {0,3}(?:#{1,6}(?:\s|$)|[-*+]\s|\d{1,9}[.)]\s|```|~~~|\||<|(?:[-*_][ \t]*){3,}$)/;
+
 function proseFallbackBody(patterns: MarkdownDoc, section: Heading): string {
     const indexLines = new Set<number>();
     for (const table of knownPitfallsIndexTables(patterns, section)) {
@@ -399,7 +401,8 @@ function proseFallbackBody(patterns: MarkdownDoc, section: Heading): string {
             inBlockquote = true;
             continue;
         }
-        if (inBlockquote && text.trim() !== '') continue;
+        // Only a paragraph continues a blockquote lazily; a new block-level construct ends it.
+        if (inBlockquote && text.trim() !== '' && !BLOCK_START.test(text)) continue;
         if (inBlockquote) inBlockquote = false;
         keptLines.push(text);
     }

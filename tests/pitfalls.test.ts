@@ -82,6 +82,25 @@ Lazy continuation belongs to the same quoted paragraph.
     }
 });
 
+void test('AC-1: a block-level construct right after a blockquote ends it and stays in the prose', () => {
+    const patterns = `## Known Pitfalls
+
+> AUTHOR_NOTE
+#### HEADING_AFTER_QUOTE
+- LIST_AFTER_QUOTE
+1. ORDERED_AFTER_QUOTE
+
+> SECOND_NOTE
+Lazy continuation is dropped.
+- LIST_ENDS_SECOND_QUOTE
+`;
+    const output = selectPitfalls(matchingInput(patterns, []));
+    assert.doesNotMatch(output, /AUTHOR_NOTE|SECOND_NOTE|Lazy continuation is dropped/);
+    for (const kept of ['#### HEADING_AFTER_QUOTE', '- LIST_AFTER_QUOTE', '1. ORDERED_AFTER_QUOTE', '- LIST_ENDS_SECOND_QUOTE']) {
+        assert.ok(output.includes(kept), `expected ${kept} in the prose fallback`);
+    }
+});
+
 void test('AC-1b: prose fallback leaves index rows separate and respects H3 boundaries', () => {
     const withIndex = `## Known Pitfalls
 

@@ -5607,6 +5607,7 @@ function knownPitfallsIndexTables(doc, section) {
   const firstH3Line = doc.headings.find((heading) => heading.level === 3 && heading.start >= section.start && heading.start < section.end)?.startLine ?? section.endLine;
   return markdownTablesInSection(doc, section).filter((table) => table.startLine < firstH3Line);
 }
+var BLOCK_START = /^ {0,3}(?:#{1,6}(?:\s|$)|[-*+]\s|\d{1,9}[.)]\s|```|~~~|\||<|(?:[-*_][ \t]*){3,}$)/;
 function proseFallbackBody(patterns, section) {
   const indexLines = /* @__PURE__ */ new Set();
   for (const table of knownPitfallsIndexTables(patterns, section)) {
@@ -5625,7 +5626,7 @@ function proseFallbackBody(patterns, section) {
       inBlockquote = true;
       continue;
     }
-    if (inBlockquote && text.trim() !== "") continue;
+    if (inBlockquote && text.trim() !== "" && !BLOCK_START.test(text)) continue;
     if (inBlockquote) inBlockquote = false;
     keptLines.push(text);
   }
