@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [3.19.0] — 2026-11-09
+
+### Added
+
+- **Node 26 is supported alongside Node 24.** canon's `engines` range is `24.x || 26.x`, so installing on Node 26 no longer warns. `canon doctor` passes on 24 and 26, warns on other majors from 24 up (such as 25 and 27), and still fails below 24.
+- **Implementers self-check before handoff, and the pipeline checks the record.** Implement prompts list the files that reference the task's Affected Files and the files containing identifiers and flags the spec names, as a bounded map that leaves out `linguist-generated` files and canon's log docs. The handoff gains a `## Self-Check` table covering test integrity, restatement sweep, and sibling parity, each with evidence or `N/A` and a reason. Before code review, the pipeline sends back a handoff with missing rows, a missing baseline section, or evidence that is empty, a bare `N/A`, or still the template placeholder. The anchored reviewer checks each row against the diff. A task already in review when you upgrade gets one rejection to add the baseline section. Editing a file outside Affected Files still requires a Blocker.
+
+### Changed
+
+- **Implementers see the pitfalls and lessons that touch their task's files.** Implement prompts no longer inject the whole `## Known Pitfalls` section. They select the entries, Trigger Table rows, and lessons that cite a path in the spec's Affected Files (a listed directory covers the paths under it) and show the others as one-line titles within a size cap. A Known Pitfalls section written as prose, with no `###` headings, is included in full. Split pitfall docs are indexed by path glob. To be selected, a pitfall must cite its path inside backticks or as a link target, using a trailing `/` for a directory or `*` for a glob. The scaffold's `docs/patterns.md` shows the convention.
+- **Spec prompts carry the term-renames rule.** When a spec renames a term used across the codebase, the author and reviser gate each string family with its own zero-result search instead of a hand-listed set of hits.
+- **`canon watch` labels an automatic loop-back `(review loop)`.** `(reroute)` now appears only after a human `canon run --reroute`.
+- **`/canon-spec` asks for "go" before a delicate full-send.** It used to promise a 5-second abort window that it never honored.
+
+### Fixed
+
+- **`--pr` no longer stops on broken references in code-review notes.** Code review gets the same citation rule and reference fix-up as implement and QA. A fix that would change the verdict, or touch any file other than the review, blocks code review instead.
+- **Agent runs no longer fail when a prompt embeds content containing NUL bytes.** NULs are escaped before the prompt is passed to the agent CLI.
+- **`/canon-status` reports a full-tier task waiting at the human spec gate**, and `/canon-spec-review` rates an unlisted judgment call BLOCKING, as the pipeline's `spec_review` does.
+
 ## [3.18.0] — 2026-11-04
 
 ### Changed
