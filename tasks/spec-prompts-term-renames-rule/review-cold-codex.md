@@ -1,0 +1,1 @@
+The prompt guidance is added consistently to both spec-authoring templates, and the new test checks the wording, parity, carriers, and rendered prompts. No actionable regressions were found in the diff.

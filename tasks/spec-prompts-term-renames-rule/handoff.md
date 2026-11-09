@@ -1,154 +1,81 @@
 # Implementation Handoff: spec-prompts-term-renames-rule
 
-> Author: implementer | Spec: `tasks/spec-prompts-term-renames-rule/spec.md` | Plan: `tasks/spec-prompts-term-renames-rule/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
+> Author: Codex | Spec: `tasks/spec-prompts-term-renames-rule/spec.md` | Plan: `tasks/spec-prompts-term-renames-rule/plan.md`
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/prompts/templates/spec.md` | Added the exact term-renames bullet from the spec Decision between the refactor audit and UI task bullets. |
+| `src/orchestrator/prompts/templates/spec-revision.md` | Added the identical term-renames bullet at the same position. |
+| `tests/run-task-prompts.test.ts` | Added a parity test for the two skill copies, both prompt templates, the identical full bullet, and both rendered prompt outputs. |
+| `tests/run-task-prompts.golden.json` | Regenerated only `promptSpec`, `promptSpecRevision`, `promptSpec_withDocsMap`, and `promptSpecRevision_withDocsMap`. |
+| `dist/orchestrator/run-task.js` | Rebuilt the bundled prompt templates. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+The authoritative provenance stamp for this task lives in the `canon` fields of `tasks/spec-prompts-term-renames-rule/status.json`.
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Carry the existing canon-spec term-renames rule into both spec-authoring prompt paths, including spec revision, and pin the carriers and rendered outputs with a regression test. The wording is copied byte-for-byte from the spec Decision so both prompt variants stay aligned.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None. | Implemented the planned template, parity test, golden, and bundle changes. | None. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: Exact bullet placement in both templates | Met | Compared each line with the fenced Decision bullet and checked that the preceding refactor audit and following UI task lines are adjacent. |
+| AC-2: Four rendered prompt goldens | Met | `UPDATE_GOLDENS=1 npm test` changed exactly the four named keys; `tests/completion.golden.json` is byte-identical to HEAD. |
+| AC-3: Parity regression test and red-first run | Met | The new test asserts both skill copies, both prompt templates, identical full bullet lines, and both builder outputs. It failed on the base commit for the missing prompt-template phrase, then passed after the change. |
+| AC-4: Scope and prompt-template grep | Met | The worktree diff, excluding task artifacts, contains exactly the five Affected Files. `grep -rl 'gate per string family' src/orchestrator/prompts/templates/` returns only `src/orchestrator/prompts/templates/spec.md` and `src/orchestrator/prompts/templates/spec-revision.md`. The orchestrator owns the subsequent commit and committed-range check. |
+| AC-5: Rebuilt bundle and freshness | Met | `npm run build` regenerated `dist/orchestrator/run-task.js`; it contains the title phrase. A repeat build produced identical bytes (SHA-256 `3eb3c61342955d4b0156464b8ab136fef8f963693e04afd01afccc80efa0d10a`). The committed-dist freshness command runs after the orchestrator commits the listed files. |
 
 ## Edge Cases Considered
 
-- ...
+- Checked `promptSpec` and `promptSpecRevision` in their normal and `withDocsMap` golden variants.
+- The parity test requires exactly one title-bearing line in each prompt template, and compares the full lines.
+- Confirmed the title phrase appears only in the two spec-authoring prompt templates under `src/orchestrator/prompts/templates/`.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- [ambiguity] The phase metadata and spec validation list contain the literal `<E2E>` without an executable command. I interpreted it using `docs/architecture.md`'s End-to-end tests mapping: this prompt-template-only change has no UI surface or end-to-end runtime, so E2E is N/A. The lint, type-check, build, and full unit suite all ran.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-3 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='term-renames guidance stays aligned across spec surfaces' tests/run-task-prompts.test.ts` | `288499c1e7d8b22d270a58fbaee39cbd6681b65f` | Failed at the assertion for `src/orchestrator/prompts/templates/spec.md`: it was missing `Codebase-wide term renames: gate per string family, not per enumerated hit`. | The same command passed after adding the bullet to both prompt templates. |
 
 ## Self-Check
 
-> One row per pre-handoff self-check, each with evidence a reviewer can check against the diff. **Test integrity:** each behavioral test added or changed, the assertion that pins its failure reason, and how you know it fails without the change (a Red-First Evidence row counts; regenerated snapshots and fixture-only edits are exempt and can be summarized in one line). **Restatement sweep:** the search pattern(s) you ran for each changed contract, and every hit outside Affected Files with how it was handled — updated, or recorded as a Blocker. **Sibling parity:** the parallel paths you examined for each added guard or branch, and whether each got the same treatment, or why not. A row may read `N/A — <reason>`. Write a literal pipe inside a cell as `\|`. Cite paths by the same file-citation rule as the rest of this handoff (full repository-root paths; the markdown-link form for a file that does not exist).
-
 | Check | Evidence |
 |---|---|
-| Test integrity | _(tests added or changed → the assertion that pins each failure reason → how you know it fails without the change)_ |
-| Restatement sweep | _(search pattern(s) run per changed contract → hits outside Affected Files and how each was handled)_ |
-| Sibling parity | _(parallel paths examined per added guard or branch → same treatment, or why not)_ |
+| Test integrity | `tests/run-task-prompts.test.ts` checks the title in `.claude/skills/canon-spec/SKILL.md`, `templates/.claude/skills/canon-spec/SKILL.md`, and both prompt templates; requires one identical full bullet line per template; and checks outputs of `promptSpec` and `promptSpecRevision`. The AC-3 red-first row above records the failure on the base commit and the passing post-fix run. |
+| Restatement sweep | Searched the title phrase across both skill copies and `src/orchestrator/prompts/templates/`. Both skill copies already carry the longer canonical version and remain unchanged per Non-Goals; the two prompt template hits are the only intended additions. The scoped grep `grep -rl 'gate per string family' src/orchestrator/prompts/templates/` returned exactly `src/orchestrator/prompts/templates/spec.md` and `src/orchestrator/prompts/templates/spec-revision.md`. |
+| Sibling parity | Checked the parallel authoring paths: `promptSpec` and `promptSpecRevision` both receive the rule, use identical text, and are covered by standard and docs-map goldens. Other phase prompts remain unchanged per Non-Goals. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Exit 0. |
+| `npm run type-check` | Pass | Exit 0. |
+| `UPDATE_GOLDENS=1 npm test` | Pass | Full suite: 2,174 passed, 1 skipped, 0 failed. Changed golden keys are exactly the four listed in AC-2. |
+| `npm test` | Pass | Full suite against the regenerated goldens: 2,174 passed, 1 skipped, 0 failed. |
+| `npm run build` | Pass | Rebuilt both build entries; only `dist/orchestrator/run-task.js` is changed for this task. |
+| End-to-end tests (`<E2E>`) | N/A | No UI surface or end-to-end runtime applies; see `docs/architecture.md`'s validation mapping. |
+| `git diff --exit-code -- tests/completion.golden.json` | Pass | No diff. |
+| `git diff --check` | Pass | No whitespace errors. |
+| Repeated build byte check | Pass | Second build matched the first bundle's SHA-256 listed under AC-5. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Self-Check
-
-_Include only when this round makes an earlier Self-Check row incomplete or untrue, and include only the rows it updates. Each row restates that check's evidence for all work on the branch, not only this round, and supersedes every earlier version of that row (earlier rows stay in place as history). This subsection never replaces the baseline `## Self-Check` section._
-
-| Check | Evidence |
-|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass
+- [x] All deviations from plan documented with rationale
