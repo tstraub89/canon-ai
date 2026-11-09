@@ -1,0 +1,1 @@
+The changes consistently declare and test Node 24 and 26 support, and the doctor behavior and synchronous test loader align with that goal. The required-check ruleset update is documented as a human action before merge; I found no code defects in the diff.

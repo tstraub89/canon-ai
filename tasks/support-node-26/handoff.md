@@ -1,137 +1,103 @@
 # Implementation Handoff: support-node-26
 
-> Author: implementer | Spec: `tasks/support-node-26/spec.md` | Plan: `tasks/support-node-26/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
+> Author: Codex | Spec: `tasks/support-node-26/spec.md` | Plan: `tasks/support-node-26/plan.md`
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `package.json` | Declared Node `24.x || 26.x` in `engines.node`. |
+| `package-lock.json` | Regenerated the root package `engines.node` value. |
+| `.github/workflows/ci.yml` | Added a Node 24.x/26.x × three-shard matrix, version-qualified test job names, and updated the required-check comment. The `checks` job remains on 24.x. |
+| `.github/dependabot.yml` | Clarified that `@types/node` tracks the `engines` floor. |
+| `src/cli/commands/doctor.ts` | Added exported supported Node majors and injectable version checking with pass/warn/fail outcomes. |
+| `dist/cli/index.js` | Rebuilt the CLI bundle for the doctor change. |
+| `tests/cli.test.ts` | Replaced the host-dependent Node test with the specified verdict table and an engines drift guard. |
+| `tests/md-loader-register.mjs` | Registered the synchronous loader with `registerHooks`; retained `CANON_NO_DETACH`. |
+| `tests/md-loader-hooks.mjs` | Made `.md` loading synchronous with `readFileSync`. |
+| `README.md` | Updated the three supported Node version statements. |
+| `CONTRIBUTING.md` | Updated the Node prerequisite. |
+| `AGENTS.md` | Updated the Node version in the Commands overview. |
+| `docs/architecture.md` | Updated runtime, CI matrix, cross-platform, job, and merge-gate descriptions. |
+| `docs/release-process.md` | Updated the required test jobs description to six jobs across Node 24.x and 26.x. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
 | Field | Source |
 |---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+| Upstream repo | `tasks/support-node-26/status.json` → `canon.upstream_repo` |
+| Upstream commit | `tasks/support-node-26/status.json` → `canon.upstream_commit` |
+| Orchestrator commit | `tasks/support-node-26/status.json` → `canon.orchestrator_commit` |
+| Codex CLI | `tasks/support-node-26/status.json` → `canon.codex_cli` |
+| Claude Code | `tasks/support-node-26/status.json` → `canon.claude_code` |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+The manifest, doctor, CI test matrix, and documentation now agree on Node 24 and 26. Doctor keeps the Node 24 build floor, passes on tested majors, warns on untested majors at or above that floor, and fails below it. The test-only `.md` loader now uses synchronous in-thread hooks to avoid the Node 26 `module.register()` deprecation.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Removed the prior administrator-bypass/direct-push explanation from the `docs/architecture.md` merge-gate paragraph while documenting the new ruleset names. | The spec's known-risk mitigation and the plan require the ruleset swap before a normal merge and prohibit describing an admin bypass for this PR. | No AC impact; the required checks and human action are stated explicitly. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: Engines | Met | Both manifests specify `24.x || 26.x`; lockfile regeneration changed only its root engines line and a second run left its SHA-256 unchanged. |
+| AC-2: CI test matrix | Met | The workflow matrix is Node 24.x/26.x × shards 1–3; `checks` remains on 24.x. The six rendered job names match the names documented in `docs/architecture.md`. Reporting is checked after PR creation per the spec. |
+| AC-3: Single-version jobs stay on 24 | Met | The `checks` job remains on 24.x; neither `.github/workflows/auto-release.yml` nor `.github/workflows/docs-refs-check.yml` is modified. |
+| AC-4: Doctor verdict table | Met | All seven inputs have assertions for status and label; fail and warn details are checked. The scoped CLI tests passed. |
+| AC-5: Doctor/engines drift guard | Met | The test parses `engines.node` and compares sorted majors with `SUPPORTED_NODE_MAJORS`. Temporarily changing the constant to `[24]` made the test fail with expected `[24, 26]` versus actual `[24]`; the constant was restored. |
+| AC-6: Doctor on supported runtimes | Met | The rebuilt `dist/cli/index.js doctor` output showed ✓ for Node 24.21.0 and Node 26.13.0; both commands exited 0. |
+| AC-7: Fresh `dist/` | Met | Two builds succeeded; the second build left `dist/cli/index.js` byte-identical to the first (SHA-256 `1e74e3ac0f68b303df74cfca4457ffd58c77320024340aa743478a6a942e6881`). The orchestrator will commit the bundle; CI checks committed freshness. |
+| AC-8: Loader uses `registerHooks` | Met | No bare `register` identifier remains in either loader file; `.md` imports passed the full suites on Node 24 and 26, and Node 26 logged zero `DEP0205` lines. |
+| AC-9: Build floor unchanged | Met | `tsup.config.ts` still targets `node24`; `package.json` retains `@types/node` `^24.13.3`. |
+| AC-10: Docs agree | Met | Supported-version prose, six CI job names, ruleset action, and Dependabot comment were updated. Required greps and `npm run docs-refs-check` passed. |
 
 ## Edge Cases Considered
 
-- ...
+- Node 23 and an unparseable version fail; Node 24 and 26 pass; Node 25, 27, and 28 warn and name both supported majors.
+- `checkNodeVersion()` still defaults to `process.version`, so the production doctor call needs no change.
+- The loader returns `.md` file contents as the default export and delegates non-`.md` URLs to `nextLoad`.
+- Node 24 and Node 26 full-suite runs each had one sandbox skip: `REPO_ROOT stays anchored to the supervising checkout when imported from a linked worktree` skips because `.git/` writes are restricted. Both runs had zero failures.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- `[human_pending]` Before merge, after CI reports the six Node-labelled test jobs green, a human must replace the three old shard checks in the GitHub `main` ruleset with `test (node 24.x, shard 1/3)` through `test (node 26.x, shard 3/3)`, keeping `checks` required. The ruleset is outside the repository; the change must happen before `--ship`. Other open PRs need to rebase to report the new check names.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| None — this feature spec has no red-first AC. | | | | |
+
+## Self-Check
+
+| Check | Evidence |
+|---|---|
+| Test integrity | `tests/cli.test.ts` now asserts the exact seven-version verdict table, labels, and detail strings. The drift test reads the active checkout's `package.json` via `process.cwd()`; mutating `SUPPORTED_NODE_MAJORS` to `[24]` caused the filtered drift test to fail for the expected missing 26. Both tests passed after restoring `[24, 26]`, under Node 24 and Node 26. The full suites also exercised `.md` imports through the loader. |
+| Restatement sweep | Searched for `Node 24`, `24.x`, old `test (shard N/3)` names, and three-shard wording across the docs, README, CONTRIBUTING, AGENTS, CI, and Dependabot surfaces. All canon runtime and job-name hits are updated. Retained the `tsup.config.ts` `node24` target and `@types/node` `^24` range per AC-9; transitive engine declarations in `package-lock.json` are dependency metadata, not canon's engine range. `CHANGELOG.md` is historical and was not changed. |
+| Sibling parity | `checkNodeVersion()` has one production caller, which uses the default `process.version`; the tests inject each version. In CI, only the test job uses the new matrix, while `checks` stays on 24.x. The two out-of-scope single-version workflows were verified unchanged. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | Passed after the final test edit. |
+| `npm run type-check` | Pass | Passed after the final test edit. |
+| `npm test` — Node 24.21.0 | Pass | 2,147 passed, 1 sandbox skip, 0 failed. |
+| `npm test` — Node 26.13.0 | Pass | 2,147 passed, 1 sandbox skip, 0 failed; `DEP0205` count was 0. |
+| Scoped Node-check tests — Node 24 and 26 | Pass | The verdict table and drift guard passed on both runtimes after the final test edit. |
+| `node dist/cli/index.js doctor` — Node 24.21.0 and 26.13.0 | Pass | Both showed ✓ for the Node line and exited 0. |
+| `npm run build` | Pass | Built twice; second build kept `dist/cli/index.js` byte-identical. |
+| Lockfile regeneration | Pass | `npm install --package-lock-only` regenerated the root engines field; a second run left `package-lock.json` byte-identical. |
+| `npm run docs-refs-check` | Pass | `All refs OK`. |
+| E2E | deferred_by_spec | `tasks/support-node-26/spec.md` states N/A because there is no UI surface. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale

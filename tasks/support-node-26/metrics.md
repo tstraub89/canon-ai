@@ -8,3 +8,9 @@
 |---|---|---|---|---|---|---|---|---|
 | 2026-11-08T15:12:30.688Z | support-node-26 | spec_review | codex | gpt-6-luna | 0 | 72.7s | 454394 | ok |
 | 2026-11-09T02:07:25.992Z | support-node-26 | plan | claude | sonnet | 0 | 59.5s | 664967 | ok |
+| 2026-11-09T02:19:50.603Z | support-node-26 | implement | codex | gpt-6-luna | 0 | 743.8s | 4924511 | ok |
+| 2026-11-09T02:20:25.700Z | support-node-26 | code_review | codex | gpt-6-luna | 0 | 33.7s | - | ok |
+| 2026-11-09T02:21:40.365Z | support-node-26 | code_review | claude | sonnet | 0 | 74.6s | 435914 | ok |
+| 2026-11-09T02:21:40.368Z | support-node-26 | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 22.6s | 234166 | ok |
+| 2026-11-09T02:21:40.370Z | support-node-26 | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 34.3s | 438985 | ok |
+| 2026-11-09T02:22:44.691Z | support-node-26 | qa | claude | claude-haiku-5-5 | 0 | 64.3s | 646053 | ok |

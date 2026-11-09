@@ -1,6 +1,7 @@
-import { register } from 'node:module';
+import { registerHooks } from 'node:module';
+import { load } from './md-loader-hooks.mjs';
 
-register('./md-loader-hooks.mjs', import.meta.url);
+registerHooks({ load });
 
 // Tests that import src/orchestrator/main.ts and call main() expect synchronous
 // side-effects visible to the test runner — they spawn the orchestrator as a

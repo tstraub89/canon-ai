@@ -28,6 +28,7 @@ import {
     checkActiveOrchestrators,
     checkDocsFreshness,
     checkNodeVersion,
+    SUPPORTED_NODE_MAJORS,
     checkCodexMdDeprecated,
     EXPECTED_TEMPLATES,
     checkTemplates,
@@ -1172,10 +1173,43 @@ void test('canon watch dispatches with usage when no task id is provided', () =>
 
 // ── checkNodeVersion ─────────────────────────────────────────────────────────
 
-void test('checkNodeVersion: current process is ≥24 → pass', () => {
-    const check = checkNodeVersion();
-    assert.equal(check.status, 'pass');
-    assert.match(check.label, /^node v\d+/);
+void test('checkNodeVersion: supported majors pass, other majors are warned or fail', () => {
+    const cases = [
+        { version: 'v23.11.0', status: 'fail' },
+        { version: 'v24.0.0', status: 'pass' },
+        { version: 'v25.1.0', status: 'warn' },
+        { version: 'v26.13.0', status: 'pass' },
+        { version: 'v27.0.0', status: 'warn' },
+        { version: 'v28.0.0', status: 'warn' },
+        { version: 'garbage', status: 'fail' },
+    ] as const;
+
+    for (const { version, status } of cases) {
+        const check = checkNodeVersion(version);
+        assert.equal(check.status, status, version);
+        assert.equal(check.label, `node ${version}`);
+        if (status === 'fail') assert.equal(check.detail, 'node 24+ required — https://nodejs.org');
+        if (status === 'warn') {
+            assert.match(check.detail ?? '', /24/);
+            assert.match(check.detail ?? '', /26/);
+        }
+    }
+});
+
+void test('SUPPORTED_NODE_MAJORS matches the package engines majors', () => {
+    const packageJson: unknown = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+    assert.ok(packageJson && typeof packageJson === 'object' && 'engines' in packageJson);
+    const engines = packageJson.engines;
+    assert.ok(engines && typeof engines === 'object' && 'node' in engines && typeof engines.node === 'string');
+
+    const engineMajors = engines.node
+        .split('||')
+        .map((range) => range.match(/\d+/)?.[0])
+        .filter((major): major is string => major !== undefined)
+        .map(Number)
+        .sort((left, right) => left - right);
+
+    assert.deepEqual([...SUPPORTED_NODE_MAJORS].sort((left, right) => left - right), engineMajors);
 });
 
 // ── parseClaudeVersion ─────────────────────────────────────────────────────

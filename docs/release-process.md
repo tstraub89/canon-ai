@@ -75,7 +75,7 @@ git push -u origin release-vX.Y.Z
 gh pr create --base main --head release-vX.Y.Z --title "Release vX.Y.Z: <short theme>"
 ```
 
-**Wait for both**: (a) CI green on the PR (the `checks` job and all three `test` shards, which the `main` ruleset requires; `npm audit --omit=dev` can fail a release PR on a new advisory with no code change), (b) Codex's post-PR review. CI green alone is not sufficient — the 1.1.3 picocolors bug was caught by Codex's PR review, not CI. Then **squash-merge** (repo settings enforce squash-only; the short-lived branch is deleted on merge). A release commit is operator-authored, so `gh pr merge --squash --delete-branch` is fine here.
+**Wait for both**: (a) CI green on the PR (the `checks` job and all six `test` jobs across Node 24.x and 26.x, three shards each, which the `main` ruleset requires; `npm audit --omit=dev` can fail a release PR on a new advisory with no code change), (b) Codex's post-PR review. CI green alone is not sufficient — the 1.1.3 picocolors bug was caught by Codex's PR review, not CI. Then **squash-merge** (repo settings enforce squash-only; the short-lived branch is deleted on merge). A release commit is operator-authored, so `gh pr merge --squash --delete-branch` is fine here.
 
 **Auto-release fires** on the push to `main`: it tags + publishes `vX.Y.Z` from the version-bump commit. No manual `git tag` / `gh release create`, and no "reset" step — the short-lived branch is gone and the next release branches fresh from `main`.
 

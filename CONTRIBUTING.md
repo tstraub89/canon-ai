@@ -17,7 +17,7 @@ that same pipeline on itself. That shapes how contributions flow.
 
 ## Development setup
 
-Prerequisites: Node 24.x, git. Claude Code and Codex CLI are only needed to
+Prerequisites: Node 24.x or 26.x, git. Claude Code and Codex CLI are only needed to
 run the pipeline itself, not to build or test.
 
 ```bash
