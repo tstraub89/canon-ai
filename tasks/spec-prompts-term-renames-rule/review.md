@@ -1,134 +1,47 @@
 # Code Review: spec-prompts-term-renames-rule
 
-> Reviewer: Claude | Spec: `tasks/spec-prompts-term-renames-rule/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
-
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
-
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review).
 
 ## Stage 1 — Spec Compliance (gate)
 
-### Validation Gate
-
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-- [ ] Self-Check evidence in the effective record is not contradicted by the diff
-
-### Acceptance Criteria Check
-
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
-| AC | Status | Notes |
+| AC | Result | Note |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Met | Bullet in `src/orchestrator/prompts/templates/spec.md` and `src/orchestrator/prompts/templates/spec-revision.md`, between the refactor-audit and UI bullets, matching the spec Decision. |
+| AC-2 | Met | Golden diff touches only the four spec-prompt keys; `tests/completion.golden.json` is untouched. |
+| AC-3 | Met | Parity test covers both skill copies, both templates, bullet identity, and both rendered outputs; red-first row recorded against `288499c`. |
+| AC-4 | Met | Diff outside task artifacts is exactly the five Affected Files. |
+| AC-5 | Met | `dist/orchestrator/run-task.js` carries the phrase; the handoff records an identical repeat build. |
 
-### Dropped Sections Check
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence recorded
+- [x] Self-Check evidence is not contradicted by the diff
+- [x] Non-goals respected
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+**Gate result**
 
-### Stage 1 Verdict
+- [x] **Pass** — proceed to Stage 2
+- [ ] **Fail** — skip Stage 2
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
+## Stage 2 — Code Quality
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
+Findings: none surviving. All three lenses returned approve.
 
-## Stage 2 — Code Quality (only if Stage 1 passed)
+Nits (non-blocking, no action needed):
+- Anchored: the rendered-prompt assertions pin only the title phrase; the full bullet is pinned in the raw templates, and the goldens cover the rendered body.
 
-### Summary
+## Dismissed Cold Findings
 
-One paragraph: overall code quality of the implementation.
-
-### Findings
-
-#### Correctness Bugs
-
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
-
-#### Risk / Guardrails
-
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
-
-#### Optional Cleanup / Nit
-
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
-
-#### Spec Gaps
-
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
-
-### Dismissed Cold Findings
-
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): `tests/run-task-prompts.test.ts:1455` reads carrier files relative to `process.cwd()` — the same pattern is used by neighbouring tests in the same file (lines 1178, 1190, 1299, 1398, 1639), so it is the established convention. Flagged by anchored lens too; dismissed there for the same reason.
+- Dismissed (cold-Claude): the bullet is not carried by spec-review or plan prompts — intended; spec Non-Goals scope the rule to the two spec-authoring prompts.
+- Dismissed (cold-Codex): no actionable regressions reported; nothing to dismiss.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
+- [x] **Approved with nits** — ship after addressing optional items (or not)
+- [ ] **Changes requested**
+- [ ] **Spec gap**
