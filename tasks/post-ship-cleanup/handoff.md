@@ -6,20 +6,26 @@
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/blast-radius.ts` | Filter exact status/literal tokens and acronym plurals, throw on git grep failures other than exit 1, and omit registered telemetry files. |
+| `tests/blast-radius.test.ts` | Add regression coverage for token extraction, git statuses, telemetry exclusion, and the pass-through positive control. |
+| `src/orchestrator/validation.ts` | Reject markup-wrapped parenthesized placeholders and literal `<reason>` evidence. |
+| `tests/run-task-validation.test.ts` | Cover the two markup forms, copied reason placeholder, accepted N/A reason, and real evidence. |
+| `src/orchestrator/main.ts` | Correct the implement-evidence comment to describe `validateHandoffAgainstSpec`. |
+| `docs/patterns.md` | Clarify path citations and identify the live per-task gate plus its test-parity helper. |
+| `docs/product-context.md` | Identify the live per-task gate and its test-parity helper. |
+| `docs/codebase-map.md` | Clarify that index tables are excluded from whole-section prose injection. |
+| `README.md` | Clarify that index tables are excluded from whole-section prose injection. |
+| `src/orchestrator/pitfalls.ts` | Accept one-dash table separators and treat an empty patterns override as unset. |
+| `tests/pitfalls.test.ts` | Cover `|-|-|` index parsing and empty-override fallback through the docs root. |
+| `tests/run-task-prompts.test.ts` | Assert the no-Affected-Files state header in an implement prompt. |
+| `templates/docs/patterns.md` | Use an adopter-neutral example path and document path-citation syntax. |
+| `.claude/skills/canon-init/write-guide.md`, `templates/.claude/skills/canon-init/write-guide.md` | Document path-citation syntax in the canon-init guide and its generated mirror. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Document the patterns-doc fallback root and preserve the test-only scope of the override. |
+| `dist/orchestrator/run-task.js` | Rebuild the tracked orchestrator bundle from the updated source. |
 
 ## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
 
 | Field | Source |
 |---|---|
@@ -31,124 +37,73 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Applied the nine spec criteria at their existing source, test, documentation, and generated-bundle surfaces. Kept the existing map fail-open behavior at its caller while making `gitGrep` distinguish ordinary no-match status 1 from failures. Reused `PIPELINE_TELEMETRY_FILES` as the telemetry exclusion source.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| No implementation steps were specified; `tasks/post-ship-cleanup/plan.md` contains only the plan scaffold. Implemented directly from the binding spec. | The spec fully defines each change and test. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: B1 and B2 token filtering | Met | `tests/blast-radius.test.ts` asserts only `Widget` and `URLParser` remain. Red-first evidence is below. |
+| AC-2: B3 git grep exit handling | Met | `tests/blast-radius.test.ts` asserts status 1 returns `[]` and an empty-stderr status 2 throws. Red-first evidence is below. |
+| AC-3: B4 telemetry exclusion | Met | `tests/blast-radius.test.ts` verifies a lessons-log reference does not appear. Red-first evidence is below. |
+| AC-4: B5 fail-open positive control | Met | The existing fail-open test now asserts its shim pass-through yields a non-empty block; the targeted test passed. |
+| AC-5: S1 self-check evidence | Met | `tests/run-task-validation.test.ts` rejects both wrapped forms and `N/A — <reason>`, and accepts `N/A — no tests changed` and real evidence. Red-first evidence is below. |
+| AC-6: S2 validation references | Met | The live gate is named `classifyPreflightBlockers`; remaining `validateHandoff()` hits describe test parity or test cases. The `src/orchestrator/main.ts` comment names `validateHandoffAgainstSpec` and describes required validation outcomes only. |
+| AC-7: P1 and P2 pitfalls | Met | `tests/pitfalls.test.ts` covers an index separator of `|-|-|` and an empty override falling back under the docs root. Red-first evidence is below. |
+| AC-8: P3–P5 and P7 docs | Met | Updated the scaffold example, citation guidance, env-var row and index-table exception. `npm run docs-refs-check` and `npm run sync-templates:check` pass. |
+| AC-9: P6 prompt header | Met | `tests/run-task-prompts.test.ts` asserts the exact `- Relevant files: none (spec has no Affected Files table)` line. |
 
 ## Edge Cases Considered
 
-- ...
+- The token stoplist is exact and case-sensitive; valid component identifiers remain searchable.
+- `gitGrep` preserves the existing overflow behavior while treating exit 1 as no matches and other child exit statuses as errors.
+- Telemetry exclusion is applied through the shared path filter used for both reference and identifier matches.
+- Placeholder detection runs after stripping Markdown emphasis/code markup; a real N/A reason and ordinary evidence remain accepted.
+- The empty override is evaluated at call time and falls back through `CANON_PITFALLS_DOCS_ROOT` to `docs/patterns.md`.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- None.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-1 | `node --test --import ./tests/md-loader-register.mjs --import tsx tests/blast-radius.test.ts tests/run-task-validation.test.ts tests/pitfalls.test.ts tests/run-task-prompts.test.ts` | `0e6203c655bb99a07a4f63bedba3e7a81d41ebc2` | Extracted `True`, `None`, `Pass`, `IDs`, and `URLs` in addition to the two intended identifiers. | Targeted suites and full `npm test` pass. |
+| AC-2 | Same grouped command as AC-1 | `0e6203c655bb99a07a4f63bedba3e7a81d41ebc2` | The empty-stderr exit-2 shim did not throw; the status-1 no-match assertion already returned `[]`. | Targeted suites and full `npm test` pass. |
+| AC-3 | Same grouped command as AC-1 | `0e6203c655bb99a07a4f63bedba3e7a81d41ebc2` | The map listed `docs/lessons-learned.md` for both the affected-file reference and spec identifier. | Targeted suites and full `npm test` pass. |
+| AC-5 | Same grouped command as AC-1 | `0e6203c655bb99a07a4f63bedba3e7a81d41ebc2` | The bold-wrapped placeholder, code-wrapped placeholder, and copied `<reason>` cell produced no Self-Check issue. | Targeted suites and full `npm test` pass; valid N/A and real-evidence cases pass. |
+| AC-7 | Grouped command as AC-1; exact P1 case: `node --test --test-name-pattern='Known Pitfalls index tables accept the' --import ./tests/md-loader-register.mjs --import tsx tests/pitfalls.test.ts` | `0e6203c655bb99a07a4f63bedba3e7a81d41ebc2` | The empty patterns override returned no selected block. The exact `|-|-|` index test also failed with no Area index. | Targeted suites and full `npm test` pass. |
 
 ## Self-Check
 
-> One row per pre-handoff self-check, each with evidence a reviewer can check against the diff. **Test integrity:** each behavioral test added or changed, the assertion that pins its failure reason, and how you know it fails without the change (a Red-First Evidence row counts; regenerated snapshots and fixture-only edits are exempt and can be summarized in one line). **Restatement sweep:** the search pattern(s) you ran for each changed contract, and every hit outside Affected Files with how it was handled — updated, or recorded as a Blocker. **Sibling parity:** the parallel paths you examined for each added guard or branch, and whether each got the same treatment, or why not. A row may read `N/A — <reason>`. Write a literal pipe inside a cell as `\|`. Cite paths by the same file-citation rule as the rest of this handoff (full repository-root paths; the markdown-link form for a file that does not exist).
-
 | Check | Evidence |
 |---|---|
-| Test integrity | _(tests added or changed → the assertion that pins each failure reason → how you know it fails without the change)_ |
-| Restatement sweep | _(search pattern(s) run per changed contract → hits outside Affected Files and how each was handled)_ |
-| Sibling parity | _(parallel paths examined per added guard or branch → same treatment, or why not)_ |
+| Test integrity | `tests/blast-radius.test.ts` pins token output, status 1/status 2 handling, telemetry exclusion, and a non-empty shim pass-through; AC-1–3 red runs are recorded above. `tests/run-task-validation.test.ts` pins both wrapped placeholders, `<reason>`, valid N/A and real evidence; AC-5 red run is recorded above. `tests/pitfalls.test.ts` pins `|-|-|` and the empty env fallback; AC-7 red run is recorded above. `tests/run-task-prompts.test.ts` asserts the exact rendered state-header line. |
+| Restatement sweep | Searched `validateHandoff()` with `git grep -n 'validateHandoff()' -- docs templates/docs src`; remaining hits in `docs/patterns.md` and `docs/product-context.md` identify test parity, and `docs/codebase-map.md` describes test cases. Checked Known Pitfalls prose-injection claims in `README.md`, `docs/codebase-map.md`, `docs/patterns.md`, `templates/docs/patterns.md`, and both canon-init write-guide copies; they account for index tables. Updated the `CANON_PITFALLS_DOCS_ROOT` row in `docs/pipeline-orchestrator.md` and its mirror. |
+| Sibling parity | `checkSelfCheckEvidence()` is used by the live pre-flight classifier and `validateHandoff()`; the new rejection cases assert both agree. `excludedPath()` is shared by reference and identifier results, and the telemetry test checks both. Both the active patterns doc root and the unset/empty override paths are covered. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 2,162 passed, 0 failed, 1 skipped. |
+| `npm run build` | Pass | Rebuilt `dist/orchestrator/run-task.js`; `dist/cli/index.js` had no diff. |
+| `npm run docs-refs-check` | Pass | All refs OK after writing this handoff. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync after the final doc edits. |
+| Targeted regression suites | Pass | `node --test --import ./tests/md-loader-register.mjs --import tsx tests/blast-radius.test.ts tests/run-task-validation.test.ts tests/pitfalls.test.ts tests/run-task-prompts.test.ts` — 418 passed. |
+| `git diff --check` | Pass | No whitespace errors. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Self-Check
-
-_Include only when this round makes an earlier Self-Check row incomplete or untrue, and include only the rows it updates. Each row restates that check's evidence for all work on the branch, not only this round, and supersedes every earlier version of that row (earlier rows stay in place as history). This subsection never replaces the baseline `## Self-Check` section._
-
-| Check | Evidence |
-|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale

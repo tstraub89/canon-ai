@@ -7,7 +7,7 @@
 This is the project's hard-won implementation knowledge. It has two main sections:
 
 1. **Trigger Table** — at the top, an index agents skim to jump to the relevant section. If your task touches an area listed here, the pointed-at section is likely load-bearing for what you're doing.
-2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. Implement prompts select full pitfalls and Trigger Table sections that match the spec's Affected Files, plus lessons that cite those files; other pitfall titles and a one-line index of the tables remain visible. A Known Pitfalls section with no `###` entries has its prose injected whole except blockquotes (author guidance) and index tables, regardless of the task's files. A directory in Affected Files also selects pitfalls that cite paths inside it. Cite full repository paths, directory prefixes, or globs in each entry. Agents still need this file open for spec authorship and code review.
+2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. Implement prompts select full pitfalls and Trigger Table sections that match the spec's Affected Files, plus lessons that cite those files; other pitfall titles and a one-line index of the tables remain visible. A Known Pitfalls section with no `###` entries has its prose injected whole except blockquotes (author guidance) and index tables, regardless of the task's files. A directory in Affected Files also selects pitfalls that cite paths inside it. A path counts only inside backticks or as a Markdown link target; directories need a trailing `/`, and globs need `*`. Bare file names never match. Agents still need this file open for spec authorship and code review.
 
 > **Layering rule.** This file is **project-specific** — it holds patterns and pitfalls unique to canon-ai's own internals (or, for adopters, unique to their stack). **Canon-supplied universal rules** (agent discipline, harness behavior, spec/review rules of thumb) are delivered just in time through skills, per-phase prompt templates, and agent charters. Conversational-operator norms for canon-ai live in [`CLAUDE.md`](../CLAUDE.md), which Claude auto-loads at session start. If you're tempted to add a rule here that would apply to *every* canon project, it belongs in a skill or prompt template, not patterns.
 
@@ -82,12 +82,12 @@ For breaking changes (renames, type changes), also: add a migration shim that de
 **When to apply**: Adding a new pre-flight check at a phase boundary (e.g., "the handoff Changes table must match the post-commit `git diff`").
 
 **The pattern**:
-- **Per-task checks**: extend `validateHandoff()` (returns a list of issue strings; non-empty = gate fail) or join the `autoCommitCode()` cross-checks. Both are well-tested entry points in `src/orchestrator/validation.ts` and `src/orchestrator/main.ts`.
+- **Per-task checks**: extend `classifyPreflightBlockers()` — the live code_review entry gate — or join the `autoCommitCode()` cross-checks. Keep `validateHandoff()` in step as its test-parity function. Both paths are exercised in `src/orchestrator/validation.ts` and `src/orchestrator/main.ts`.
 - **Bundle-wide checks**: add a sibling function at the same call site (after the per-task loop in the `code_review` pre-flight block). `verifyHandoffAgainstDiff()` is the canonical example — it takes `taskIds: string[]` so it can compute a union across bundle members. Expose a `*FromData` test seam so tests don't need a real git repo.
 - **Tests are mandatory.** Any new validation rule needs a positive case (passing handoff) and a negative case (failing handoff) in `run-task-validation.test.ts`. Edge cases (empty tables, malformed markdown) need explicit test rows.
 - **Failure modes are documented — one message per failure class.** A gate that fails should write a clear rejection message to `review.md` (or equivalent) explaining what to fix. Beyond vagueness: a gate that emits the *same* message for structurally different failure classes trains the implementing agent to fix whichever layer the message names, not the root cause (the code_review pre-flight said "fix the handoff" for real test regressions, so Codex relabeled `Fail` rows instead of fixing the code — looping to the review cap). Enumerate the failure classes and name the correct fix action per class ("fix the handoff" vs. "fix the code" vs. "halt for human"). A single catch-all message means the gate is conflating classes.
 
-**Anti-pattern**: adding a check inline in the middle of `runPhase('code_review')` without a test seam. Both `validateHandoff()` and `verifyHandoffAgainstDiff()` expose seams — any new sibling should too.
+**Anti-pattern**: adding a check inline in the middle of `runPhase('code_review')` without a test seam. `classifyPreflightBlockers()` and `verifyHandoffAgainstDiff()` expose the live gate seams; keep `validateHandoff()` as the per-task test-parity function in step with the live gate.
 
 ### Lint & Type Safety Policy
 
@@ -293,7 +293,7 @@ When a task updates a piece of operator-facing or agent-facing text (CLI help, e
 |---|---|---|
 | Add a new pipeline phase | Phase Addition Discipline | `src/orchestrator/types.ts` `PHASE_ORDER` |
 | Change which model a phase uses | Pure Policy + Test Discipline | `src/lib/pipeline-policy.ts` |
-| Add a new per-task validation check at code_review entry | Validation Gate Discipline | `src/orchestrator/validation.ts` `validateHandoff()` |
+| Add a new per-task validation check at code_review entry | Validation Gate Discipline | `src/orchestrator/validation.ts` `classifyPreflightBlockers()`; keep `validateHandoff()` in test parity |
 | Add a new bundle-wide validation check at code_review entry | Validation Gate Discipline | `src/orchestrator/validation.ts` `verifyHandoffAgainstDiff()` (canonical sibling example) |
 | Add a new field to status.json | State Schema Discipline | `.canon/templates/status.json` |
 | Update phase status from a script | `docs/pipeline-orchestrator.md` | `canon task phase` |

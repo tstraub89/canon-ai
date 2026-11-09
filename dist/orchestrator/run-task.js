@@ -3738,7 +3738,9 @@ function checkSelfCheckEvidence(handoffContent) {
         issues.push(`Self-Check row "${label}" must have exactly two cells \u2014 repair the baseline \`## Self-Check\` table in place and escape literal pipes as \`\\|\`.`);
       } else if (!/[\p{L}\p{N}]/u.test(evidence)) {
         issues.push(`Self-Check row "${label}" has an empty Evidence cell \u2014 fill it in the baseline \`## Self-Check\` table, or write \`N/A \u2014 <reason>\`.`);
-      } else if (/^_\(/.test(evidence)) {
+      } else if (evidence.includes("<reason>")) {
+        issues.push(`Self-Check row "${label}" still holds the \`<reason>\` placeholder \u2014 give the reason in the baseline \`## Self-Check\` table.`);
+      } else if (bare.startsWith("(") && bare.endsWith(")")) {
         issues.push(`Self-Check row "${label}" still holds the template placeholder \u2014 replace it in the baseline \`## Self-Check\` table with the evidence, or \`N/A \u2014 <reason>\`.`);
       } else if (/^n\/a[\s.:—–-]*$/i.test(bare)) {
         issues.push(`Self-Check row "${label}" is a bare N/A \u2014 give the reason in the baseline \`## Self-Check\` table: \`N/A \u2014 <reason>\`.`);
@@ -5157,6 +5159,8 @@ var TOKEN_CAP = 20;
 var BYTE_CAP = 6144;
 var REFERENCE_FILE_CAP = 40;
 var GENERIC_STEMS = /* @__PURE__ */ new Set(["index", "types"]);
+var STOPLIST = /* @__PURE__ */ new Set(["True", "False", "None", "Null", "Pass", "Fail", "Done", "Todo", "Note", "Approved", "Blocked"]);
+var PIPELINE_TELEMETRY_FILE_SET = new Set(PIPELINE_TELEMETRY_FILES);
 var NON_GENERATED_PATHSPECS = [".", ":(exclude,attr:linguist-generated)", ":(exclude,attr:linguist-generated=true)"];
 function tokensFromBodies(bodies) {
   const tokens = [];
@@ -5170,8 +5174,8 @@ function tokensFromBodies(bodies) {
       } else {
         const hadParens = token.endsWith("()");
         const name = hadParens ? token.slice(0, -2) : token;
-        const shaped = hadParens || /^[A-Z][a-z0-9]+$/.test(name) || /[a-z0-9][A-Z]/.test(name) || /[A-Z]{2,}[a-z]/.test(name) || /[A-Za-z0-9]_[A-Za-z0-9]/.test(name);
-        if (name.length >= 3 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && shaped) normalized = name;
+        const shaped = hadParens || /^[A-Z][a-z0-9]+$/.test(name) || /[a-z0-9][A-Z]/.test(name) || /[A-Z]{2,}[a-z]{2,}/.test(name) || /[A-Za-z0-9]_[A-Za-z0-9]/.test(name);
+        if (name.length >= 3 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && shaped && !STOPLIST.has(name)) normalized = name;
       }
       if (normalized && !seen.has(normalized)) {
         seen.add(normalized);
@@ -5196,7 +5200,7 @@ function toRepoRelative(file) {
   return file.endsWith("/") && !normalized.endsWith("/") ? `${normalized}/` : normalized;
 }
 function excludedPath(file, affectedFiles, directoryEntries) {
-  return affectedFiles.includes(file) || directoryEntries.some((directory) => file.startsWith(directory)) || file.startsWith("tasks/");
+  return affectedFiles.includes(file) || directoryEntries.some((directory) => file.startsWith(directory)) || file.startsWith("tasks/") || PIPELINE_TELEMETRY_FILE_SET.has(file);
 }
 var GREP_MAX_BUFFER = 16 * 1024 * 1024;
 function gitGrep(root, modeFlags, pattern, maxBuffer = GREP_MAX_BUFFER) {
@@ -5211,9 +5215,10 @@ function gitGrep(root, modeFlags, pattern, maxBuffer = GREP_MAX_BUFFER) {
     throw result.error;
   }
   if (result.status === 0) return (result.stdout ?? "").split("\0").filter(Boolean);
+  if (result.status === 1) return [];
   const stderr = (result.stderr ?? "").trim();
-  if (!stderr) return [];
-  throw new Error(`git grep failed: ${stderr}`);
+  const detail = stderr ? `: ${stderr}` : "";
+  throw new Error(`git grep failed with exit status ${result.status ?? "unknown"}${detail}`);
 }
 function escapeEre(value) {
   return value.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
@@ -5561,7 +5566,7 @@ function splitCells(line) {
   return cells.length >= 2 ? cells : null;
 }
 function isSeparatorRow2(cells) {
-  return cells.every((cell) => /^:?-{3,}:?$/.test(cell.replaceAll(" ", "")));
+  return cells.every((cell) => /^:?-+:?$/.test(cell.replaceAll(" ", "")));
 }
 function markdownTablesInSection(doc, section) {
   const result = [];
@@ -6062,7 +6067,7 @@ function resolvePitfallsDocsRoot(taskIds) {
 }
 function buildRelevantPitfalls(taskIds) {
   const root = resolvePitfallsDocsRoot(taskIds);
-  const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path12.join(root, PATTERNS_PATH);
+  const patternsPath = process.env.CANON_PATTERNS_MD_PATH || path12.join(root, PATTERNS_PATH);
   const affectedFiles = [...new Set(taskIds.flatMap((taskId) => extractAffectedFiles(taskId)).map(normalizeAffectedFile).filter((value) => value !== null))];
   return selectPitfalls({
     patterns: readOrNull(patternsPath),

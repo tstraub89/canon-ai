@@ -96,7 +96,7 @@ Canon's general definition: `delicate: true` is for surfaces where a regression 
 
 - **Orchestrator phase-routing logic** (`src/orchestrator/types.ts`: `PHASE_ORDER`; `src/orchestrator/main.ts`: `runPhase()`, `checkAndRoute()`). A bug here corrupts every task that runs after the change lands.
 - **Auto-commit logic** (`autoCommitCode()`). Wrong files staged, missed handoff entries, or bypassed checks lead to invisible regressions in code review.
-- **Validation gates** (`validateHandoff()`, future pre-flight checks). A buggy gate either rejects valid work (blocking everyone) or accepts invalid work (silent corruption).
+- **Validation gates** (`classifyPreflightBlockers()` is the live code_review entry gate; `validateHandoff()` is its test-parity function and must stay in step). A buggy gate either rejects valid work (blocking everyone) or accepts invalid work (silent corruption).
 - **Pipeline policy** (`src/lib/pipeline-policy.ts`). Wrong tier, wrong model, wrong loop cap — these affect cost, latency, and reliability for every subsequent task.
 - **Status.json schema or parser changes** (`.canon/templates/status.json` + parsers in `src/orchestrator/validation.ts` and `src/orchestrator/state.ts`). A schema break in flight can leave in-progress tasks unrunnable.
 - **Worktree machinery** (worktree creation, sync, cleanup). Bugs here corrupt git state in ways that are slow to detect and expensive to recover from.

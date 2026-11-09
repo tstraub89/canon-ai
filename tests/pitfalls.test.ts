@@ -51,6 +51,19 @@ void test('AC-2: direct path and directory matches are full; unrelated paths sta
     assert.doesNotMatch(output, /Unrelated body cites/);
 });
 
+void test('Known Pitfalls index tables accept the |-|-| separator row', () => {
+    const patterns = `## Known Pitfalls
+
+| Read this doc | Before touching |
+|-|-|
+| \`docs/pitfalls/short.md\` | \`src/a/b.ts\` |
+`;
+    const output = selectPitfalls(matchingInput(patterns));
+    const areaIndexStart = output.indexOf('### Area index');
+    assert.ok(areaIndexStart >= 0);
+    assert.match(output.slice(areaIndexStart), /docs\/pitfalls\/short\.md.*src\/a\/b\.ts/);
+});
+
 void test('AC-1: prose-only Known Pitfalls are included regardless of affected files, without blockquotes', () => {
     const patterns = `## Known Pitfalls
 
@@ -590,6 +603,36 @@ void test('AC-11: wrapper honors patterns override and docs-root override for le
             assert.match(output, /PATTERNS_OVERRIDE_BODY/);
             assert.match(output, /LINKED_OVERRIDE_BODY/);
             assert.match(output, /LESSONS_OVERRIDE_BODY/);
+        });
+    } finally {
+        fs.rmSync(temporary, { recursive: true, force: true });
+    }
+});
+
+void test('empty patterns override falls back to docs/patterns.md under the docs root', () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-pitfalls-empty-patterns-'));
+    const tasksRoot = path.join(temporary, 'tasks');
+    const docsRoot = path.join(temporary, 'docs-root');
+    const taskId = 'pitfalls-empty-patterns-fixture';
+    const taskDir = path.join(tasksRoot, taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.mkdirSync(path.join(docsRoot, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'spec.md'), specWithAffectedFile('src/entry.ts'));
+    fs.writeFileSync(path.join(docsRoot, 'docs', 'patterns.md'), `## Known Pitfalls
+
+### Empty override fallback
+
+EMPTY_PATTERNS_OVERRIDE_SENTINEL cites \`src/entry.ts\`.
+`);
+
+    try {
+        withEnvironment({
+            CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+            CANON_PATTERNS_MD_PATH: '',
+            [PITFALLS_DOCS_ROOT_ENV]: docsRoot,
+        }, () => {
+            const output = buildRelevantPitfalls([taskId]);
+            assert.match(output, /EMPTY_PATTERNS_OVERRIDE_SENTINEL/);
         });
     } finally {
         fs.rmSync(temporary, { recursive: true, force: true });

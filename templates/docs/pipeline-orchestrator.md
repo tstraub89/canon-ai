@@ -302,7 +302,7 @@ Claude uses the light tier for XS/S spec, plan, code review, and (in Claude mode
 | `CANON_STOP_WAIT_MS` | `30000` | How long `canon stop` waits for a launching run's first heartbeat before deciding whether to signal. |
 | `CANON_SKIP_PHASE_GATE` | _(unset)_ | Any non-empty value bypasses the `canon task phase <id> spec done` Affected Files lint (not the plan/implement pre-flights; those take `--force`). |
 | `CANON_PATTERNS_MD_PATH` | `docs/patterns.md` | Overrides the patterns doc used to select pitfalls and Trigger Table sections for implement prompts; lessons and linked pitfall docs still resolve from the docs root. |
-| `CANON_PITFALLS_DOCS_ROOT` | active checkout | Test-only root for `docs/lessons-learned.md` and linked pitfall docs in implement prompts. |
+| `CANON_PITFALLS_DOCS_ROOT` | active checkout | Test-only root for `docs/lessons-learned.md` and linked pitfall docs in implement prompts; it also roots `docs/patterns.md` when `CANON_PATTERNS_MD_PATH` is unset or empty. |
 
 Codex model overrides:
 

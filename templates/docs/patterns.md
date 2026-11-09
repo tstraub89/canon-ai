@@ -7,7 +7,7 @@
 This is the project's hard-won implementation knowledge. It has two main sections:
 
 1. **Trigger Table** — at the top, an index agents skim to jump to the relevant section. If your task touches an area listed here, the pointed-at section is likely load-bearing for what you're doing.
-2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. Implement prompts select full pitfalls and Trigger Table sections that match the spec's Affected Files, plus lessons that cite those files; other pitfall titles and a one-line index of the tables remain visible. A Known Pitfalls section with no `###` entries has its prose injected whole except blockquotes (author guidance) and index tables, regardless of the task's files. A directory in Affected Files also selects pitfalls that cite paths inside it. Cite full repository paths, directory prefixes, or globs in each entry. Agents still need this file open for spec authorship and code review.
+2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. Implement prompts select full pitfalls and Trigger Table sections that match the spec's Affected Files, plus lessons that cite those files; other pitfall titles and a one-line index of the tables remain visible. A Known Pitfalls section with no `###` entries has its prose injected whole except blockquotes (author guidance) and index tables, regardless of the task's files. A directory in Affected Files also selects pitfalls that cite paths inside it. Cite full repository paths, directory prefixes, or globs in each entry. A path counts only inside backticks or as a Markdown link target; directories need a trailing `/`, and globs need `*`. Bare file names never match. Agents still need this file open for spec authorship and code review.
 
 ## Trigger Table — Scan This First
 
@@ -74,13 +74,13 @@ Never add a suppression comment without a written justification on the same line
 >
 > **TODO[canon]: This is where the project's accumulated wisdom lives. Each pitfall should follow the format below. Initially empty for new projects — entries land here when a human promotes durable lessons from `docs/lessons-learned.md` during a sweep (see that file → "How to use this doc"). QA only appends lessons (to its task's fragment, which `--ship` folds into the buffer); it never promotes into this doc.**
 
-> **Pitfall format.** Write each pitfall as its own H3. Make the heading the short imperative rule, then explain the failure it prevents and the concrete check that avoids it. Cite full repository paths, directory prefixes, or globs in the body; bare basenames and symbols do not select a pitfall for an Affected File. When a symbol matters, pair it with the full repository path that owns it.
+> **Pitfall format.** Write each pitfall as its own H3. Make the heading the short imperative rule, then explain the failure it prevents and the concrete check that avoids it. A path counts only inside backticks or as a Markdown link target; directories need a trailing `/`, and globs need `*`. Bare file names never match an Affected File. When a symbol matters, pair it with the full repository path that owns it.
 >
 > **Split pitfall docs.** If the corpus is split across documents, put a table directly under `## Known Pitfalls`, before the H3 entries, with columns `Read this doc` and `Before touching`. Give each document its own row and map it to the paths or globs that make an implementer open it.
 
 ### Reset derived state when a source identifier changes
 
-When a record references another by ID, computed fields calibrated for the old reference can survive an ID swap and produce stale-data bugs. Reset those fields at every site that writes the ID. Search the project's actual state and update paths, such as `app/src/store/**`, before adding another writer.
+When a record references another by ID, computed fields calibrated for the old reference can survive an ID swap and produce stale-data bugs. Reset those fields at every site that writes the ID. Search the project's actual state and update paths, such as `example-app/src/store/**`, before adding another writer.
 
 ## Quick Reference: "I Want To..."
 

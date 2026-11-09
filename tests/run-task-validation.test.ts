@@ -4720,6 +4720,9 @@ const invalidSelfChecks: Array<[string, string, RegExp]> = [
     ['missing row', filledSelfCheck.replace(/^\| Sibling parity.*\n/m, ''), /row "Sibling parity" is missing/],
     ['empty evidence', filledSelfCheck.replace('Both handoff entry points checked.', '   '), /row "Sibling parity".*empty Evidence/],
     ['placeholder evidence', filledSelfCheck.replace('Both handoff entry points checked.', '_(parallel paths examined)_'), /row "Sibling parity".*template placeholder/],
+    ['bold-wrapped placeholder evidence', filledSelfCheck.replace('Both handoff entry points checked.', '**_(parallel paths examined)_**'), /row "Sibling parity".*template placeholder/],
+    ['code-wrapped placeholder evidence', filledSelfCheck.replace('Both handoff entry points checked.', '`_(parallel paths examined)_`'), /row "Sibling parity".*template placeholder/],
+    ['copied reason placeholder', filledSelfCheck.replace('Both handoff entry points checked.', 'N/A — <reason>'), /row "Sibling parity".*give the reason/],
     ['iteration only', '## Iteration 2\n' + filledSelfCheck.replace('## Self-Check', '### Self-Check'), /add a baseline `## Self-Check` section.*Iteration `### Self-Check`.*does not satisfy/],
     ['zero rows', '## Self-Check\n', /row "Test integrity" is missing/],
     ['header only', '## Self-Check\n| Check | Evidence |\n|---|---|\n', /row "Test integrity" is missing/],
@@ -4748,6 +4751,7 @@ for (const [name, content, message] of invalidSelfChecks) {
 const validSelfChecks = [
     filledSelfCheck,
     ...['—', '–', '-'].map(dash => filledSelfCheck.replace('Both handoff entry points checked.', `N/A ${dash} no guards added`)),
+    filledSelfCheck.replace('Both handoff entry points checked.', 'N/A — no tests changed'),
     filledSelfCheck.replace('## Self-Check', '## Self-check'),
     filledSelfCheck.replace('## Self-Check', '## Self Check'),
     filledSelfCheck.replace('| Sibling parity |', '| **Sibling parity** |'),
