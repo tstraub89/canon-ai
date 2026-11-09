@@ -1,134 +1,56 @@
 # Code Review: post-ship-cleanup
 
-> Reviewer: Claude | Spec: `tasks/post-ship-cleanup/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
-
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+Lenses: anchored-Claude (approve), cold-Claude (approve), cold-Codex (one P2). All returns valid.
 
 ## Stage 1 — Spec Compliance (gate)
 
-### Validation Gate
-
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-- [ ] Self-Check evidence in the effective record is not contradicted by the diff
-
-### Acceptance Criteria Check
-
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
-| AC | Status | Notes |
+| AC | Result | Note |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Met | `STOPLIST` + `[a-z]{2,}` in `blast-radius.ts`; test asserts `['Widget','URLParser']`; red-first row present |
+| AC-2 | Met | `gitGrep` returns `[]` only on status 1, throws otherwise; shim test covers status 1 and empty-stderr status 2 |
+| AC-3 | Met | `excludedPath` checks `PIPELINE_TELEMETRY_FILE_SET`; test covers stem reference and identifier hit |
+| AC-4 | Met | Pass-through control asserts non-empty block |
+| AC-5 | Met | `<reason>` branch and `bare` parenthesis rule; bold/code/`<reason>` invalid cases and `N/A — no tests changed` valid case added |
+| AC-6 | Met | `main.ts` comment names `validateHandoffAgainstSpec`; patterns/product-context name `classifyPreflightBlockers` with `validateHandoff()` as test-parity |
+| AC-7 | Met | `/^:?-+:?$/` and `||` fallback, both tested |
+| AC-8 | Met | P3–P5, P7 landed in root docs, mirrors, README, write-guide |
+| AC-9 | Met | P6 test asserts exact header line |
 
-### Dropped Sections Check
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All required validation checks were run
+- [x] Red-first evidence recorded for red-first ACs
+- [x] Non-goals respected
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan satisfiable
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] **Pass** — proceed to Stage 2
+- [ ] **Fail**
 
-### Stage 1 Verdict
-
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
-
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
-
-### Summary
-
-One paragraph: overall code quality of the implementation.
+## Stage 2 — Code Quality
 
 ### Findings
 
-#### Correctness Bugs
+No `code-bug` or `spec-gap` findings survive. Nits:
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
-
-#### Risk / Guardrails
-
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
-
-#### Optional Cleanup / Nit
-
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
-
-#### Spec Gaps
-
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+1. **Parenthesized-evidence rejection** (`src/orchestrator/validation.ts:112`, and the `<reason>` check at `:110`) — flagged by 3 lenses (cold-Codex P2, cold-Claude, anchored as nit). Evidence like `(verified both entry points)` or `(N/A)` is rejected as a placeholder, and any evidence quoting `<reason>` is rejected. This is the behavior spec S1 prescribes: Decision S1 ("starts with `(` and ends with `)`", "containing the literal `<reason>`"), the Judgment Calls row "Placeholder shape" (decided by Author), and the Known Risks bullet "Placeholder rule" (accepted; the message names the fix). Cross-model agreement is acknowledged, not waved off: the cost is a one-round evidence retry, and the rejection message says how to fix it. Disagreement recorded here; a narrower exact-placeholder match is a possible follow-up if retries show up in practice. Altitude if pursued: spec change, not an implementation fix.
+2. **Untested null-status (signal) branch of `gitGrep`** (`tests/blast-radius.test.ts`) — AC-2 requires only status 1 and empty-stderr status 2. Optional.
+3. **Shared-fixture rewrite in P6 test** (`tests/run-task-prompts.test.ts`) — rewrites `spec.md` and restores in `finally`; safe while tests in the file run serially. Optional.
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): separator `-+` turns a `| - | - |` data row into a separator — spec P1 explicitly requires `:?-+:?` to match GFM and sibling parsers.
+- Dismissed (cold-Claude): `[a-z]{2,}` drops `APIv`/`UIx` tokens — spec B2 and Known Risks "Acronym shapes" accept this; map is advisory.
+- Dismissed (cold-Claude): `STOPLIST` is case-sensitive, so `DONE`/`TODO` are not covered — spec B1 requires a case-sensitive exact-token list; `DONE` also fails the shape rules.
+- Dismissed (cold-Claude): `??` → `||` only applied in `buildRelevantPitfalls` — swept `src/` for other `CANON_*` `??` reads; the rest are version, tasks-dir, or other overrides outside P2's scope (empty `CANON_TASKS_DIR_OVERRIDE` is not in this task).
+- Dismissed (cold-Claude): `gitGrep` now throws on exit 2 with empty stderr — intended by spec B3; the caller's try/catch keeps the map fail-open (fail-open test covers it).
+- Dismissed (cold-Claude): git-shim test fragile on Windows / without `node` on PATH — engines require Node, so `node` resolves; the existing fail-open test uses the same shim pattern. Low value.
+- Dismissed (cold-Claude, duplicate of nit 3): shared `spec.md` fixture race — the runner is serial per file.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
+- [x] **Approved with nits** — ship after addressing optional items (or not)
 - [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
