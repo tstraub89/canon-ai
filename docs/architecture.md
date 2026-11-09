@@ -166,7 +166,7 @@ Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-che
 
 **Concurrency**: runs on the same `github.ref` cancel in-flight runs when a new push lands.
 
-**Merge gate**: the `main` ruleset requires `checks` plus `test (node 24.x, shard 1/3)`, `test (node 24.x, shard 2/3)`, `test (node 24.x, shard 3/3)`, `test (node 26.x, shard 1/3)`, `test (node 26.x, shard 2/3)`, and `test (node 26.x, shard 3/3)` to pass before a PR merges (branches need not be up to date). Before this change merges, a human must replace the three previous shard checks in the ruleset with these six Node-labelled checks, keeping `checks` required.
+**Merge gate**: the `main` ruleset requires `checks` plus `test (node 24.x, shard 1/3)`, `test (node 24.x, shard 2/3)`, `test (node 24.x, shard 3/3)`, `test (node 26.x, shard 1/3)`, `test (node 26.x, shard 2/3)`, and `test (node 26.x, shard 3/3)` to pass before a PR merges (branches need not be up to date). Repository admins bypass the ruleset, which keeps canon's direct pushes to `main` (task scaffolds, archives, changelog bullets) working; for admins a red PR is a warning, not a block, and a bad direct push shows up as a red `main` run after it lands.
 
 ## Cross-Cutting Concerns
 
