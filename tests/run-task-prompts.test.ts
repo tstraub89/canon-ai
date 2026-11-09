@@ -645,12 +645,18 @@ void test('task artifact prompts carry the canonical file citation rule', () => 
         promptImplement(baseState),
         promptImplementRevisions(iterState, [], 'main'),
         promptImplementReroute(rerouteState),
+        promptCodeReview(baseState),
+        promptCodeReview(codeReviewRoundNState),
         promptQa(baseState),
     ];
     for (const prompt of prompts) assert.ok(prompt.includes(ARTIFACT_CITATION_RULE));
     const implementFixup = normalize(promptArtifactFixup({ phase: 'implement', findings: ['tasks/test-pf-001/handoff.md:1: `gone.ts` — missing file', 'other'], artifacts: ['tasks/test-pf-001/handoff.md'], attempt: 1, maxAttempts: 2 }));
     const qaFixup = normalize(promptArtifactFixup({ phase: 'qa', findings: ['tasks/test-pf-001/done.md:1: `gone.ts` — missing file'], artifacts: ['tasks/test-pf-001/done.md', 'tasks/test-pf-001/pr-body.md'], attempt: 2, maxAttempts: 2 }));
-    for (const [key, prompt] of [['promptArtifactFixup_implement', implementFixup], ['promptArtifactFixup_qa', qaFixup]] as const) {
+    const reviewFixup = normalize(promptArtifactFixup({ phase: 'code_review', findings: ['tasks/test-pf-001/review.md:1: `gone.ts` — missing file'], artifacts: ['tasks/test-pf-001/review.md'], attempt: 1, maxAttempts: 2 }));
+    assert.doesNotMatch(reviewFixup, /commits after this turn|git commit/i);
+    assert.match(reviewFixup, /before acting on the review/i);
+    assert.match(reviewFixup, /do not change any verdict checkbox or finding/i);
+    for (const [key, prompt] of [['promptArtifactFixup_implement', implementFixup], ['promptArtifactFixup_qa', qaFixup], ['promptArtifactFixup_code_review', reviewFixup]] as const) {
         assert.ok(prompt.includes(ARTIFACT_CITATION_RULE));
         assert.match(prompt, /phase is already complete/);
         assert.match(prompt, /do not run `canon task phase`/);

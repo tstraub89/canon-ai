@@ -163,6 +163,8 @@ When you cite a section of a Markdown doc with the quoted form `§"…"`, the qu
 
 For each task, write `tasks/<id>/review.md`.
 
+**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix — never a path relative to a package or to the current directory. For a file that does not exist — one this task deleted, or one only planned — use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.
+
 Round 1 fills the existing template structure directly — do **not** wrap it in a `## Round 1` section; the `## Stage 1` and `## Stage 2` headings stay at H2. Re-review appends a new `## Round {{roundN}}` section near the bottom (with `### Stage 1` / `### Stage 2` sub-headings), preserving earlier rounds.
 
 Every round — the Round 1 body and each `## Round N` section — includes one scope line near the top: **Scope:** {{{scopeWord}}} — base `{{{scopeBase}}}` — reason: {{{scopeReason}}}. {{#mixedProvider}}The numbered cold-Codex archive header is the machine-readable record.{{/mixedProvider}}{{^mixedProvider}}The orchestrator writes the numbered round record with the machine-readable scope header.{{/mixedProvider}}

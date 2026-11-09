@@ -1,0 +1,1 @@
+The review-artifact fix-up and archive exclusions are consistent with the surrounding validation and routing flows. The targeted docs-reference tests passed; no actionable regressions were found.

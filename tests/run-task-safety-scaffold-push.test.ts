@@ -40,6 +40,87 @@ import {
     parityTask,
 } from './run-task-safety-helpers.js';
 
+function installArtifactReviewAgent(fixture: ReturnType<typeof prepareReviewEntryMainFixture>): string {
+    const driver = path.join(path.dirname(fixture.fakeBins), 'artifact-review-agent.mjs');
+    fs.writeFileSync(driver, [
+        "import fs from 'node:fs';",
+        "import path from 'node:path';",
+        'const args = process.argv.slice(2);',
+        "if (args[0] === '--version') { console.log('fake Claude 1.0'); process.exit(0); }",
+        'const tasksRoot = process.env.CANON_TASKS_DIR_OVERRIDE;',
+        'const taskId = process.env.FAKE_AGENT_TASK_ID;',
+        'const taskDir = path.join(tasksRoot, taskId);',
+        "const statusPath = path.join(taskDir, 'status.json');",
+        "const reviewPath = path.join(taskDir, 'review.md');",
+        'const logPath = process.env.FAKE_REVIEW_AGENT_LOG;',
+        'const calls = logPath && fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8").split("\\n").filter(Boolean).length : 0;',
+        'const resumed = args.includes("--resume");',
+        'if (logPath) fs.appendFileSync(logPath, JSON.stringify({ args, resumed }) + "\\n");',
+        'const recovery = process.env.FAKE_REVIEW_RECOVERY === "1";',
+        'const fixMode = process.env.FAKE_REVIEW_FIX_MODE ?? "clean";',
+        'const verdict = process.env.FAKE_REVIEW_VERDICT ?? "changes_requested";',
+        'const verdictLabel = verdict === "spec_gap" ? "Spec gap" : verdict === "approved" ? "Approved" : "Changes requested";',
+        'const makeReview = label => `# Code Review\\n\\n## Verdict\\n\\n- [x] **${label}**\\n\\nFinding: See \\`src/removed-by-task.ts\\`.\\n`;',
+        'const status = JSON.parse(fs.readFileSync(statusPath, "utf8"));',
+        'if (recovery && calls === 0 && !resumed) {',
+        '  fs.writeFileSync(reviewPath, "# Code Review\\n");',
+        '} else if (!resumed) {',
+        '  fs.writeFileSync(reviewPath, makeReview(verdictLabel));',
+        '  status.phases.code_review.status = process.env.FAKE_REVIEW_BLOCKED === "1" ? "blocked" : "done";',
+        '  status.phases.code_review.verdict = verdict;',
+        '  status.status = "qa";',
+        '} else if (recovery && calls === 1) {',
+        '  fs.writeFileSync(reviewPath, makeReview(verdictLabel));',
+        '  status.phases.code_review.status = "done";',
+        '  status.phases.code_review.verdict = verdict;',
+        '  status.status = "qa";',
+        '} else {',
+        '  let content = fs.readFileSync(reviewPath, "utf8");',
+        '  if (fixMode === "flip" || fixMode === "flip-fail") content = content.replace("**Changes requested**", "**Approved**");',
+        '  else content = content.replace("`src/removed-by-task.ts`", "[src/removed-by-task.ts](src/removed-by-task.ts)");',
+        '  fs.writeFileSync(reviewPath, content);',
+        '  if (fixMode === "outside") fs.writeFileSync(path.join(process.cwd(), "outside-fixup.txt"), "changed\\n");',
+        '  fs.writeFileSync(statusPath, JSON.stringify(status, null, 2) + "\\n");',
+        '  console.log(JSON.stringify({ type: "result", result: "ok", session_id: "reviewer-fixup-session" }));',
+        '  if (fixMode === "flip-fail") process.exit(7);',
+        '  process.exit(0);',
+        '}',
+        'fs.writeFileSync(statusPath, JSON.stringify(status, null, 2) + "\\n");',
+        'if (process.env.FAKE_REVIEW_NO_SESSION !== "1") console.log(JSON.stringify({ type: "result", result: "ok", session_id: "reviewer-fixup-session" }));',
+    ].join('\n'));
+    fs.writeFileSync(path.join(fixture.fakeBins, 'claude'), [
+        '#!/bin/sh',
+        'exec node "$FAKE_REVIEW_AGENT_DRIVER" "$@"',
+        '',
+    ].join('\n'), { mode: 0o755 });
+    return driver;
+}
+
+function runArtifactReviewFixture(
+    fixture: ReturnType<typeof prepareReviewEntryMainFixture>,
+    taskId: string,
+    driver: string,
+    env: NodeJS.ProcessEnv = {},
+) {
+    return runReviewLoopMain(fixture.localDir, fixture.tasksRoot, fixture.fakeBins, taskId, 3, [], {
+        CANON_PROVIDER: 'claude',
+        CANON_WORKTREES_ROOT: path.join(fixture.localDir, '.canon', 'worktrees'),
+        FAKE_REVIEW_AGENT_DRIVER: driver,
+        FAKE_REVIEW_AGENT_LOG: path.join(path.dirname(driver), 'artifact-review-agent.jsonl'),
+        ...env,
+    });
+}
+
+function prepareArtifactReviewRun(dir: string, taskId: string) {
+    const fixture = prepareReviewEntryMainFixture(dir, taskId, false, true);
+    installDocsRefsChecker(fixture.localDir, { hook: false });
+    const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+    status.provider = 'claude';
+    fs.writeFileSync(fixture.statusPath, `${JSON.stringify(status, null, 2)}\n`);
+    const driver = installArtifactReviewAgent(fixture);
+    return { fixture, driver };
+}
+
 
 void test('docs-refs findings parse, filter to own artifacts, and scope snapshots diff content and status', () => {
     const findings = parseDocsRefsFindings([
@@ -546,6 +627,137 @@ void test('QA docs-refs fix-up resumes its in-process Claude session before comm
             '--add-dir', fs.realpathSync(localDir), '--max-budget-usd', cfg.budget,
             '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose', '--resume', 'qa-session-for-fixup',
         ] });
+    });
+});
+
+void test('code-review docs-refs fix-up resumes the reviewer and routes changes_requested to implement', { concurrency: false }, () => {
+    withTempDir('artifact-fixup-code-review-', dir => {
+        const taskId = 'artifact-fixup-code-review';
+        const { fixture, driver } = prepareArtifactReviewRun(dir, taskId);
+        const result = runArtifactReviewFixture(fixture, taskId, driver);
+        const output = combinedOutput(result);
+        assert.equal(result.status, 0, output);
+        assert.match(result.stdout, /Artifact fix-up \(attempt 1\/2\)/);
+        assert.match(result.stdout, /Step mode: stopping after one phase/);
+        assert.match(fs.readFileSync(path.join(fixture.tasksRoot, taskId, 'review.md'), 'utf8'), /\[src\/removed-by-task\.ts\]\(src\/removed-by-task\.ts\)/);
+        const invocations = fs.readFileSync(path.join(dir, 'artifact-review-agent.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as { args: string[]; resumed: boolean });
+        assert.equal(invocations.filter(entry => entry.resumed && entry.args.includes('reviewer-fixup-session')).length, 1);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        assert.equal(status.phases.code_review?.status, 'pending');
+        assert.match(result.stdout, /Next phase: implement/);
+    });
+});
+
+for (const fixMode of ['flip', 'flip-fail'] as const) {
+    void test(`code-review fix-up verdict guard auto-blocks after ${fixMode}`, { concurrency: false }, () => {
+        withTempDir(`artifact-review-verdict-${fixMode}-`, dir => {
+            const taskId = `artifact-review-verdict-${fixMode}`;
+            const { fixture, driver } = prepareArtifactReviewRun(dir, taskId);
+            const result = runArtifactReviewFixture(fixture, taskId, driver, { FAKE_REVIEW_FIX_MODE: fixMode });
+            const output = combinedOutput(result);
+            assert.equal(result.status, 2, output);
+            const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+            assert.equal(status.phases.code_review?.status, 'blocked');
+            const reason = status.escalations?.at(-1)?.reason ?? '';
+            assert.match(reason, new RegExp(taskId));
+            assert.match(reason, /checked verdict 'approved'/);
+            assert.match(reason, /recorded verdict 'changes_requested'/);
+            assert.match(reason, new RegExp(`canon task reset-code-review ${taskId}`));
+            assert.match(reason, new RegExp(`canon run ${taskId}`));
+            assert.doesNotMatch(output, /Next phase:/);
+        });
+    });
+}
+
+void test('code-review fix-up auto-blocks when the reviewer edits outside review.md', { concurrency: false }, () => {
+    withTempDir('artifact-review-scope-', dir => {
+        const taskId = 'artifact-review-scope';
+        const { fixture, driver } = prepareArtifactReviewRun(dir, taskId);
+        const result = runArtifactReviewFixture(fixture, taskId, driver, { FAKE_REVIEW_FIX_MODE: 'outside' });
+        const output = combinedOutput(result);
+        assert.equal(result.status, 2, output);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        assert.equal(status.phases.code_review?.status, 'blocked');
+        assert.match(status.escalations?.at(-1)?.reason ?? '', /outside-fixup\.txt/);
+        assert.doesNotMatch(output, /Next phase:/);
+    });
+});
+
+void test('code-review fix-up without a reviewer session warns with findings and continues', { concurrency: false }, () => {
+    withTempDir('artifact-review-no-session-', dir => {
+        const taskId = 'artifact-review-no-session';
+        const { fixture, driver } = prepareArtifactReviewRun(dir, taskId);
+        const result = runArtifactReviewFixture(fixture, taskId, driver, { FAKE_REVIEW_NO_SESSION: '1' });
+        const output = combinedOutput(result);
+        assert.equal(result.status, 0, output);
+        assert.match(output, /no claude session is available to fix them/i);
+        assert.match(output, /src\/removed-by-task\.ts/);
+        assert.match(output, /fix them before --pr/i);
+        assert.doesNotMatch(output, /Artifact fix-up \(attempt/);
+        assert.match(output, /Next phase: implement/);
+    });
+});
+
+void test('spec_gap review gets its artifact fix-up before the stop', { concurrency: false }, () => {
+    withTempDir('artifact-review-spec-gap-', dir => {
+        const taskId = 'artifact-review-spec-gap';
+        const { fixture, driver } = prepareArtifactReviewRun(dir, taskId);
+        const result = runArtifactReviewFixture(fixture, taskId, driver, { FAKE_REVIEW_VERDICT: 'spec_gap' });
+        const output = combinedOutput(result);
+        assert.equal(result.status, 2, output);
+        assert.match(output, /Artifact fix-up \(attempt 1\/2\)/);
+        assert.match(output, /SPEC GAP/);
+        assert.doesNotMatch(fs.readFileSync(path.join(fixture.tasksRoot, taskId, 'review.md'), 'utf8'), /`src\/removed-by-task\.ts`/);
+    });
+});
+
+void test('reviewer-blocked review stops without running artifact fix-up', { concurrency: false }, () => {
+    withTempDir('artifact-review-blocked-', dir => {
+        const taskId = 'artifact-review-blocked';
+        const { fixture, driver } = prepareArtifactReviewRun(dir, taskId);
+        const result = runArtifactReviewFixture(fixture, taskId, driver, { FAKE_REVIEW_BLOCKED: '1' });
+        const output = combinedOutput(result);
+        assert.equal(result.status, 2, output);
+        assert.match(output, /CODE REVIEW STOPPED/);
+        assert.doesNotMatch(output, /Artifact fix-up/);
+        const invocations = fs.readFileSync(path.join(dir, 'artifact-review-agent.jsonl'), 'utf8').trim().split('\n');
+        assert.equal(invocations.length, 1);
+        assert.equal((JSON.parse(invocations[0]) as { resumed: boolean }).resumed, false);
+        assert.equal((JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson).phases.code_review?.status, 'blocked');
+    });
+});
+
+void test('review recovery fix-up runs only after the one-shot reviewer recovery', { concurrency: false }, () => {
+    withTempDir('artifact-review-recovery-', dir => {
+        const taskId = 'artifact-review-recovery';
+        const { fixture, driver } = prepareArtifactReviewRun(dir, taskId);
+        fs.writeFileSync(path.join(fixture.tasksRoot, taskId, 'review.md'), '# Code Review\n');
+        const result = runArtifactReviewFixture(fixture, taskId, driver, { FAKE_REVIEW_RECOVERY: '1' });
+        const output = combinedOutput(result);
+        assert.equal(result.status, 0, output);
+        assert.equal((output.match(/Artifact fix-up \(attempt 1\/2\)/g) ?? []).length, 1);
+        assert.match(output, /Retrying claude session/);
+        assert.match(output, /Next phase: implement/);
+        assert.doesNotMatch(fs.readFileSync(path.join(fixture.tasksRoot, taskId, 'review.md'), 'utf8'), /`src\/removed-by-task\.ts`/);
+        const invocations = fs.readFileSync(path.join(dir, 'artifact-review-agent.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as { args: string[]; resumed: boolean });
+        assert.equal(invocations.length, 3);
+        assert.equal(invocations.filter(entry => entry.resumed && entry.args.includes('reviewer-fixup-session')).length, 2);
+    });
+});
+
+void test('verdict change in review recovery fix-up auto-blocks code_review', { concurrency: false }, () => {
+    withTempDir('artifact-review-recovery-guard-', dir => {
+        const taskId = 'artifact-review-recovery-guard';
+        const { fixture, driver } = prepareArtifactReviewRun(dir, taskId);
+        fs.writeFileSync(path.join(fixture.tasksRoot, taskId, 'review.md'), '# Code Review\n');
+        const result = runArtifactReviewFixture(fixture, taskId, driver, { FAKE_REVIEW_RECOVERY: '1', FAKE_REVIEW_FIX_MODE: 'flip' });
+        const output = combinedOutput(result);
+        assert.equal(result.status, 2, output);
+        assert.match(output, /Artifact fix-up verdict guard failed/);
+        const status = JSON.parse(fs.readFileSync(fixture.statusPath, 'utf8')) as StatusJson;
+        assert.equal(status.phases.code_review?.status, 'blocked');
+        assert.match(status.escalations?.at(-1)?.reason ?? '', /checked verdict 'approved'.*recorded verdict 'changes_requested'/s);
+        assert.doesNotMatch(output, /Next phase:/);
     });
 });
 

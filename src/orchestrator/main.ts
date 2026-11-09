@@ -536,8 +536,8 @@ function fixupTaskContexts(taskIds: readonly string[]): TaskContext[] {
 }
 
 async function fixUpOwnArtifactRefs(opts: {
-    phase: 'implement' | 'qa'; taskIds: string[]; cwd: string; sessionId: string | null;
-    artifactNames: readonly string[]; runSession: (prompt: string) => Promise<boolean>;
+    phase: 'implement' | 'qa' | 'code_review'; taskIds: string[]; cwd: string; sessionId: string | null;
+    artifactNames: readonly string[]; runSession: (prompt: string) => Promise<boolean>; onStop?: (message: string) => never;
 }): Promise<void> {
     const artifacts = opts.taskIds.flatMap(taskId => opts.artifactNames.map(name => `tasks/${taskId}/${name}`));
     const checkerPath = path.join(REPO_ROOT, 'scripts', 'docs-refs-check.mjs');
@@ -556,7 +556,8 @@ async function fixUpOwnArtifactRefs(opts: {
     let own = filter(initial);
     if (own.length === 0) return;
     if (!opts.sessionId) {
-        const agent = splitPolicy.roleBackendId(opts.phase === 'implement' ? 'implementer' : 'qa', assignmentForTasks(opts.taskIds));
+        const role = opts.phase === 'implement' ? 'implementer' : opts.phase === 'qa' ? 'qa' : 'reviewer';
+        const agent = splitPolicy.roleBackendId(role, assignmentForTasks(opts.taskIds));
         warn(`docs-refs-check found broken references in the ${opts.phase} artifacts, but no ${agent} session is available to fix them:\n` +
             `${own.map(f => f.raw).join('\n')}\n${consequence}`);
         return;
@@ -582,13 +583,17 @@ async function fixUpOwnArtifactRefs(opts: {
         }
         const post = snapshotOutsideArtifacts(opts.cwd, opts.taskIds);
         if (!post.ok) {
-            die(`Artifact fix-up stopped the run: could not inspect the working tree after the fix session (${post.error}). Nothing was committed; inspect the tree before re-running.`);
+            const cause = `Artifact fix-up stopped the run: could not inspect the working tree after the fix session (${post.error})`;
+            if (opts.onStop) opts.onStop(cause);
+            die(`${cause}. Nothing was committed; inspect the tree before re-running.`);
             return;
         }
         const changed = diffScopeSnapshots(pre.snap, post.snap, exempt);
         if (changed.length > 0) {
-            die(`Artifact fix-up stopped the run: the ${opts.phase} fix session changed files outside its own artifacts:\n` +
-                `${changed.map(file => `    ${file}`).join('\n')}\nNothing was committed. Review and revert those changes, then re-run canon run ${opts.taskIds.join(' ')}.`);
+            const cause = `Artifact fix-up stopped the run: the ${opts.phase} fix session changed files outside its own artifacts:\n` +
+                `${changed.map(file => `    ${file}`).join('\n')}`;
+            if (opts.onStop) opts.onStop(cause);
+            die(`${cause}\nNothing was committed. Review and revert those changes, then re-run canon run ${opts.taskIds.join(' ')}.`);
         }
         if (!ok) {
             warn(`Artifact fix-up failed; remaining findings:\n${own.map(f => f.raw).join('\n')}\n${consequence}`);
@@ -608,6 +613,49 @@ async function fixUpOwnArtifactRefs(opts: {
     }
     warn(`docs-refs-check still reports broken references in the ${opts.phase} artifacts after ${ARTIFACT_FIXUP_MAX_ATTEMPTS} fix-up attempts:\n` +
         `${own.map(f => f.raw).join('\n')}\n${consequence}`);
+}
+
+function stopReviewFixup(taskIds: string[], cause: string): never {
+    const recovery = codeReviewResetCommands(taskIds);
+    const reason = `${cause}\nCode review is auto-blocked for the full task set. Recover with: ${recovery}; then canon run ${taskIds.join(' ')}.`;
+    warn(reason);
+    splitState.autoBlockPhase(taskIds, 'code_review', phaseIterationCount(taskIds, 'code_review'), reason);
+    splitCli.setExitReason(reason);
+    process.exit(2);
+}
+
+async function fixUpReviewArtifactRefs(taskIds: string[], cwd: string, sessionId: string | null): Promise<void> {
+    if (!taskIds.every(taskId => getPhaseStatus(splitState.readStatus(taskId), 'code_review') === 'done')) return;
+
+    const assignment = assignmentForTasks(taskIds);
+    const reviewer = agentBackendFor('reviewer', assignment);
+    const checkVerdicts = (): void => {
+        for (const taskId of taskIds) {
+            let content: string | null = null;
+            try { content = fs.readFileSync(path.join(taskDirFor(taskId), 'review.md'), 'utf8'); } catch { /* missing */ }
+            const checked = content === null ? null : splitValidation.extractCheckedVerdict(content);
+            const recorded = getVerdict(splitState.readStatus(taskId), 'code_review');
+            if (checked !== recorded) {
+                stopReviewFixup(taskIds,
+                    `Artifact fix-up verdict guard failed for task '${taskId}': checked verdict '${checked ?? 'none'}' in review.md differs from recorded verdict '${recorded || 'none'}'.`);
+            }
+        }
+    };
+
+    await fixUpOwnArtifactRefs({
+        phase: 'code_review', taskIds, cwd, sessionId, artifactNames: ['review.md'],
+        onStop: cause => stopReviewFixup(taskIds, cause),
+        runSession: async prompt => {
+            try {
+                const result = await reviewer.run({ role: 'reviewer', phase: 'code_review', tasks: fixupTaskContexts(taskIds), prompt,
+                    interactive: false, resumeId: sessionId,
+                    metricsContext: { taskId: taskIds[0], phase: 'code_review_fixup', activeCwd: cwd }, cwd, wrapForResume: false });
+                return result.exitCode === 0;
+            } finally {
+                checkVerdicts();
+            }
+        },
+    });
 }
 
 async function fixUpImplementArtifactRefs(taskIds: string[], cwd: string): Promise<void> {
@@ -3727,9 +3775,14 @@ export async function withAgentSessionPark<T>(phase: CurrentPhase, taskIds: stri
     }
 }
 
+function codeReviewResetCommands(taskIds: string[]): string {
+    const recovery = taskIds.map(id => `canon task reset-code-review ${id}`).join('; ');
+    return recovery;
+}
+
 function stopForReviewerBlock(taskIds: string[], blockedIds: string[], statuses: StatusJson[]): never {
     const maxIter = statuses.reduce((max, status) => Math.max(max, getIterations(status)), 0);
-    const recovery = taskIds.map(id => `canon task reset-code-review ${id}`).join('; ');
+    const recovery = codeReviewResetCommands(taskIds);
     const reason =
         `Code review stopped without a verdict for task(s): ${blockedIds.join(', ')}. ` +
         `The reviewer set code_review blocked; see ${taskIds.map(id => `tasks/${id}/review.md`).join(', ')}. ` +
@@ -3774,6 +3827,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
 
     // Verify all tasks completed this phase. If any didn't, attempt
     // evidence-based auto-advance, then a one-shot retry, before bailing.
+    let recoveredReview = false;
     for (let i = 0; i < taskIds.length; i += 1) {
         const phaseStatus = getPhaseStatus(statuses[i], phase);
         if (phase === 'implement' && phaseStatus === 'done') {
@@ -3807,6 +3861,7 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
                 process.exit(2);
             }
             const recovered = await recoverPhaseForTask(taskIds[i], phase, phaseStatus);
+            if (phase === 'code_review' && recovered) recoveredReview = true;
             if (!recovered) {
                 warn(`Phase '${phase}' did not reach 'done' for '${taskIds[i]}'. Stopping for human review.`);
                 process.exit(2);
@@ -3817,6 +3872,12 @@ export async function checkAndRoute(phase: Phase, taskIds: string[]): Promise<vo
     // Re-read after any auto-advances so downstream verdict/iteration checks
     // see the fresh state.
     statuses = taskIds.map(splitState.readStatus);
+
+    if (phase === 'code_review' && recoveredReview) {
+        const sessionId = cliArgs.interactive ? null : splitState.usableSessionId(taskIds, 'reviewer', assignmentForTasks(taskIds));
+        await fixUpReviewArtifactRefs(taskIds, splitWorktree.getActiveCwd(taskIds), sessionId);
+        statuses = taskIds.map(splitState.readStatus);
+    }
 
     // A Claude session can finish code_review during one-shot recovery after an
     // unfilled review. Enforce the same full-send scope rule here before QA.
@@ -4345,6 +4406,12 @@ export async function main(): Promise<void> {
                         const label = role ? agentBackendFor(role, assignmentForTasks(taskIds)).displayName : phaseResult.agent;
                         splitCli.info(`${label} session stored (${slot}): ${lastSessionId.slice(0, 8)}...`);
                     }
+                }
+                if (currentPhase === 'code_review') {
+                    const sessionId = cliArgs.interactive || !lastSessionId
+                        ? null
+                        : splitState.usableSessionId(taskIds, 'reviewer', assignmentForTasks(taskIds));
+                    await fixUpReviewArtifactRefs(taskIds, splitWorktree.getActiveCwd(taskIds), sessionId);
                 }
                 await checkAndRoute(currentPhase, taskIds);
             }

@@ -1,134 +1,86 @@
 # Code Review: review-artifact-refs-fixup
 
-> Reviewer: Claude | Spec: `tasks/review-artifact-refs-fixup/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
+> Reviewer: Claude (foreman) | Spec: `tasks/review-artifact-refs-fixup/spec.md`
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
+Synthesized from the anchored Claude lens, the cold-Claude lens, and the injected cold-Codex findings (clean: no actionable regressions).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-- [ ] Self-Check evidence in the effective record is not contradicted by the diff
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence recorded for each red-first AC (AC-2 and AC-10 rows against `bbaa053`)
+- [x] Self-Check evidence in the effective record is not contradicted by the diff
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: Prompt rule | Pass | Rule in the foreman template; first-round and round-N prompt tests; goldens regenerated. |
+| AC-2: Fix-up runs and fixes | Pass | Test asserts attempt 1/2 log, reviewer resume, fixed ref, routing to implement. |
+| AC-3: Verdict guard | Pass | Zero-exit and non-zero-exit flips both auto-block, naming task and both verdicts. Guard runs in `finally`. |
+| AC-4: Scope guard | Pass | Outside-artifact edit auto-blocks code_review. |
+| AC-5: No session | Pass | Warns with findings and the fix-before-`--pr` instruction; continues. |
+| AC-6: Early stop | Pass | `spec_gap` gets fix-up before stop; blocked review runs no fix-up. |
+| AC-7: Fix-up prompt | Pass | No commit wording; forbids verdict/finding changes; golden covered. |
+| AC-8: Checker exemptions | Pass | `review-cold-codex.md`, `review-prior-1.md`, `review-prior-12.md` exempt; `review.md` still fails. |
+| AC-9: Docs | Pass | Both copies updated (one stale closing sentence, see nits). |
+| AC-10: Recovery path | Pass | One fix-up after recovery, none after the incomplete foreman return; verdict flip auto-blocks. |
+| AC-11: Blocked-review recovery | Pass | Archives via real `archivePriorReview`; checker then clean. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The fix-up reuses the shared helper with a stop callback and a `finally`-wrapped verdict guard, and both `review.md` writers (foreman, recovery) reach it. Behavior matches the spec on every verdict and recovery path I traced. Only wording and test-coverage nits survive.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
-
-#### Risk / Guardrails
-
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
-
-#### Optional Cleanup / Nit
-
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+(none)
 
 #### Spec Gaps
 
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
+(none)
 
-(none / list items)
+#### Nits / Cleanup (non-blocking)
 
-### Dismissed Cold Findings
+- **Stale closing sentence in docs** (anchored; `docs/pipeline-orchestrator.md:375`, mirrored in `templates/docs/pipeline-orchestrator.md:375`). The paragraph still ends "any change outside that phase's own artifacts stops the run before commit." For code_review the stop auto-blocks the bundle and nothing is committed; the earlier sentences in the same paragraph state this correctly, so the tail is only loosely contradictory. Wording-only. Verified against the doc text.
+- **Missing recovery-site test for outside-artifact edit** (anchored; `tests/run-task-safety-scaffold-push.test.ts`). AC-10 names verdict change and outside-edit; only the verdict-flip has a recovery test. Both share the same `onStop` path.
+- **No test throws `AgentSessionError`** (anchored; `tests/run-task-safety-scaffold-push.test.ts`). The `flip-fail` case covers the non-zero-exit path; the thrown path is protected only by the `finally`.
+- **`codeReviewResetCommands` assigns then returns a local** (anchored; `src/orchestrator/main.ts`). Could return directly.
+- **Guard runs before scope check** (cold-Claude; `src/orchestrator/main.ts:633-642`). If a fix session both flips a verdict and edits an outside file, the verdict message is reported first and the file list is not. The bundle is blocked either way.
+- **Guard has no pre-fix baseline** (cold-Claude low, anchored low). The spec (Decision item 4) requires the post-fix checked-vs-recorded equality; the phase gate already enforces equality when code_review is marked `done`, so a pre-existing mismatch only arises via manual edits. Consistent with the spec.
+- **No-session behavior differs from the recovery path** (cold-Claude, anchored). Main path passes `null` when `lastSessionId` is empty. Matches AC-5 warn-and-continue; `--pr` stays the backstop.
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
+## Dismissed Cold Findings
 
-(none / list items)
+- Dismissed (cold-Claude): the verdict guard misreads a reroute round because the phase gate takes the verdict from `## Amendment Review` - reroute evidence applies only to `spec_review` and `plan` (`src/orchestrator/validation.ts:330-331`: "Only spec_review and plan are reroute-gated"); code_review always uses `extractCheckedVerdict(content)`, the same function the guard uses.
+- Dismissed (cold-Claude): `process.exit` in the `finally` replaces a thrown `reviewer.run` error - intended; the spec requires the guard to run and auto-block even on a thrown `AgentSessionError`.
+- Dismissed (cold-Claude): earlier-round text and findings are not protected by the guard - the spec scopes the guard to the checked verdict; prose edits are an accepted risk ("visible in the diff", Known Risks).
+- Dismissed (cold-Claude): the new exemptions live only in `isNoisySourceFile` and other scanners were not checked - speculative (the lens stated it did not check); the AC-8/AC-11 tests exercise `runChecks` end to end and pass.
+- Dismissed (cold-Codex): no findings; nothing to adjudicate.
 
 ## Final Verdict
 
-- [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
+- [ ] **Approved**
+- [x] **Approved with nits** — non-blocking wording and test-coverage items above
+- [ ] **Changes requested**
+- [ ] **Needs re-review**
+- [ ] **Spec gap**

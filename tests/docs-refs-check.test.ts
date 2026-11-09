@@ -11,6 +11,7 @@ import {
     mergeAdopterConfig,
     runChecks,
 } from '../scripts/docs-refs-check.mjs';
+import { archivePriorReview } from '../src/orchestrator/review-archive.js';
 
 function makeTempRepo(
     setup: (root: string) => void,
@@ -123,6 +124,36 @@ void test('numbered cold-Codex archives are noisy, but review.md still checks re
             writeFile(root, 'tasks/foo/review.md', 'See `scripts/nonexistent-target.ts`.\n');
             assert.ok(runChecks(root).some(issue => issue.file === 'tasks/foo/review.md' && issue.reason === 'missing file'));
         },
+    );
+});
+
+void test('raw and superseded review records are noisy, but the live review remains checked', () => {
+    makeTempRepo(
+        root => {
+            const broken = 'See `scripts/nonexistent-target.ts`.\n';
+            writeFile(root, 'tasks/foo/review-cold-codex.md', broken);
+            writeFile(root, 'tasks/foo/review-prior-1.md', broken);
+            writeFile(root, 'tasks/foo/review-prior-12.md', broken);
+        },
+        root => {
+            assert.deepEqual(runChecks(root), []);
+            writeFile(root, 'tasks/foo/review.md', 'See `scripts/nonexistent-target.ts`.\n');
+            assert.ok(runChecks(root).some(issue => issue.file === 'tasks/foo/review.md' && issue.reason === 'missing file'));
+        },
+    );
+});
+
+void test('real prior-review archives are exempt after reset', () => {
+    makeTempRepo(
+        root => {
+            const taskDir = path.join(root, 'tasks/foo');
+            fs.mkdirSync(taskDir, { recursive: true });
+            writeFile(root, 'tasks/foo/review.md', 'See `scripts/nonexistent-target.ts`.\n');
+            const archived = archivePriorReview(taskDir);
+            assert.match(archived ?? '', /^review-prior-\d+\.md$/);
+            writeFile(root, 'tasks/foo/review.md', '# Code Review\n');
+        },
+        root => assert.deepEqual(runChecks(root), []),
     );
 });
 

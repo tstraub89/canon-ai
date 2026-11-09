@@ -2,153 +2,93 @@
 
 > Author: implementer | Spec: `tasks/review-artifact-refs-fixup/spec.md` | Plan: `tasks/review-artifact-refs-fixup/plan.md`
 >
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
+> Initial implementation. The source, tests, and generated bundle listed below are the implementation changes for this iteration.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/main.ts`, `src/orchestrator/prompts/index.ts`, `src/orchestrator/prompts/templates/code-review-foreman.md`, `dist/orchestrator/run-task.js` | Add the citation rule to code-review prompts; run a bounded `review.md` fix-up after completed foreman and recovery sessions; guard verdict and file scope; auto-block code review on unsafe fix-up stops. Rebuild the tracked orchestrator bundle. |
+| `scripts/docs-refs-check.mjs`, `templates/scripts/docs-refs-check.mjs` | Exempt raw cold-Codex output and numbered superseded review archives while leaving the live review checked. |
+| `tests/docs-refs-check.test.ts` | Cover the raw and archived review exemptions and the real archive helper. |
+| `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` | Cover first-round and round-N citation rules and the code-review fix-up prompt; regenerate snapshots. |
+| `tests/run-task-safety-scaffold-push.test.ts` | Cover code-review fix-up, verdict and scope guards, no-session behavior, early stops, and the recovery writer. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Document the reviewer fix-up, auto-block conditions, and in-process reviewer-session resumption. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
+Refer to the provenance fields in `tasks/review-artifact-refs-fixup/status.json`.
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Code review now follows implement and QA artifact hygiene: canon checks each completed review artifact, resumes the stored reviewer session for up to two reference-fix attempts, and checks the artifact before acting on the verdict. A changed verdict or any edit outside the review artifact parks the whole code-review bundle. Raw lens output and superseded archives are exempt because the live review is the checked record.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Placed the exact `ARTIFACT_CITATION_RULE` text in the foreman template instead of adding a template variable in `src/orchestrator/prompts/index.ts`. | The existing code-review prompt renderer had no citation-rule variable to pass through. The rendered prompt test compares the output with the canonical constant, so drift remains covered without adding renderer plumbing. | None; AC-1 is met. |
+| Reused one code-review reset-command builder for the existing reviewer-block stop and the new fix-up stop. | The recovery-hint registry requires each actionable reset-command source site to be unique. Sharing the builder preserves the existing recovery text and supports the new stop without widening the affected-file scope. | None; AC-3 and AC-4 are met. |
+| Ran the verdict guard in a `finally` around each reviewer fix session. | This checks every attempt, including non-zero exits and thrown session errors, before the helper can retry or warn and continue. | None; AC-3 is met. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | `promptCodeReview` contains the canonical rule in first-round and round-N renders; `tests/run-task-prompts.test.ts` covers both and the golden snapshots were regenerated. |
+| AC-2 | Met | `tests/run-task-safety-scaffold-push.test.ts` confirms a broken review reference triggers a reviewer resume, is fixed, and routes `changes_requested` to implement. |
+| AC-3 | Met | Zero-exit and failed-exit verdict flips both leave code review blocked, record the task and both verdicts, and route nothing. |
+| AC-4 | Met | An outside-artifact edit is reported and code review is auto-blocked. |
+| AC-5 | Met | Missing reviewer session warns with findings and the `--pr` recovery instruction, then continues. |
+| AC-6 | Met | `spec_gap` receives fix-up before stopping; a reviewer-blocked review starts no fix session and uses the existing stop. |
+| AC-7 | Met | The code-review fix-up prompt avoids commit-after-turn wording and forbids changes to verdict checkboxes and findings; its golden is covered. |
+| AC-8 | Met | Raw cold-Codex output and one- and multi-digit prior-review archives pass; the live review remains a negative control that fails. |
+| AC-9 | Met | Both documentation copies describe the fix-up, auto-block guard, and reviewer-session resumption. |
+| AC-10 | Met | The recovery test confirms the incomplete foreman return gets no fix-up, the recovery session writes the review, then one reviewer fix-up runs before routing. A recovery-session verdict change auto-blocks. |
+| AC-11 | Met | `tests/docs-refs-check.test.ts` archives a broken review through `archivePriorReview`, writes a clean live review, and verifies no findings remain. |
 
 ## Edge Cases Considered
 
-- ...
+- Round 1 and round-N prompts carry the citation rule.
+- A blocked review skips fix-up; `spec_gap` receives fix-up before its stop.
+- No stored session warns and continues; a failed fix session still runs the verdict guard.
+- Verdict changes and edits outside the review artifact auto-block the whole bundle.
+- Both review-artifact writers are covered: the foreman and the one-shot recovery session.
+- Interactive runs and missing session IDs do not resume a stale stored reviewer session.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- None.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-2 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='code-review docs-refs fix-up resumes' tests/run-task-safety-scaffold-push.test.ts` | `bbaa053` | Failed because no `Artifact fix-up (attempt 1/2)` line appeared; the run routed directly to implement with the broken reference still present. | Targeted test passes; full `npm test` passes. |
+| AC-10 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='review recovery fix-up runs only after the one-shot reviewer recovery' tests/run-task-safety-scaffold-push.test.ts` | `bbaa053` (`src/orchestrator/main.ts` loaded from base) | Failed because the expected one fix-up log entry was absent (`0 !== 1`) after recovery completed. | Recovery test passes; full `npm test` passes. |
 
 ## Self-Check
 
-> One row per pre-handoff self-check, each with evidence a reviewer can check against the diff. **Test integrity:** each behavioral test added or changed, the assertion that pins its failure reason, and how you know it fails without the change (a Red-First Evidence row counts; regenerated snapshots and fixture-only edits are exempt and can be summarized in one line). **Restatement sweep:** the search pattern(s) you ran for each changed contract, and every hit outside Affected Files with how it was handled — updated, or recorded as a Blocker. **Sibling parity:** the parallel paths you examined for each added guard or branch, and whether each got the same treatment, or why not. A row may read `N/A — <reason>`. Write a literal pipe inside a cell as `\|`. Cite paths by the same file-citation rule as the rest of this handoff (full repository-root paths; the markdown-link form for a file that does not exist).
-
 | Check | Evidence |
 |---|---|
-| Test integrity | _(tests added or changed → the assertion that pins each failure reason → how you know it fails without the change)_ |
-| Restatement sweep | _(search pattern(s) run per changed contract → hits outside Affected Files and how each was handled)_ |
-| Sibling parity | _(parallel paths examined per added guard or branch → same treatment, or why not)_ |
+| Test integrity | AC-2 and AC-10 pre-fix failures are recorded above. Added safety cases pin verdict changes after successful and failed sessions, outside-file edits, no-session continuation, `spec_gap`, reviewer-blocked, recovery fix-up, and recovery verdict blocking. Checker tests include the live-review negative control. Full suite passed after snapshot regeneration. |
+| Restatement sweep | Searched `ARTIFACT_CITATION_RULE`, `promptArtifactFixup`, review archive names, and fix-up/session call sites across prompt sources, orchestrator, checker, docs, and tests. Updated the foreman template, both checker and documentation copies, and prompt goldens. The recovery-hint registry in `tests/recovery-hints.test.ts` is outside the affected-file list; the shared reset builder keeps its registered source site unique, and the registry test passes. |
+| Sibling parity | Confirmed implement and QA retain their default stop behavior. Both code-review writers (the normal phase and `retryAgentForPhase` recovery) reach the same fix-up helper; blocked reviews return before the recovery path. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `UPDATE_GOLDENS=1 npm test` | Pass | 2,173 passed, 1 skipped, 0 failed. |
+| `npm test` | Pass | 2,173 passed, 1 skipped, 0 failed. |
+| `npm run build` | Pass | Tracked orchestrator bundle rebuilt. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates:check` | Pass | Canon-managed files are synchronized. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Self-Check
-
-_Include only when this round makes an earlier Self-Check row incomplete or untrue, and include only the rows it updates. Each row restates that check's evidence for all work on the branch, not only this round, and supersedes every earlier version of that row (earlier rows stay in place as history). This subsection never replaces the baseline `## Self-Check` section._
-
-| Check | Evidence |
-|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
