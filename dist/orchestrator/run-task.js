@@ -5418,9 +5418,15 @@ function sectionHeading(doc, name) {
 function knownPitfallEntries(patterns) {
   const result = [];
   for (const section of headingsAt(patterns, 2).filter((heading) => heading.text.toLocaleLowerCase().startsWith("known pitfalls"))) {
+    let foundEntry = false;
     for (const heading of patterns.headings) {
       if (heading.level !== 3 || heading.start < section.start || heading.start >= section.end) continue;
+      foundEntry = true;
       result.push({ doc: patterns, heading, title: heading.text, body: headingBody(patterns, heading) });
+    }
+    if (!foundEntry) {
+      const body = proseFallbackBody(patterns, section);
+      if (body) result.push({ doc: patterns, heading: section, title: section.text, body, unconditional: true });
     }
   }
   return result;
@@ -5503,9 +5509,23 @@ function normalizeAffectedFile(value) {
   if (normalized === "." || normalized === ".." || normalized.startsWith("../")) return null;
   return trailingSlash && !normalized.endsWith("/") ? `${normalized}/` : normalized;
 }
+function globCouldMatchInsideDir(glob, dir) {
+  const globSegments = glob.split("/").filter(Boolean);
+  const dirSegments = dir.split("/").filter(Boolean);
+  for (let index = 0; index < dirSegments.length; index++) {
+    if (index >= globSegments.length) return false;
+    if (globSegments[index] === "**") return true;
+    if (!matchesDocsGlob(globSegments[index], dirSegments[index])) return false;
+  }
+  return globSegments.length > dirSegments.length;
+}
 function tokenMatches(token, filePath) {
   if (token === filePath) return true;
   if (token.endsWith("/") && filePath.startsWith(token)) return true;
+  if (filePath.endsWith("/")) {
+    if (token.startsWith(filePath)) return true;
+    if (token.includes("*") && globCouldMatchInsideDir(token, filePath)) return true;
+  }
   return token.includes("*") && matchesDocsGlob(token, filePath);
 }
 function rowMatches(keys, affectedFiles) {
@@ -5586,6 +5606,31 @@ function markdownTablesInSection(doc, section) {
 function knownPitfallsIndexTables(doc, section) {
   const firstH3Line = doc.headings.find((heading) => heading.level === 3 && heading.start >= section.start && heading.start < section.end)?.startLine ?? section.endLine;
   return markdownTablesInSection(doc, section).filter((table) => table.startLine < firstH3Line);
+}
+var BLOCK_START = /^ {0,3}(?:#{1,6}(?:\s|$)|[-*+]\s|\d{1,9}[.)]\s|```|~~~|\||<|(?:[-*_][ \t]*){3,}$)/;
+function proseFallbackBody(patterns, section) {
+  const indexLines = /* @__PURE__ */ new Set();
+  for (const table of knownPitfallsIndexTables(patterns, section)) {
+    for (let line = table.startLine; line < table.endLine; line++) indexLines.add(line);
+  }
+  const keptLines = [];
+  let inBlockquote = false;
+  for (let line = section.startLine + 1; line < section.endLine; line++) {
+    if (indexLines.has(line)) continue;
+    const text = patterns.lines[line];
+    if (!patterns.outsideFence[line]) {
+      keptLines.push(text);
+      continue;
+    }
+    if (/^ {0,3}>/.test(text)) {
+      inBlockquote = true;
+      continue;
+    }
+    if (inBlockquote && text.trim() !== "" && !BLOCK_START.test(text)) continue;
+    if (inBlockquote) inBlockquote = false;
+    keptLines.push(text);
+  }
+  return keptLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 function tableRowsInSection(doc, section) {
   if (section.text.toLocaleLowerCase().startsWith("known pitfalls")) return knownPitfallsIndexTables(doc, section);
@@ -5749,7 +5794,8 @@ function candidateFromEntry(entry, channel, docOrder) {
     body: entry.body,
     channel,
     docOrder,
-    position: entry.heading.start
+    position: entry.heading.start,
+    unconditional: entry.unconditional
   };
 }
 function candidateFromSection(doc, heading, docOrder) {
@@ -5841,7 +5887,7 @@ function selectPitfallsInternal(input) {
   if (patterns) titleEntries.set(patterns.path, patternsEntries);
   if (patterns) {
     for (const entry of patternsEntries) {
-      if (pathTokens(entry.body, patterns.path).some((token) => rowMatches([token], affectedFiles))) {
+      if (entry.unconditional || pathTokens(entry.body, patterns.path).some((token) => rowMatches([token], affectedFiles))) {
         addCandidate(candidates, candidateFromEntry(entry, "direct", 0));
       }
     }
@@ -5888,7 +5934,8 @@ function selectPitfallsInternal(input) {
   let capped = false;
   function render4() {
     const full = visibleCandidates(active);
-    const pitfallFull = full.filter((candidate) => candidate.channel !== "lesson");
+    const pitfallFull = full.filter((candidate) => candidate.channel !== "lesson" && !candidate.unconditional);
+    const proseFull = full.filter((candidate) => candidate.unconditional);
     const lessonFull = full.filter((candidate) => candidate.channel === "lesson");
     const groups2 = titleGroupsFor(titleEntries, active, demoted, matchedLinkedDocs);
     const titleLines = [];
@@ -5915,6 +5962,11 @@ function selectPitfallsInternal(input) {
     if (pitfallFull.length > 0) sections.push(`### Pitfalls and patterns that cite your files
 
 ${pitfallFull.map((candidate) => candidate.body).join("\n\n")}`);
+    if (proseFull.length > 0) sections.push(`### Known Pitfalls (included regardless of your files)
+
+_This section has no \`###\` entries, so its prose is included in full (index tables and blockquotes omitted) whatever the task's Affected Files._
+
+${proseFull.map((candidate) => candidate.body).join("\n\n")}`);
     if (lessonFull.length > 0) sections.push(`### Lessons that cite your files
 
 ${lessonFull.map((candidate) => candidate.body).join("\n\n")}`);

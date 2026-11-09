@@ -74,7 +74,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Policy config wrappers | `src/orchestrator/policy.ts` | Sole provider-setting resolver; validates task/bundle pins; Claude/Codex model and size getters wrapping `src/lib/pipeline-policy.ts` |
 | Task context extractors | `src/orchestrator/context.ts` | `extractAffectedFiles()`, `extractAcSummary()`, `extractValidationChecks()` — feeds prompt builders |
 | Blast-radius map | `src/orchestrator/blast-radius.ts` | `buildBlastRadiusBlock()` — referrers of Affected Files and spec-named identifiers for implement prompts (git grep, fail-open) |
-| Relevant pitfalls and lessons | `src/orchestrator/pitfalls.ts` | `buildRelevantPitfalls()` — selects matching pitfalls, Trigger Table sections, and lessons for implement prompts |
+| Relevant pitfalls and lessons | `src/orchestrator/pitfalls.ts` | `buildRelevantPitfalls()` — selects matching pitfalls, Trigger Table sections, and lessons for implement prompts; a Known Pitfalls section with no `###` entries is included whole (minus blockquotes) regardless of Affected Files |
 | Signal handlers | `src/orchestrator/signals.ts` | SIGHUP survival; installed before heavy imports so the handler is always present |
 | Detached-mode isolation | `src/orchestrator/detach.ts` | Process group detachment for SIGHUP-safe background runs |
 | Heartbeat monitor | `src/orchestrator/heartbeat.ts` | Per-task `.heartbeat.json` writes at 30s intervals; used by `canon watch` / `canon doctor` to detect live vs. stale runs |
@@ -123,7 +123,7 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | System overview, tech stack | `docs/architecture.md` | First read when orienting |
 | File locations (this doc) | `docs/codebase-map.md` | Fast index |
 | Settled architectural decisions | `docs/decisions.md` | Don't re-debate without strong cause |
-| Patterns + Known Pitfalls | `docs/patterns.md` | Pitfalls, Trigger Table sections, and lessons selected by spec Affected Files and injected into implementer prompts |
+| Patterns + Known Pitfalls | `docs/patterns.md` | Pitfalls, Trigger Table sections, and lessons selected by spec Affected Files and injected into implementer prompts; a Known Pitfalls section with no `###` entries is injected whole (minus blockquotes) |
 | Product / framework context | `docs/product-context.md` | What canon-ai is, who it's for |
 | Pipeline mechanics reference | `docs/pipeline-orchestrator.md` | Flags, env vars, model matrix, reroute, auto-block |
 | Distilled lessons across tasks | `docs/lessons-learned.md` | QA writes task lessons fragments; `--ship` folds them here |

@@ -51,6 +51,205 @@ void test('AC-2: direct path and directory matches are full; unrelated paths sta
     assert.doesNotMatch(output, /Unrelated body cites/);
 });
 
+void test('AC-1: prose-only Known Pitfalls are included regardless of affected files, without blockquotes', () => {
+    const patterns = `## Known Pitfalls
+
+First prose paragraph explains a durable rule in full.
+
+Second prose paragraph gives the concrete check to follow.
+
+> BLOCKQUOTE_AUTHOR_GUIDANCE
+Lazy continuation belongs to the same quoted paragraph.
+
+~~~md
+> FENCED_QUOTE_TEXT_IS_PROSE
+~~~
+
+| Read this doc | Before touching |
+|---|---|
+| \`docs/pitfalls/area.md\` | \`src/a/**\` |
+`;
+
+    for (const affectedFiles of [[], ['src/unrelated.ts']]) {
+        const output = selectPitfalls({ ...matchingInput(patterns, affectedFiles), affectedFiles });
+        assert.match(output, /### Known Pitfalls \(included regardless of your files\)/);
+        assert.match(output, /First prose paragraph explains a durable rule in full\./);
+        assert.match(output, /Second prose paragraph gives the concrete check to follow\./);
+        assert.doesNotMatch(output, /BLOCKQUOTE_AUTHOR_GUIDANCE/);
+        assert.doesNotMatch(output, /Lazy continuation belongs to the same quoted paragraph\./);
+        assert.match(output, /> FENCED_QUOTE_TEXT_IS_PROSE/);
+        assert.doesNotMatch(output, /### Pitfalls and patterns that cite your files[\s\S]*First prose paragraph/);
+    }
+});
+
+void test('AC-1: a block-level construct right after a blockquote ends it and stays in the prose', () => {
+    const patterns = `## Known Pitfalls
+
+> AUTHOR_NOTE
+#### HEADING_AFTER_QUOTE
+- LIST_AFTER_QUOTE
+1. ORDERED_AFTER_QUOTE
+
+> SECOND_NOTE
+Lazy continuation is dropped.
+- LIST_ENDS_SECOND_QUOTE
+`;
+    const output = selectPitfalls(matchingInput(patterns, []));
+    assert.doesNotMatch(output, /AUTHOR_NOTE|SECOND_NOTE|Lazy continuation is dropped/);
+    for (const kept of ['#### HEADING_AFTER_QUOTE', '- LIST_AFTER_QUOTE', '1. ORDERED_AFTER_QUOTE', '- LIST_ENDS_SECOND_QUOTE']) {
+        assert.ok(output.includes(kept), `expected ${kept} in the prose fallback`);
+    }
+});
+
+void test('AC-1b: prose fallback leaves index rows separate and respects H3 boundaries', () => {
+    const withIndex = `## Known Pitfalls
+
+Fallback prose stays in the prose subsection.
+
+| Read this doc | Before touching |
+|---|---|
+| \`docs/pitfalls/index.md\` | \`src/a/**\` |
+`;
+    const indexed = selectPitfalls(matchingInput(withIndex, []));
+    const proseStart = indexed.indexOf('### Known Pitfalls (included regardless of your files)');
+    const areaStart = indexed.indexOf('### Area index');
+    assert.ok(proseStart >= 0 && areaStart > proseStart);
+    assert.match(indexed.slice(proseStart, areaStart), /Fallback prose stays in the prose subsection\./);
+    assert.doesNotMatch(indexed.slice(proseStart, areaStart), /docs\/pitfalls\/index\.md/);
+    assert.match(indexed.slice(areaStart), /docs\/pitfalls\/index\.md/);
+
+    const scaffold = fs.readFileSync(path.join(process.cwd(), 'templates/docs/patterns.md'), 'utf8');
+    const scaffoldStart = scaffold.indexOf('## Known Pitfalls');
+    const nextSection = scaffold.indexOf('\n## ', scaffoldStart + 1);
+    const scaffoldPitfalls = scaffold.slice(scaffoldStart, nextSection < 0 ? undefined : nextSection);
+    const scaffoldWithoutExample = scaffoldPitfalls.replace(/\n### Reset derived state when a source identifier changes[\s\S]*$/, '');
+    const tableOnly = scaffoldWithoutExample.replace(
+        '## Known Pitfalls',
+        '## Known Pitfalls\n\n| Read this doc | Before touching |\n|---|---|\n| `docs/pitfalls/example.md` | `src/a/**` |',
+    );
+    const noProse = selectPitfalls(matchingInput(tableOnly, []));
+    assert.doesNotMatch(noProse, /Known Pitfalls \(included regardless/);
+    assert.match(noProse, /docs\/pitfalls\/example\.md/);
+
+    const preamble = `## Known Pitfalls
+
+PREAMBLE_MUST_NOT_BE_INJECTED.
+
+### H3 entry
+
+H3_ENTRY_BODY cites \`src/a/b.ts\`.
+`;
+    const h3Output = selectPitfalls(matchingInput(preamble));
+    assert.match(h3Output, /### H3 entry[\s\S]*H3_ENTRY_BODY/);
+    assert.doesNotMatch(h3Output, /PREAMBLE_MUST_NOT_BE_INJECTED/);
+});
+
+void test('AC-2: prose fallback demotes in the direct channel after lesson, section, and linked entries', () => {
+    const linkedPath = 'docs/pitfalls/directory.md';
+    const linkedDoc = `# Linked\n\n### Linked direct entry\n\nLINKED_DIRECT_SENTINEL cites \`src/a/b.ts\`.\n`;
+    const prose = `PROSE_FALLBACK_SENTINEL ${'long prose '.repeat(45)}`;
+    const patterns = `## Trigger Table
+
+| Area | Section / doc | Keys |
+|---|---|---|
+| Section target | Directory Rules | \`src/a/b.ts\` |
+| Linked doc | \`docs/pitfalls/directory.md\` | \`src/a/b.ts\` |
+
+## Directory Rules
+
+SECTION_TARGET_SENTINEL cites \`src/a/b.ts\`.
+
+## Known Pitfalls
+
+### Direct matching entry
+
+DIRECT_MATCH_SENTINEL cites \`src/a/b.ts\`.
+
+## Known Pitfalls
+
+${prose}
+`;
+    const lessons = `# Lessons\n\n### Matching lesson\n\nLESSON_SENTINEL cites \`src/a/b.ts\`.\n`;
+    const output = selectPitfalls({
+        patterns,
+        lessons,
+        readDoc: repoPath => repoPath === linkedPath ? linkedDoc : null,
+        affectedFiles: ['src/a/b.ts'],
+        cap: 1200,
+    });
+    assert.ok(Buffer.byteLength(output, 'utf8') <= 1200);
+    assert.doesNotMatch(output, /PROSE_FALLBACK_SENTINEL/);
+    assert.match(output, /- Known Pitfalls/);
+    assert.match(output, /DIRECT_MATCH_SENTINEL/);
+    assert.doesNotMatch(output, /LESSON_SENTINEL|SECTION_TARGET_SENTINEL|LINKED_DIRECT_SENTINEL/);
+});
+
+void test('AC-3: directory Affected Files match entries, index rows, linked docs, and lessons inside the directory', () => {
+    const linkedPath = 'docs/pitfalls/directory.md';
+    const linkedDoc = `# Directory pitfalls\n\n### Linked directory entry\n\nLINKED_DIRECTORY_ENTRY cites \`src/a/b.ts\`.\n`;
+    const patterns = `## Known Pitfalls
+
+| Read this doc | Before touching |
+|---|---|
+| \`docs/pitfalls/directory.md\` | \`src/a/**\` |
+
+| Area | Section | Keys |
+|---|---|---|
+| Directory glob | Directory Rules | \`src/**/*.ts\` |
+| Outside directory | Other Rules | \`src/ab/**\` |
+| Non-matching root glob | Other Rules | \`*.md\` |
+
+### Direct directory entry
+
+DIRECT_DIRECTORY_ENTRY cites \`src/a/b.ts\`.
+
+### Outside sibling entry
+
+OUTSIDE_SIBLING_ENTRY cites \`src/ab/c.ts\`.
+
+### Outside root entry
+
+OUTSIDE_ROOT_ENTRY cites \`src/z.ts\`.
+
+## Trigger Table
+
+| Area | Section | Keys |
+|---|---|---|
+| Trigger directory | Trigger Rules | \`src/a/b.ts\` |
+
+## Directory Rules
+
+DIRECTORY_GLOB_SECTION cites \`src/a/b.ts\`.
+
+## Trigger Rules
+
+TRIGGER_DIRECTORY_SECTION_BODY.
+
+## Other Rules
+
+OTHER_RULES_SECTION_BODY.
+`;
+    const lessons = `# Lessons\n\n### Directory lesson\n\nDIRECTORY_LESSON cites \`src/a/b.ts\`.\n`;
+    const output = selectPitfalls({
+        patterns,
+        lessons,
+        readDoc: repoPath => repoPath === linkedPath ? linkedDoc : null,
+        affectedFiles: ['src/a/'],
+    });
+
+    assert.match(output, /DIRECT_DIRECTORY_ENTRY cites `src\/a\/b\.ts`\./);
+    assert.match(output, /TRIGGER_DIRECTORY_SECTION_BODY/);
+    assert.match(output, /LINKED_DIRECTORY_ENTRY cites `src\/a\/b\.ts`\./);
+    assert.match(output, /DIRECTORY_LESSON cites `src\/a\/b\.ts`\./);
+    assert.match(output, /Directory Rules — Directory glob — `src\/\*\*\/\*\.ts` \*\*\(matches this task\)\*\*/);
+    assert.match(output, /Other Rules — Outside directory — `src\/ab\/\*\*`(?! \*\*\(matches this task\)\*\*)/);
+    assert.match(output, /Other Rules — Non-matching root glob — `\*\.md`(?! \*\*\(matches this task\)\*\*)/);
+    assert.match(output, /`docs\/pitfalls\/directory\.md` — `src\/a\/\*\*` \*\*\(matches this task\)\*\*/);
+    assert.match(output, /Trigger Rules — Trigger directory — `src\/a\/b\.ts` \*\*\(matches this task\)\*\*/);
+    assert.doesNotMatch(output, /OUTSIDE_SIBLING_ENTRY cites/);
+    assert.doesNotMatch(output, /OUTSIDE_ROOT_ENTRY cites/);
+});
+
 void test('AC-3: linked docs match globs, retain titles, and resolve relative markdown links', () => {
     const docPath = 'docs/pitfalls/state.md';
     const linkedDoc = `# State pitfalls\n\n### Editor persistence\n\nEditor body cites \`app/src/store/editor.ts\`.\n\n### Migration fallback\n\nMigration body cites \`app/src/migrations/state.ts\`.\n`;

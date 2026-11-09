@@ -1,134 +1,72 @@
 # Code Review: pitfalls-coverage-gaps
 
-> Reviewer: Claude | Spec: `tasks/pitfalls-coverage-gaps/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
+> Reviewer: Claude (foreman) | Spec: `tasks/pitfalls-coverage-gaps/spec.md`
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
+Synthesized from the anchored Claude lens, the cold-Claude lens, and the injected cold-Codex findings (no actionable regressions).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-- [ ] Self-Check evidence in the effective record is not contradicted by the diff
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence recorded for each red-first AC (Red-First Evidence rows against pre-fix code)
+- [x] Self-Check evidence in the effective record is not contradicted by the diff
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: Prose-only fallback | Pass | `knownPitfallEntries` adds an unconditional H2-titled entry, rendered under its own "included regardless of your files" subsection; blockquotes dropped. Test added, red-first row present. |
+| AC-1b: Fallback boundaries | Pass | Index-table lines excluded from prose and kept in the area index; scaffold-without-example yields no prose entry; H3 sections skip the preamble. |
+| AC-2: Cap demotion | Pass | Entry uses the `direct` channel, so it is demoted after lessons, section targets and linked-doc entries; test asserts the title-only line remains. |
+| AC-3: Directory Affected Files | Pass | `tokenMatches` handles directory files via prefix and `globCouldMatchInsideDir`; tests cover entries, index rows, linked docs, lessons, glob and negative cases. Red-first row present. |
+| AC-4: Tests | Pass | `tests/pitfalls.test.ts` 23/23 on re-run; handoff reports full suite green; no goldens regenerated. |
+| AC-5: Docs | Pass | `docs/patterns.md`, `templates/docs/patterns.md`, `README.md`, canon-init write guide (root and mirror) all updated; `dist/` rebuilt. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected (no out-of-scope work)
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The change is small, contained in `src/orchestrator/pitfalls.ts`, and matches the spec's decisions. Directory matching is segment-aware and handles `**` and the boundary cases. No lens found a blocking defect; all surviving items are low-severity nits.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
+(none)
 
-(none / list items)
+#### Nits (non-blocking)
 
-#### Risk / Guardrails
+- **Blockquote lazy continuation over-strips** — `src/orchestrator/pitfalls.ts:397-404` (`proseFallbackBody`). Every non-blank line after a `>` line is dropped until the next blank line, so a list item, sub-heading or fence opener placed directly under a quote with no blank line is lost. Flagged by 2 lenses (anchored, cold-Claude). Altitude: code-bug (low). The spec says "all blockquote paragraphs removed", so paragraph-level stripping is within spec; the edge is rare. Optional follow-up: end the quote on list/heading/fence starts.
+- **Non-index tables in a no-H3 section are stripped** — `src/orchestrator/pitfalls.ts:383-407`. With no H3, `knownPitfallsIndexTables` spans the whole section, so any table mid-prose is treated as an index table. Matches the spec's "tables directly under the H2" and existing index parsing; untested. Anchored lens only.
+- **Dedup interaction with nested section targets / same-span targets** — `addCandidate` / `candidateCovered` (anchored lens, cold-Claude). If a Trigger Table row targets the prose-only H2 itself (same span), the section candidate can replace the unconditional one and render blockquotes under "cite your files"; a nested H4 target is hidden by the H2 span. Unlikely fixture shape; low confidence.
+- **Test robustness** — `tests/pitfalls.test.ts` AC-1b scaffold test depends on the template's example H3 title via regex, and the AC-2 demotion test's `- Known Pitfalls` regex is loose. Cold-Claude. Optional hardening.
 
-> Items that could cause problems under certain conditions or violate repo conventions.
+## Dismissed Cold Findings
 
-(none / list items)
-
-#### Optional Cleanup / Nit
-
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
-
-#### Spec Gaps
-
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
-
-### Dismissed Cold Findings
-
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): Placeholder/`TODO[canon]` stubs in an un-customized adopter `patterns.md` get injected - the spec deliberately strips blockquotes (where the scaffold keeps its TODO and format guidance) and records this as a decided tradeoff; non-blockquote stubs are the adopter's content.
+- Dismissed (cold-Claude): A pitfall citing the directory without a trailing slash (src/a) does not match directory `src/a/` - the spec's boundary treats `src/a/` as the directory form; no test or AC requires the slashless form, confidence low.
+- Dismissed (cold-Claude): Brace/`?` glob syntax in `globCouldMatchInsideDir` untested - speculative; `matchesDocsGlob` is the existing per-segment matcher and the new helper only delegates to it.
+- Dismissed (cold-Codex): none raised; no actionable regressions reported.
 
 ## Final Verdict
 
-- [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
+- [ ] **Approved**
+- [x] **Approved with nits**
+- [ ] **Changes requested**
+- [ ] **Spec gap**

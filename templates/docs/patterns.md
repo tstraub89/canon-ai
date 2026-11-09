@@ -7,7 +7,7 @@
 This is the project's hard-won implementation knowledge. It has two main sections:
 
 1. **Trigger Table** — at the top, an index agents skim to jump to the relevant section. If your task touches an area listed here, the pointed-at section is likely load-bearing for what you're doing.
-2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. Implement prompts select full pitfalls and Trigger Table sections that match the spec's Affected Files, plus lessons that cite those files; other pitfall titles and a one-line index of the tables remain visible. Cite full repository paths, directory prefixes, or globs in each entry. Agents still need this file open for spec authorship and code review.
+2. **Known Pitfalls** — failure modes that have bitten the project before, with the rule that prevents them. Implement prompts select full pitfalls and Trigger Table sections that match the spec's Affected Files, plus lessons that cite those files; other pitfall titles and a one-line index of the tables remain visible. A Known Pitfalls section with no `###` entries has its prose injected whole except blockquotes (author guidance) and index tables, regardless of the task's files. A directory in Affected Files also selects pitfalls that cite paths inside it. Cite full repository paths, directory prefixes, or globs in each entry. Agents still need this file open for spec authorship and code review.
 
 ## Trigger Table — Scan This First
 
