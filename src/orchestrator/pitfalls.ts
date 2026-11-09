@@ -330,7 +330,7 @@ function splitCells(line: string): string[] | null {
 }
 
 function isSeparatorRow(cells: readonly string[]): boolean {
-    return cells.every(cell => /^:?-{3,}:?$/.test(cell.replaceAll(' ', '')));
+    return cells.every(cell => /^:?-+:?$/.test(cell.replaceAll(' ', '')));
 }
 
 function markdownTablesInSection(doc: MarkdownDoc, section: Heading): MarkdownTable[] {
@@ -876,7 +876,7 @@ export function resolvePitfallsDocsRoot(taskIds: string[]): string {
 
 export function buildRelevantPitfalls(taskIds: string[]): string {
     const root = resolvePitfallsDocsRoot(taskIds);
-    const patternsPath = process.env.CANON_PATTERNS_MD_PATH ?? path.join(root, PATTERNS_PATH);
+    const patternsPath = process.env.CANON_PATTERNS_MD_PATH || path.join(root, PATTERNS_PATH);
     const affectedFiles = [...new Set(taskIds.flatMap(taskId => extractAffectedFiles(taskId))
         .map(normalizeAffectedFile).filter((value): value is string => value !== null))];
     return selectPitfalls({

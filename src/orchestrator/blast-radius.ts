@@ -6,7 +6,7 @@ import { extractAffectedFiles } from './context.js';
 import { gitSafeAt } from './git.js';
 import { extractSectionBodies } from './markdown-table.js';
 import { taskDirFor } from './state.js';
-import { getActiveCwd } from './worktree.js';
+import { getActiveCwd, PIPELINE_TELEMETRY_FILES } from './worktree.js';
 
 // Test-only override for deterministic prompt fixtures; this is not a user-facing setting.
 export const BLAST_RADIUS_ROOT_ENV = 'CANON_BLAST_RADIUS_ROOT';
@@ -18,6 +18,8 @@ export const BYTE_CAP = 6144;
 export const REFERENCE_FILE_CAP = 40;
 
 const GENERIC_STEMS = new Set(['index', 'types']);
+const STOPLIST = new Set(['True', 'False', 'None', 'Null', 'Pass', 'Fail', 'Done', 'Todo', 'Note', 'Approved', 'Blocked']);
+const PIPELINE_TELEMETRY_FILE_SET = new Set<string>(PIPELINE_TELEMETRY_FILES);
 // Pathspecs that keep linguist-generated files (set or =true) out of every grep.
 const NON_GENERATED_PATHSPECS = ['.', ':(exclude,attr:linguist-generated)', ':(exclude,attr:linguist-generated=true)'];
 
@@ -36,8 +38,8 @@ function tokensFromBodies(bodies: readonly string[]): string[] {
             } else {
                 const hadParens = token.endsWith('()');
                 const name = hadParens ? token.slice(0, -2) : token;
-                const shaped = hadParens || /^[A-Z][a-z0-9]+$/.test(name) || /[a-z0-9][A-Z]/.test(name) || /[A-Z]{2,}[a-z]/.test(name) || /[A-Za-z0-9]_[A-Za-z0-9]/.test(name);
-                if (name.length >= 3 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && shaped) normalized = name;
+                const shaped = hadParens || /^[A-Z][a-z0-9]+$/.test(name) || /[a-z0-9][A-Z]/.test(name) || /[A-Z]{2,}[a-z]{2,}/.test(name) || /[A-Za-z0-9]_[A-Za-z0-9]/.test(name);
+                if (name.length >= 3 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && shaped && !STOPLIST.has(name)) normalized = name;
             }
             if (normalized && !seen.has(normalized)) {
                 seen.add(normalized);
@@ -66,7 +68,8 @@ function toRepoRelative(file: string): string {
 }
 
 function excludedPath(file: string, affectedFiles: readonly string[], directoryEntries: readonly string[]): boolean {
-    return affectedFiles.includes(file) || directoryEntries.some(directory => file.startsWith(directory)) || file.startsWith('tasks/');
+    return affectedFiles.includes(file) || directoryEntries.some(directory => file.startsWith(directory)) ||
+        file.startsWith('tasks/') || PIPELINE_TELEMETRY_FILE_SET.has(file);
 }
 
 export const GREP_MAX_BUFFER = 16 * 1024 * 1024;
@@ -88,9 +91,10 @@ export function gitGrep(root: string, modeFlags: readonly string[], pattern: str
         throw result.error;
     }
     if (result.status === 0) return (result.stdout ?? '').split('\0').filter(Boolean);
+    if (result.status === 1) return [];
     const stderr = (result.stderr ?? '').trim();
-    if (!stderr) return [];
-    throw new Error(`git grep failed: ${stderr}`);
+    const detail = stderr ? `: ${stderr}` : '';
+    throw new Error(`git grep failed with exit status ${result.status ?? 'unknown'}${detail}`);
 }
 
 function escapeEre(value: string): string {

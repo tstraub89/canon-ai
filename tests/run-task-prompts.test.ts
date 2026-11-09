@@ -664,6 +664,18 @@ void test('promptImplement renders empty affected-files branch', () => {
     assert.match(actual, /every check runs unconditionally on this first implement pass/);
 });
 
+void test('implement prompt reports when the spec has no Affected Files table', () => {
+    const specPath = path.join(tmpRoot, TASK_ID, 'spec.md');
+    const originalSpec = fs.readFileSync(specPath, 'utf8');
+    fs.writeFileSync(specPath, '# Fixture spec\n\n## Design\n\nNo Affected Files table here.\n');
+    try {
+        const actual = normalize(promptImplement(baseState, 'fresh', [], 'main'));
+        assert.match(actual, /^- Relevant files: none \(spec has no Affected Files table\)$/m);
+    } finally {
+        fs.writeFileSync(specPath, originalSpec);
+    }
+});
+
 void test('implement prompt builders render an unreadable committed diff conservatively', () => {
     for (const actual of [
         promptImplement(baseState, 'fresh', null, 'main'),

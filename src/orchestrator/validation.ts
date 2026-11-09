@@ -107,7 +107,9 @@ export function checkSelfCheckEvidence(handoffContent: string): string[] {
                 issues.push(`Self-Check row "${label}" must have exactly two cells — repair the baseline \`## Self-Check\` table in place and escape literal pipes as \`\\|\`.`);
             } else if (!/[\p{L}\p{N}]/u.test(evidence)) {
                 issues.push(`Self-Check row "${label}" has an empty Evidence cell — fill it in the baseline \`## Self-Check\` table, or write \`N/A — <reason>\`.`);
-            } else if (/^_\(/.test(evidence)) {
+            } else if (evidence.includes('<reason>')) {
+                issues.push(`Self-Check row "${label}" still holds the \`<reason>\` placeholder — give the reason in the baseline \`## Self-Check\` table.`);
+            } else if (bare.startsWith('(') && bare.endsWith(')')) {
                 issues.push(`Self-Check row "${label}" still holds the template placeholder — replace it in the baseline \`## Self-Check\` table with the evidence, or \`N/A — <reason>\`.`);
             } else if (/^n\/a[\s.:—–-]*$/i.test(bare)) {
                 issues.push(`Self-Check row "${label}" is a bare N/A — give the reason in the baseline \`## Self-Check\` table: \`N/A — <reason>\`.`);

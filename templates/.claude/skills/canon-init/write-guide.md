@@ -54,7 +54,7 @@ At least 3–5 entries covering major settled decisions: why this stack, why thi
 ## `docs/patterns.md`
 
 - Implementation patterns the team has settled on: at least one per major layer (API, data, UI if applicable)
-- **Known Pitfalls** section: make each pitfall its own H3 with a rule-focused title, and cite full repository paths or globs in its body so implement prompts can select it by Affected Files. If the section has no `###` entries, its prose is injected whole except blockquotes (author guidance); index tables stay in the area index. A directory listed in Affected Files selects pitfalls that cite paths inside it. If pitfalls live in separate area docs, add a table directly under the Known Pitfalls heading, before the H3 entries, with a `Read this doc` column, mapping each doc to the paths or globs that should trigger it.
+- **Known Pitfalls** section: make each pitfall its own H3 with a rule-focused title, and cite paths so implement prompts can select them by Affected Files. A path counts only inside backticks or as a Markdown link target; directories need a trailing `/`, and globs need `*`. Bare file names never match. If the section has no `###` entries, its prose is injected whole except blockquotes (author guidance); index tables stay in the area index. A directory listed in Affected Files selects pitfalls that cite paths inside it. If pitfalls live in separate area docs, add a table directly under the Known Pitfalls heading, before the H3 entries, with a `Read this doc` column, mapping each doc to the paths or globs that should trigger it.
 - Leave the template structure intact; fill each section that applies
 
 ## `docs/lessons-learned.md`

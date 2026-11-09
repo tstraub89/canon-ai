@@ -3432,9 +3432,9 @@ function checkImplementEvidence(taskId: string): EvidenceResult {
     //     each fail downstream in autoCommitCode anyway, but failing here lets
     //     the one-shot retry surface the cell-level error to Codex instead of
     //     letting the phase auto-advance and then die at auto-commit.
-    //  3. validateHandoff passes — same rule Claude's code review applies:
-    //     Validation Outcomes table has no Fail and AC Coverage is present.
-    //     Catches "Codex wrote a draft handoff before validation actually passed".
+    //  3. validateHandoffAgainstSpec passes — the spec's required validation
+    //     checks have acceptable outcomes in the handoff's latest Validation Outcomes rows.
+    //     Catches "Codex wrote a draft handoff before required checks passed".
     //  4. at least one listed file exists on disk — catches phantom/hallucinated
     //     filenames in the Changes table.
     const { files, malformed } = splitValidation.parseHandoffChangesRows(taskId);

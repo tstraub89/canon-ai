@@ -173,6 +173,73 @@ void test('identifier entries search amendments, calls, and flags while excludin
     }
 });
 
+void test('spec tokens omit status words and acronym plurals but retain component identifiers', () => {
+    const extracted = extractSpecTokens([
+        '## Design',
+        '`True` `None` `Pass` `IDs` `URLs` `Widget` `URLParser`',
+    ].join('\n'));
+    assert.deepEqual(extracted.design, ['Widget', 'URLParser']);
+});
+
+void test('gitGrep treats exit 1 as no matches and throws for an empty-stderr exit 2', () => {
+    const fixture = createFixture({ files: { 'src/empty.ts': 'no relevant tokens here\n' } });
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-git-shim-'));
+    const previousPath = process.env.PATH;
+    const previousRealGit = process.env.CANON_BLAST_RADIUS_GIT_TEST_REAL;
+    try {
+        const realGit = (previousPath ?? '').split(path.delimiter).map(directory => path.join(directory, 'git'))
+            .find(candidate => fs.existsSync(candidate));
+        assert.ok(realGit, 'the test process must be able to resolve git');
+        const shim = path.join(shimDir, 'git');
+        fs.writeFileSync(shim, [
+            '#!/usr/bin/env node',
+            'const { spawnSync } = require("node:child_process");',
+            'const realGit = process.env.CANON_BLAST_RADIUS_GIT_TEST_REAL;',
+            'const args = process.argv.slice(2);',
+            'if (args.includes("SIMULATED_EMPTY_STDERR_FAILURE")) process.exit(2);',
+            'const result = spawnSync(realGit, args, { encoding: "utf8" });',
+            'if (result.stdout) process.stdout.write(result.stdout);',
+            'if (result.stderr) process.stderr.write(result.stderr);',
+            'process.exit(result.status ?? 2);',
+            '',
+        ].join('\n'), { mode: 0o755 });
+        process.env.CANON_BLAST_RADIUS_GIT_TEST_REAL = realGit;
+        process.env.PATH = `${shimDir}${path.delimiter}${previousPath ?? ''}`;
+
+        assert.deepEqual(gitGrep(fixture.root, ['-F', '-w'], 'NO_MATCH_SENTINEL'), []);
+        assert.throws(
+            () => gitGrep(fixture.root, ['-F', '-w'], 'SIMULATED_EMPTY_STDERR_FAILURE'),
+            /git grep failed/i,
+        );
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        if (previousRealGit === undefined) delete process.env.CANON_BLAST_RADIUS_GIT_TEST_REAL;
+        else process.env.CANON_BLAST_RADIUS_GIT_TEST_REAL = previousRealGit;
+        fixture.cleanup();
+        fs.rmSync(shimDir, { recursive: true, force: true });
+    }
+});
+
+void test('pipeline telemetry files are excluded from reference and identifier hits', () => {
+    const fixture = createFixture({
+        affected: ['src/specialWidget.ts'],
+        design: 'Call `parseWidget()`.',
+        files: {
+            'src/specialWidget.ts': 'export const specialWidget = true;\n',
+            'src/use.ts': 'parseWidget();\n',
+            'docs/lessons-learned.md': 'See specialWidget.ts and call parseWidget() for the old implementation.\n',
+        },
+    });
+    try {
+        const block = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
+        assert.doesNotMatch(block, /docs\/lessons-learned\.md/);
+        assert.match(block, /`src\/use\.ts`/);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
 void test('task artifacts and linguist-generated files are excluded from results', () => {
     const fixture = createFixture({
         design: 'Use `parseWidget()`.',
@@ -284,6 +351,10 @@ void test('empty maps, non-git roots, missing roots, and git failures fail open'
         ].join('\n'), { mode: 0o755 });
         process.env.PATH = `${nonGit}${path.delimiter}${priorPath ?? ''}`;
         try {
+            process.env.CANON_BLAST_RADIUS_TEST_GIT_ARGS = `${realGit}\nnever`;
+            const passThroughBlock = buildBlastRadiusBlock(fixture.taskIds, fixture.root);
+            assert.ok(passThroughBlock.length > 0, 'the shim pass-through control must produce a non-empty block');
+
             for (const command of ['grep']) {
                 process.env.CANON_BLAST_RADIUS_TEST_GIT_ARGS = `${realGit}\n${command}`;
                 assert.doesNotThrow(() => buildBlastRadiusBlock(fixture.taskIds, fixture.root));
