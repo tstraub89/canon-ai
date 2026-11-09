@@ -41,10 +41,12 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 | **Tier** | The level of orchestrator effort applied. Fast tier (XS non-delicate) collapses spec+plan and skips the `spec_review` phase. Full tier (S/M/L/XL or any delicate) runs the complete workflow. |
 | **Task size** | `XS` (fast-tier floor, more than trivial inline but no spec premise to challenge), `S` (smallest full-tier), `M` (default, contained), `L` (substantial), `XL` (large or sensitive). Drives tier, model, effort, and loop caps via `pipeline-policy.ts`. |
 | **Delicate** | A boolean flag that promotes a task's effective size to XL, regardless of nominal size. For surfaces where regressions have unbounded blast radius (auth, billing, persistent storage, or — for canon-ai itself — the orchestrator's own routing logic). |
-| **Bundle mode** | Multiple task IDs passed to one `run-task.ts` invocation. Tasks share a tier, share a review loop, and reroute together on `changes_requested`. |
+| **Bundle mode** | Multiple task IDs passed to one `run-task.ts` invocation. Tasks share a tier, share a review loop, and loop back together on `changes_requested`. |
 | **Worktree** | A separate git working tree (and branch) for a task, isolating its edits from the supervising orchestrator's view. Default-on; opt-out is a per-task flag. |
-| **Reroute** | Sending a task back to an earlier phase (`changes_requested` on review) so an agent can re-do work. |
-| **Auto-block** | Halting the pipeline when `MAX_REVIEW_LOOPS` is exceeded. Requires manual intervention to resume. |
+| **Review loop** | Automatic return to `implement` (or `spec`/`spec_review` revision) when a review returns `changes_requested` or `needs_re_review`; capped by the auto-block. |
+| **Reroute** | Human-initiated `canon run <id> --reroute`: after an `## Amendment` section is appended to `spec.md`, resets a task that has begun implementation (full tier re-enters at `spec_review`, fast tier at `implement`). |
+| **Auto-block** | The orchestrator marks the current phase `blocked`, records an escalation, and stops (`canon watch` reason `auto_block`). Triggers include a review phase reaching its loop cap (size-aware default, or `MAX_REVIEW_LOOPS` when set), failed pre-flights, and agent-session failures. Requires manual intervention to resume. |
+| **Provider** | Who holds the pipeline roles: `mixed` (default; Claude Code authors, plans, reviews, and QAs, while Codex CLI reviews specs, implements, and supplies the cold code-review lens) or `claude` (every role on Claude Code). Set via `CANON_PROVIDER`; pinned per task at creation, changed with `canon task set <id> provider <mixed|claude>`. |
 | **Conversational Claude** | The Claude session the human chats with directly. Writes specs, invokes the pipeline, monitors progress. Distinct from pipeline Claude sessions, which the orchestrator spawns for plan / review / QA. |
 | **Pipeline Claude** | A Claude session spawned by `run-task.ts` for a specific phase (plan, code_review, qa). Does not interact with the human directly. |
 | **The canon** | The accumulated rules in `docs/patterns.md`, `docs/decisions.md`, `docs/lessons-learned.md` — the doctrine all agents work under. |
@@ -65,7 +67,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 
 1. **Human + conversational Claude** discuss the problem. Claude grills on shape and decomposition (full tier) or asks clarifying questions (fast tier), then writes `spec.md` in `tasks/<id>/`.
 2. **Human reads spec, approves at the spec gate.** Claude invokes `canon run <id>`.
-3. **Pipeline runs**: spec_review (full tier) → plan → implement → code_review → qa, with auto-reroute on `changes_requested` and auto-block on loop-cap hits.
+3. **Pipeline runs**: spec_review (full tier) → plan → implement → code_review → qa, with automatic review loops on `changes_requested` and auto-block on loop-cap hits.
 4. **Human tests against `done.md`**, then marks the phase done with `canon task phase <id> human_review done` (pending checks in `done.md` must be completed or waived with an `Acknowledged:` line).
 5. Open the draft PR with `canon run <id> --pr`; after approval, `canon run <id> --ship` merges it, tears down the worktree and archives the task. Lessons are distilled into `lessons-learned.md`.
 
@@ -125,7 +127,7 @@ This applies to: spec authorship, code review, handoff writing, QA summaries, an
 ## Roadmap (Brief)
 
 - **Current state**: canon-ai is an installable npm package with a `canon` CLI (init, doctor, upgrade, update, run, task, watch, stop, completion), bundled Claude Code skills, template overrides via `tasks/_templates/`, and a unit suite run by `npm test`. Development is trunk-based on `main`; releases are cut from `main` (see `docs/release-process.md`). Many canon-on-canon tasks have shipped through the full pipeline (see `tasks/_archive/`). External adopters provide dogfood feedback driving the hardening pass.
-- **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon"). Mixed-mode cold review includes a cold-Codex third lens: `code_review` runs an orchestrator-owned `codex review` step followed by a Claude foreman over anchored-Claude, cold-Claude, and cold-Codex inputs. Claude mode uses the two Claude lenses only.
+- **Near-term**: Continued hardening of the executable/declared canon boundary surfaced by external dogfooding (per `docs/decisions.md` "Declared Canon vs Executable Canon").
 - **Future**: Additional agent-CLI adapters (Gemini, Aider).
 
 (See `docs/pipeline-orchestrator.md` for orchestrator mechanics.)

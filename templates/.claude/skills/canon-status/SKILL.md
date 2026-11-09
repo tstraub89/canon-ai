@@ -34,7 +34,8 @@ A task belongs here if **any** of these are true:
 
 | Condition | Meaning |
 |---|---|
-| `spec.status = "done"` AND `human_spec_gate = true` AND pipeline not yet started | Spec is ready for review |
+| `spec.status = "done"` AND `spec_review.status = "pending"` AND `human_spec_gate = true` (fast tier, or not yet run) | Spec is ready for review |
+| `spec_review.status = "done"` AND `plan.status = "pending"` (full tier halted at the spec gate; `human_spec_gate` reads `false` because the halt consumed it) | Spec reviewed, waiting on you: read `spec.md` and `spec-review.md` including the `Author` Judgment Calls rows, then re-run `canon run <id>` |
 | `qa.status = "done"` AND `human_review.status = "pending"` | QA is done — ready to open a PR |
 | `escalations[]` is non-empty | Loop cap hit or blocked — needs a call |
 | Any phase has `status = "blocked"` | Something is stuck |

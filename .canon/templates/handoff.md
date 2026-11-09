@@ -28,6 +28,9 @@ The authoritative provenance stamp for this task lives in `status.json.canon`. R
 | Orchestrator commit | `status.json.canon.orchestrator_commit` |
 | Codex CLI | `status.json.canon.codex_cli` |
 | Claude Code | `status.json.canon.claude_code` |
+| Canon version | `status.json.canon.canon_version` |
+
+Codex CLI applies in mixed mode only.
 
 ## Intent & Rationale
 

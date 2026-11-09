@@ -68,7 +68,7 @@ Scope: audit against canon's spec-writing rules of thumb. Check these eleven ite
 (8) **Symbols in ACs exist** — for any named function or symbol, has the author verified the return shape matches the spec's assumed data contract?
 (9) **Bug/flake-fix evidence** (N/A for features/refactors) — *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class: a deterministic mechanism may cite a trace with verified trigger values; a runtime-dependent mechanism needs executed confirmation (a throwaway prototype-fix spike or a deterministic forced repro). *Acceptance Criteria* includes a red-first regression-test AC or the explicit environment-bound-and-impractical escape with a named deterministic alternative. Missing or under-rung evidence, or a missing red-first AC without the escape, is BLOCKING.
 (10) **Refactor correctness audit evidence** (N/A for features/bug fixes) — does the spec record, for each behavior it declares preserved, whether it is correct today and one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk? A behavior confirmed correct needs only a one-line record. Missing audit evidence is STRONG, never BLOCKING.
-(11) **Unlisted judgment calls** — A judgment call is a choice between two or more defensible options where the choice changes behavior or scope. A choice a project doc already settles is not a judgment call: follow the doc and cite it. Does the spec make a judgment call that its *Judgment Calls* section does not list? Name the call, a defensible alternative the spec does not record, and the AC or behavior that would differ under it; if you cannot name all three, do not raise it. A missing or empty section is not, by itself, a finding. An unlisted call that meets this bar is STRONG.
+(11) **Unlisted judgment calls** — A judgment call is a choice between two or more defensible options where the choice changes behavior or scope. A choice a project doc already settles is not a judgment call: follow the doc and cite it. Does the spec make a judgment call that its *Judgment Calls* section does not list? Name the call, a defensible alternative the spec does not record, and the AC or behavior that would differ under it; if you cannot name all three, do not raise it. A missing or empty section is not, by itself, a finding. An unlisted call that meets this bar is BLOCKING (the pipeline's `spec_review` treats it as `changes_requested`).
 
 Constraints: stay structural/completeness. Don't second-guess shape (Agent A) or independently re-verify symbols against the codebase (Agent B's job). Check (8) audits whether the author verified before writing the AC.
 
@@ -77,6 +77,8 @@ Constraints: stay structural/completeness. Don't second-guess shape (Agent A) or
 - **BLOCKING:** would cause wrong behavior or a silent bug, or makes an AC unimplementable as written.
 - **NIT:** an implementation detail the implementer resolves by reading the codebase, a minor ambiguity with an obvious default, or a question the plan phase should answer.
 - **STRONG:** nit-grade under those rules, but likely to cost a review round, so cheaper to fix now.
+
+An unlisted judgment call (check 11) is BLOCKING regardless of the rules above.
 
 Behavior the spec's Non-Goals explicitly exclude and verify as unaffected is a NIT at most. An omitted required change (such as a caller, parser, migration or test surface), a transitive effect of the change, or an internal contradiction between spec sections stays BLOCKING.
 

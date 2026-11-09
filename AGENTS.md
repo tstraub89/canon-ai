@@ -66,7 +66,7 @@ canon-ai runs a phase pipeline: `spec -> spec_review -> plan -> implement -> cod
 ## Code Review Rules
 
 - When a diff changes a contract (accepted parser forms, a verdict or phase meaning, a required heading, a CLI flag), find every other place that restates it: skills, `.canon/templates/`, orchestrator prompt templates, `docs/`, and `templates/` mirrors. A restatement that is now stale or contradictory is a P2.
-- When a diff adds a gate, exemption, or new routing, trace it through each verdict (`approved`, `approved_with_nits`, `changes_requested`, `spec_gap`, `sanctioned`) and each recovery path (`canon task accept`, `--reroute`, `reset-*`). Flag any path that skips the gate or advertises a recovery that can't succeed.
+- When a diff adds a gate, exemption, or new routing, trace it through each verdict (`approved`, `approved_with_nits`, `changes_requested`, `needs_re_review`, `spec_gap`, `sanctioned`) and each recovery path (`canon task accept`, `--reroute`, `reset-*`). Flag any path that skips the gate or advertises a recovery that can't succeed.
 
 ## Where to Go Deeper
 

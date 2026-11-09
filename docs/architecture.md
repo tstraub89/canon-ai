@@ -56,7 +56,7 @@ Anything that would change if you migrated to a different framework belongs here
 │   • Spawns agent CLIs (claude; codex in mixed mode) with phase prompts    │
 │   • Auto-commits code after implement passes validation                   │
 │   • Validates handoff at code_review entry                                │
-│   • Reroutes on changes_requested; auto-blocks on loop cap                │
+│   • Review loop on changes_requested; auto-blocks on loop cap             │
 └───────────────────────────────────────────────────────────────────────────┘
         │
         ├──── invokes ────┐                       ┌──── invokes ────┐
@@ -64,8 +64,8 @@ Anything that would change if you migrated to a different framework belongs here
 ┌─────────────────┐  ┌─────────────────┐   ┌─────────────────┐  ┌─────────────────┐
 │  Claude CLI     │  │  Codex CLI      │   │  git / gh       │  │  filesystem     │
 │  (spec, plan,   │  │  (spec_review,  │   │  (branch mgmt,  │  │  (status.json,  │
-│   review, qa)   │  │   implement)    │   │   worktree,     │  │   artifacts in  │
-│                 │  │                 │   │   commits)      │  │   tasks/<id>/)  │
+│   review, qa)   │  │   implement,    │   │   worktree,     │  │   artifacts in  │
+│                 │  │   cold review)  │   │   commits)      │  │   tasks/<id>/)  │
 └─────────────────┘  └─────────────────┘   └─────────────────┘  └─────────────────┘
 ```
 
@@ -81,11 +81,11 @@ The orchestrator is a long-running TypeScript process. It spawns agent CLIs as s
 2. **Spec authorship** happens in the conversation. Claude writes `spec.md` and updates status (`phases.spec.status = "done"`).
 3. **Human spec gate**: human reads `spec.md`, signals approval. Claude invokes `canon run <id>`.
 4. **Orchestrator boots**: reads `status.json`, derives current phase (`spec_review`), resolves policy from `pipeline-policy.ts` (tier=full, model+effort per the size/phase matrix, etc.).
-5. **Spec review**: the orchestrator spawns the spec reviewer (in mixed mode, `codex exec`) with the spec-review prompt and the spec file. The spec reviewer writes `spec-review.md`. The orchestrator parses the verdict; if `changes_requested`, it increments the iteration count and routes back to spec; the loop-cap block itself now fires at that next `spec` phase entry, before the revision starts, not here (see "Auto-block / reroute" below).
+5. **Spec review**: the orchestrator spawns the spec reviewer (in mixed mode, `codex exec`) with the spec-review prompt and the spec file. The spec reviewer writes `spec-review.md`. The orchestrator parses the verdict; if `changes_requested`, it increments the iteration count and routes back to spec; the loop-cap block itself now fires at that next `spec` phase entry, before the revision starts, not here (see "Auto-block / review loop" below).
 6. **Plan**: orchestrator spawns Claude with the plan prompt. Claude writes `plan.md`.
 7. **Implement**: the orchestrator spawns the implementer (Codex in mixed mode, Claude in `claude` mode) with the implement prompt + spec + plan. The implementer edits files in the worktree (or main checkout if `worktree: false`) and writes `handoff.md`. The orchestrator runs a hallucination check.
 8. **Auto-commit**: `autoCommitCode()` parses every handoff Changes table → `allHandoffFiles` set. Verifies dirty tree matches handoff (every dirty file is listed; every listed file exists or is already committed, except gitignored build output and the listing task's own artifacts under `tasks/<id>/`). Before staging, the orchestrator runs docs-refs-check and may resume the implement session up to two times to fix broken references in handoff.md. Stages and commits with task-titled message.
-9. **Code review**: orchestrator runs the `classifyPreflightBlockers()` pre-flight (no `Fail` rows, AC coverage table populated, baseline Self-Check evidence present and filled, all required validations present). If pass, spawns Claude with the review prompt. Claude writes `review.md` (Stage 1 + Stage 2). On `changes_requested`, routes back to implement.
+9. **Code review**: orchestrator runs the `classifyPreflightBlockers()` pre-flight (no `Fail` rows, AC coverage table populated, baseline Self-Check evidence present and filled, all required validations present). If pass, the orchestrator obtains a cold-Codex diff review (mixed mode), then spawns a Claude foreman that runs an anchored lens (Stage 1 + Stage 2) and a cold-Claude lens, synthesizes all findings, and writes `review.md`. On `changes_requested`, routes back to implement.
 10. **QA**: Claude writes `done.md` (including judgment cells for the task-quality-log row) and distills `notes.md` into the task's `lessons.md` fragment. The qa → done transition upserts the task's `quality-log.md` fragment row from `status.json` plus those judgment cells. Task runs write telemetry fragments; `--ship` folds them into the shared docs.
 11. **Human review**: human tests against `done.md`, marks `phases.human_review.status = "done"`.
 
@@ -174,12 +174,12 @@ Adopters can opt into the docs refs gate by adding `- run: npm run docs-refs-che
 
 Anthropic's `claude` CLI supports `--resume <session-id>`. The orchestrator stores per-task session IDs in `status.json` (`sessions` field) so re-runs continue the same conversation rather than starting cold. Codex sessions in mixed mode are similar.
 
-### Auto-block / reroute
+### Auto-block / review loop
 
-Two mechanisms halt or redirect the pipeline:
+Three mechanisms halt or redirect the pipeline:
 - **`autoBlockPhase()`**: the primary check runs at the next revision phase's entry (`spec` / `implement`), before that revision starts; the review phase keeps the same check as a defense-in-depth backstop. On a block it sets the review phase's status to `blocked`, bumps `auto_block_count`, pushes an escalation; its callers exit with code 2. Recover by raising `MAX_REVIEW_LOOPS` and resuming, via `canon task reset-spec-review <id>` / `canon task reset-code-review <id>` for a genuine rescope, or, for a code_review block whose root cause is the spec, by adding the next Amendment section and running `canon run <id> --reroute` (see recovery below). Lifetime counters (`iterations_total`, `auto_block_count`) are never reset.
 - **Agent-session failure parks** (`parkAgentSessionFailure()`): a non-interactive agent session that fails (spawn error, stall, signal, non-zero Claude exit, or, in mixed mode, an unobtainable cold-Codex lens) in any phase throws `AgentSessionError`; the main loop calls `autoBlockPhase()` on the current phase (review or not) and exits 2. Recover by fixing the cause and re-running `canon run <id>`; no phase reset is needed.
-- **`routeBackTo()`**: on `changes_requested` verdicts. Flips the target phase and all downstream to `pending`. Loop re-enters the routed phase next iteration.
+- **`routeBackTo()`**: the automatic review loop, on `changes_requested` / `needs_re_review` verdicts; distinct from the operator-invoked `canon run <id> --reroute`. Flips the target phase and all downstream to `pending`. Loop re-enters the routed phase next iteration.
 
 ### Validation gates
 

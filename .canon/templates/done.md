@@ -53,6 +53,16 @@ Any choices that were made during implementation that you should be aware of.
 
 Anything that still needs your input or a follow-up task.
 
+## Quality Log
+
+QA fills these five cells; the pipeline's QA prompt defines each one.
+
+- Spec verdict:
+- Human reroute?:
+- Dropped ACs:
+- Validation gaps:
+- Notes:
+
 ## Root Cause
 
 One line per blocking review finding, reroute, or dropped AC: `- <class>: <one-line cause>`, where class is `context-missing`, `context-conflicting`, `spec-gap`, `plan-error`, `execution`, or `unrequested-change`. If there were none, write "None."

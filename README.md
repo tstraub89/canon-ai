@@ -153,7 +153,7 @@ cd your-project
 canon init
 ```
 
-`canon init` installs the canon task templates and Claude Code skills in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the `docs/` knowledge corpus tailored to your project. If you want agent files, generate them separately with the built-in `/init` in Claude Code or Codex; those files are adopter-owned and canon does not scaffold, modify, or read them.
+`canon init` installs the canon task templates, Claude Code skills, the review sub-agents under `.claude/agents/`, the guard hook, and the pipeline-orchestrator doc in your project. Open Claude Code in your project directory and run `/canon-init` to start the interactive setup. The skill grills Claude on your codebase — one question at a time, with recommended answers — and generates the `docs/` knowledge corpus tailored to your project. If you want agent files, generate them separately with the built-in `/init` in Claude Code or Codex; those files are adopter-owned and canon does not scaffold, modify, or read them.
 
 ### Generate your agent files with the built-in `/init`
 
@@ -189,7 +189,7 @@ canon task new my-first-feature "Short description"
 canon run my-first-feature
 ```
 
-Run `canon doctor` after install to verify your environment — it checks Node/git/Claude Code versions, allowlist coverage, and that any local Claude settings file is gitignored, plus Codex CLI presence and codex project trust when `CANON_PROVIDER` is `mixed`, empty, or unset. Doctor checks that environment setting, not providers pinned on existing tasks, so mixed-pinned tasks still need Codex.
+Run `canon doctor` after install to verify your environment — it checks Node (24.x or 26.x; warns on other majors >= 24), git, and Claude Code versions, allowlist coverage, the `.canon/config.json` docs-freshness config, and that any local Claude settings file is gitignored, plus Codex CLI presence and codex project trust when `CANON_PROVIDER` is `mixed`, empty, or unset. Doctor checks that environment setting, not providers pinned on existing tasks, so mixed-pinned tasks still need Codex.
 
 ### Discovery nudge (recommended)
 
@@ -334,7 +334,7 @@ Run canon on repositories where you would be comfortable running your test suite
 | Command | What it does |
 |---|---|
 | `canon init` | Install canon into the current repo. Refuses symlinks at destination files or parent directories; replace them with regular files/directories first. |
-| `canon doctor` | Verify environment and canon setup — Node/git versions, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage, guard-hook registration, and that any local settings file is gitignored. |
+| `canon doctor` | Verify environment and canon setup — Node (24.x or 26.x; warns on other majors >= 24), git, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage, guard-hook registration, the `.canon/config.json` docs-freshness config, and that any local settings file is gitignored. |
 | `canon completion <shell>` | Print a completion script for bash, zsh, fish, or tcsh; see Shell completion. |
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
@@ -457,20 +457,12 @@ Drop this into any repo and you have:
 - Full pipeline orchestrator with phase routing, worktree isolation, session resumption, auto-block, bundle mode, `--reroute`, `--ship`. Bundled into `dist/orchestrator/run-task.js` and invoked via `canon run`.
 - Pure routing policy module (tier/sizing/model/effort matrix), table-tested.
 - `canon task` lifecycle CLI (new / list / status / phase / accept / set / reset-spec-review / reset-code-review / post-merge-sync), in-process TS.
-- `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes)
+- `.canon/templates/` — artifact templates (status, spec, spec-review, plan, handoff, review, done, notes, pr-body)
 - Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`src/orchestrator/prompts/templates/`) and the `/canon-*` skills; adopters generate their own `AGENTS.md` / `CLAUDE.md` with the built-in `/init`
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.claude/hooks/canon-guard.mjs` — Claude Code guard hook (registration is recommend-only; canon never writes `.claude/settings.json`)
 - Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects), `/canon-sweep` (triage the lessons-learned buffer)
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
-
-## Where to Go Deeper
-
-- `docs/pipeline-orchestrator.md` for orchestrator mechanics, reroute, worktrees, and PR/ship flow.
-- `docs/release-process.md` for release-cut mechanics and branch/version flow.
-- `docs/patterns.md` for implementation pitfalls and load-bearing patterns.
-- `docs/decisions.md` for settled rules and architecture decisions.
-- `docs/codebase-map.md` for file locations and entry points.
 
 🚧 **Stubbed with `TODO[canon]:` markers — fill in for your project:**
 
@@ -483,6 +475,14 @@ Drop this into any repo and you have:
 - Adapters for other agentic CLIs (Gemini CLI, Aider, etc.) — assumed Claude Code, plus Codex CLI in mixed mode
 - Pre-built docs-check / external-API-citation tooling (project-specific)
 - Per-language project bootstrappers (Python / Rust / Go variants)
+
+## Where to Go Deeper
+
+- `docs/pipeline-orchestrator.md` for orchestrator mechanics, reroute, worktrees, and PR/ship flow.
+- `docs/release-process.md` for release-cut mechanics and branch/version flow.
+- `docs/patterns.md` for implementation pitfalls and load-bearing patterns.
+- `docs/decisions.md` for settled rules and architecture decisions.
+- `docs/codebase-map.md` for file locations and entry points.
 
 ## Supported platforms
 
@@ -502,7 +502,7 @@ The implication: **the value of canon compounds with use**. A 6-month-old canon 
 
 **Phase 1 (now)**: Layer 1 + Layer 2 ship. Full CLI, open source, installable from npm or GitHub. `/canon-init` skill for interactive project bootstrap. Validate against real projects.
 
-**Phase 2 (next)**: Make the implementer slot pluggable — adapter interface for Codex CLI, Gemini CLI, Aider, others. Architect slot stays Claude Code (skills are load-bearing).
+**Phase 2 (next)**: Make the implementer slot pluggable — an adapter interface beyond Claude Code and Codex CLI (Gemini CLI, Aider, others). Architect slot stays Claude Code (skills are load-bearing).
 
 **Phase 3 (research)**: Productize. Hosted bootstrap service? Per-language scaffolds? Marketplace for `docs/patterns.md` starter packs (Next.js patterns, Rails patterns, etc.)? TBD based on Phase 1 validation.
 

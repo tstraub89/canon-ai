@@ -86,6 +86,8 @@ Mark applicable checks with `- [x]` (replace `<...>` with the project's actual c
 - [ ] `<build>`
 - [ ] `<E2E>`
 
+If no check applies, replace the list with a single checked entry: `- [x] None — <reason>`.
+
 ## Docs Impact
 
 Name any protected doc (by default architecture, codebase-map, decisions, patterns, product-context), plus docs mapped from paths this task touches in the project's docs-freshness config, that might go stale if this task ships. This is a heads-up, not a change; QA checks them. List a mapped doc in Affected Files only if the implementer should edit it. Use "None" when no docs might go stale.

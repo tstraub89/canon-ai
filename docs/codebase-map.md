@@ -74,7 +74,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Policy config wrappers | `src/orchestrator/policy.ts` | Sole provider-setting resolver; validates task/bundle pins; Claude/Codex model and size getters wrapping `src/lib/pipeline-policy.ts` |
 | Task context extractors | `src/orchestrator/context.ts` | `extractAffectedFiles()`, `extractAcSummary()`, `extractValidationChecks()` — feeds prompt builders |
 | Blast-radius map | `src/orchestrator/blast-radius.ts` | `buildBlastRadiusBlock()` — referrers of Affected Files and spec-named identifiers for implement prompts (git grep, fail-open) |
-| Relevant pitfalls and lessons | `src/orchestrator/pitfalls.ts` | `buildRelevantPitfalls()` — selects matching pitfalls, Trigger Table sections, and lessons for implement prompts; a Known Pitfalls section with no `###` entries is included whole (minus blockquotes and index tables) regardless of Affected Files |
+| Relevant pitfalls and lessons | `src/orchestrator/pitfalls.ts` | `buildRelevantPitfalls()` — selects matching pitfalls, Trigger Table sections, and lessons for implement prompts; a Known Pitfalls section with no `###` entries is included whole (minus blockquotes and index tables) regardless of Affected Files; output capped at `PITFALLS_BYTE_CAP` (24 KiB) |
 | Signal handlers | `src/orchestrator/signals.ts` | SIGHUP survival; installed before heavy imports so the handler is always present |
 | Detached-mode isolation | `src/orchestrator/detach.ts` | Process group detachment for SIGHUP-safe background runs |
 | Heartbeat monitor | `src/orchestrator/heartbeat.ts` | Per-task `.heartbeat.json` writes at 30s intervals; used by `canon watch` / `canon doctor` to detect live vs. stale runs |
@@ -82,7 +82,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Canon snapshot | `src/orchestrator/canon-snapshot.ts` | Records and compares the canon-ai git snapshot governing a run; used for provenance stamping |
 | Markdown table parser | `src/orchestrator/markdown-table.ts` | Parses markdown tables including escaped-pipe cells; used by handoff and spec parsers |
 | Prompt rendering | `src/orchestrator/prompts/render.ts` | Mustache rendering with LLM-safe escape-disable; consumed by `src/orchestrator/prompts/index.ts` |
-| Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | Startup and headless strings, `implementationStartup(provider)`, `PHASE_ARTIFACT_COMPLETION`, `toResumePrompt()` |
+| Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | Startup and headless strings, `implementationStartup(provider)`, `PHASE_ARTIFACT_COMPLETION`, `toResumePrompt()`, `makePromptArgSafe()` (NUL-byte escaping for prompt args) |
 | Agent stream handler | `src/orchestrator/agents/stream.ts` | Child process stdout/stderr muxer with stall detection and graceful kill; shared by `claude.ts` and `codex.ts` |
 | Scaffold destination safety | `src/lib/scaffold-paths.ts` | Rejects symlinks in init/upgrade destination paths before writes, including dangling links and parent directories |
 | Telemetry writer | `src/orchestrator/metrics.ts` | Per-task metrics fragment |

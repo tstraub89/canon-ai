@@ -22,6 +22,7 @@ Rule of thumb: real content for every section that applies; remove the section e
 - **Core Concepts & Terminology**: fill the glossary table with real terms; remove example rows
 - **Primary User Flows**: 2–4 concrete flows the codebase supports
 - **`delicate` flag domain examples**: the project-specific surfaces confirmed in the grill
+- **Tiers, Sizes, and Authorization**: fill the project-specific delicate domains (above) and delete the remaining placeholders
 - **Free vs. Paid Feature Split**: fill if applicable; remove this section if the product has no tiers
 - **Business Rules**: non-obvious product rules (trial periods, data retention, geo restrictions, etc.); omit if none
 - **Voice & Tone**: fill if there are user-facing copy conventions; remove if not relevant
@@ -46,6 +47,7 @@ Rule of thumb: real content for every section that applies; remove the section e
 - **Tests**: real test directory paths
 - **Config**: real config file paths agents might need to edit
 - **Feature Wiring Maps**: replace the placeholder wiring maps with 2–3 real feature trails specific to this project (e.g., "add a new API endpoint", "add a gated feature")
+- **Agent Config**: keep the rows that apply; delete the `TODO[canon]` note
 
 ## `docs/decisions.md`
 
@@ -55,6 +57,8 @@ At least 3–5 entries covering major settled decisions: why this stack, why thi
 
 - Implementation patterns the team has settled on: at least one per major layer (API, data, UI if applicable)
 - **Known Pitfalls** section: make each pitfall its own H3 with a rule-focused title, and cite paths so implement prompts can select them by Affected Files. A path counts only inside backticks or as a Markdown link target; directories need a trailing `/`, and globs need `*`. Bare file names never match. If the section has no `###` entries, its prose is injected whole except blockquotes (author guidance); index tables stay in the area index. A directory listed in Affected Files selects pitfalls that cite paths inside it. If pitfalls live in separate area docs, add a table directly under the Known Pitfalls heading, before the H3 entries, with a `Read this doc` column, mapping each doc to the paths or globs that should trigger it.
+- **Trigger Table**: replace the example rows with this project's real areas; cite each section's `Key files` as backticked repository paths, directories with a trailing `/`, or globs with `*`, so implement prompts can select the section by Affected Files
+- **Lint & Type Safety Policy** and **Quick Reference**: fill, or remove if they do not apply
 - Leave the template structure intact; fill each section that applies
 
 ## `docs/lessons-learned.md`

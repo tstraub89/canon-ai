@@ -121,7 +121,7 @@ BUMP_SHA=$(git blame -L "$LINE,$LINE" --porcelain -- package.json | awk 'NR==1 {
 git tag v<new-version> "$BUMP_SHA"
 git push origin v<new-version>
 gh release create v<new-version> --target "$BUMP_SHA" \
-  --notes "$(git show "$BUMP_SHA":CHANGELOG.md | awk '/^## \['"<new-version>"'\]/,/^## \[/' | sed '$d')"
+  --notes "$(git show "$BUMP_SHA":CHANGELOG.md | awk -v v="<new-version>" '/^## \[/ { if (inb) exit; if (index($0, "## [" v "]") == 1) { inb = 1; next } } inb')"
 ```
 
 ## Related references
