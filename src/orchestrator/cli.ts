@@ -165,6 +165,8 @@ export function registerExitHandlers(): void {
     });
 }
 
+// process.exit skips every enclosing `finally`: restore side effects (temp backups, preserved dirt)
+// before calling die(), e.g. have the failing step return a result and let the caller restore first.
 export function die(message: string): never {
     setExitReason(message);
     console.error(`❌ ${message}`);

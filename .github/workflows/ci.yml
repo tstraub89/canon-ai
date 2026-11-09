@@ -36,6 +36,8 @@ jobs:
   # Static checks and packaging smoke tests. The test suite runs in the
   # sharded `test` job below, in parallel with this one.
   checks:
+    # The main ruleset requires this job by name. Renaming it leaves open PRs at "Expected — waiting"
+    # until the ruleset is edited by hand; update the "Merge gate" list in docs/architecture.md too.
     name: checks
     runs-on: ubuntu-latest
     steps:
@@ -138,6 +140,8 @@ jobs:
   # assigns whole test files to shards. Within a file tests run serially, so
   # keep any single test file small enough not to dominate its shard.
   test:
+    # The main ruleset requires this job by name. Renaming it leaves open PRs at "Expected — waiting"
+    # until the ruleset is edited by hand; update the "Merge gate" list in docs/architecture.md too.
     name: test (node ${{ matrix.node }}, shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     strategy:

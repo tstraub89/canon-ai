@@ -50,14 +50,6 @@ A spec that needs "X outside the new boundary should stop working" is tempting t
 
 ---
 
-### A guard on one field is only as strong as the fields it reads
-
-*(2026-10-05, source: rearm-spec-gate)*
-
-Refusing `human_spec_gate false` on delicate tasks can be sidestepped by toggling `delicate` off, disarming, and toggling it back on — the guard checks state only at the call. Code review flagged it, but the spec scoped the guard to the gate setter, so it shipped as an accepted spec-gap. Rule of thumb: when a spec adds a guard that depends on another settable field, list the settable-field graph in the spec and either guard the dependency's mutation too or record the bypass as an accepted non-goal. A second instance: a spec-mandated recovery note ("full-tier `--reroute`") can be unreachable right after the state it describes, so trace when the advertised command is actually admitted before mandating its wording.
-
----
-
 ### Name the overlap winner before finalizing a user-configured file list
 
 *(2026-10-15, source: configurable-docs-freshness)*
@@ -88,100 +80,13 @@ A `process.on('exit')` cleanup that removes runtime files runs on every exit pat
 
 A halt message that names the same heading on two lines (the fix line and a scope note) can be half-fixed: correcting the fix line left the scope note naming the bare heading, and code review caught it. The corrected round-numbered heading then created a second problem, because a blessed section with that heading satisfied the next human reroute gate with no new amendment. Rule of thumb: when a fix changes a value in an emitted message, grep the emitter for every line that names that value and change them together, then ask whether the replacement lets a bypass path (here, BLESS) satisfy a gate the operator is supposed to pass by hand. Test the replacement by following the printed instruction, then running the next command it implies. Canonical example: the spec_gap halt in `src/orchestrator/main.ts`, with the chained scope-BLESS-reroute fixture in `tests/recovery-hints.test.ts`.
 
-<!-- Buffer swept 2026-10-23 (24 entries reviewed: 10 promoted into 4 docs/patterns.md edits, 6 kept in buffer, 8 pruned).
-     Promotions → docs/patterns.md: Test-writing bullet "Prove each regression test can fail, and keep its fakes honest" (fake-git lockstep, rename sentinel, helper-vs-call-site, guidance-prose clause, fixture stream shapes, fixture phase derivation); Git-behavior bullet "A pre-push hook runs after git resolves the refspec"; new pitfall "Bind a gate or record to the state the action actually used" (pin-before-external-process, probe-after-hooks); clause on the "Clean tree" pitfall (scope guard snapshots content and HEAD).
-     Kept in buffer: one-boundary-check — re-evaluate if a scope/boundary task hits it again; guard-on-one-field — re-evaluate on another settable-field bypass; overlap-winner — re-evaluate on the next adopter-config schema; round-trip-two-cycles — re-evaluate on another parse-and-rewrite cell bug; exit-handler-files — re-evaluate if crash detection is touched again; message-restates-value — graft into the clause-builder pitfall if it recurs.
-     Pruned: gate-after-recovery (artifact fix-up gate had exposure without recurrence); build-before-test (no recurrence across many builds); fail-closed-precedence (AGENTS.md trace-every-verdict rule); glob-matcher (regression tests landed); prompt-builder-values (canon-spec data-contract rule); park-typed-failure (patterns.md non-zero-exit pitfall); log-marker-tail (fix and tests landed); state-classifier-entry-points (canon-spec enumerate-every-caller rule).
-     Unresolved follow-ups: the canon-spec "Codebase-wide term renames" rule is skill-only, not in the spec/spec-revision phase prompts — a separate decision.
-     Prior entries are in git history. -->
-
 ---
-
-### Match a remote ref probe on the exact `refs/heads/<name>` line, not a pattern
-
-*(2026-10-24, source: pr-pushes-scaffold-base)*
-
-`git ls-remote origin <pattern>` tail-matches: asking for `x` also prints `refs/heads/feat/x`. A probe that treats any output as "the branch exists" will read a different branch's ref as the one it wanted, and then push or skip based on that. The failure mode is silent: the wrong ref looks present. Rule: parse the output and compare the full ref name, and map exit codes separately (here, 2 means the ref is absent and 128 means the remote is unreachable, so a missing branch and a network failure take different paths). Canonical example: `probeOriginBranch` in `src/orchestrator/git.ts`. Verify with a fixture where the wanted name is a suffix of another branch.
-
-### Fail closed when a prune or refresh of remote state fails
-
-*(2026-10-24, source: pr-pushes-scaffold-base)*
-
-When a check computes "commits not on any remote" from remote-tracking refs, a stale ref for a branch deleted on the remote hides local commits from the check. The fix is to prune first, but a failed prune must not fall back to the unpruned refs; that silently reopens the hole. Rule: if the refresh step fails, skip the action that depends on it and warn, and do not compute from the old state. Prove the prune matters with a mutation: remove only the prune, confirm the stale-ref fixture then succeeds in pushing something it should refuse, and restore it. Canonical example: the missing-remote range in `src/orchestrator/git.ts` and its stale-origin integration case in `tests/run-task-safety-scaffold-push.test.ts`.
-
----
-
-### Infer a flag's value from the flag, not from the token before the current one
-
-*(2026-10-24, source: per-command-help)*
-
-A pre-scan that decides a token is the value of the previous flag by looking one token back will misfire when that previous token is a complete `--flag=value` form, because the equals form consumes nothing after it. Here `--help` placed after `--timeout=5s` or `--base=main` was silently dropped, and only code review caught it. Prevention: when a look-behind attributes a token to an earlier flag, list the self-contained forms (`--flag=value`), test the token right after each one, and test the token after a value that was itself consumed. Write those regression tests against production declarations; a synthetic declaration with a free-text slot can make them pass with the bug still present. Canonical example: the look-behind removed from `preScanArgs()` in `src/lib/cli-args.ts`, with the help-after-value cases in `tests/cli-args.test.ts`.
-
----
-
-### A test gated on an absent tool hides its own expectation until CI
-
-*(2026-10-25, source: shell-completion)*
-
-The fish smoke test skipped locally because fish was not installed, so its exact-match expectation (`['spec_gap']` for a `code_review` verdict list) never ran until code review read it against the generator and found the fish script printed all five verdicts. A skip-when-absent test is unverified, not passing, and its expected values can be wrong with no signal. Prevention: when a test skips for a missing tool, review its expected values against the generator by hand, make it fail under `CI`, and record the skipped rows as CI-only-verified in the handoff. Apply the same check to any other environment-gated test, such as a worktree test that skips when the git dir is read-only.
-
----
-
-### Build a gate's test fixtures from the state its real writer produces
-
-*(2026-10-25, source: reroute-from-implement)*
-
-The predecessor's reroute admission test modeled the loop-cap auto-block as code_review `blocked` with verdict `changes_requested`. The implement-entry loop-cap path actually writes implement `pending`, code_review `blocked`, verdict empty. The fixture passed for a state the pipeline never writes, so the gate rejected the real state and no test failed. It surfaced only when this task traced the writer. Prevention: for any gate, find the function that writes each state the gate must admit or refuse, and build the fixture from that writer's output, not from a hand-written status object. Label each row with the writer that produced it, and keep a separate row for each writer that can reach the same phase. Canonical example: the implement-entry loop-cap and code-review-phase rows in `tests/run-task-reroute-preflight.test.ts`.
 
 ### A prompt that names a file must also tell the agent to open it
 
 *(2026-10-25, source: reroute-from-implement)*
 
 A reroute prompt pointed the agent at the archived review (`review-prior-<n>.md`) and said its unresolved findings "remain binding", but no instruction told the agent to read it. The sentence was true and still did not get the findings read, and a cold reviewer flagged it as P2. Prevention: when a prompt cites an artifact the agent must act on, pair the citation with an explicit read step, and grep the rendered prompt for the read verb near the path. A test that only checks the path appears in the prompt cannot catch this. Canonical example: the archive guidance built in `archivedReviewGuidance()` in `src/orchestrator/prompts/index.ts`, and the implement-reroute template's step list.
-
----
-
-### Test whether an override is set, never whether its path is absolute
-
-*(2026-10-25, source: shared-tasks-root)*
-
-When a default root became absolute, three call sites that read "absolute" as "`CANON_TASKS_DIR_OVERRIDE` is set" would have sent every per-task write to the main checkout's copy, skipping worktree routing. The check must test the environment variable itself. Before making a default path absolute, grep for `isAbsolute` and absolute-path tests next to the root variable. Also remember that `path.join` with an absolute middle segment concatenates instead of replacing, so a plain join on an absolute default produces a wrong path. The worktree-routing ACs with the gate on are the guard. See `src/task/index.ts` and `tests/task-cli.test.ts`.
-
-### Make a git test fake answer the production argv, not a production fallback
-
-*(2026-10-25, source: shared-tasks-root)*
-
-A fallback query added to production code so a fake git stub would pass hid a real argv mismatch and bypassed the main-working-tree rule. Fix the fake to answer the exact `rev-parse` invocation production sends, and keep production to one code path. Check that a stub's expected argv matches the call site before adding branches to satisfy it. See `setupFakeGit` in `tests/run-task-safety-helpers.ts` and `src/lib/project-root.ts`.
-
-### Find the main checkout's root with `--show-toplevel`, not the parent of the common git dir
-
-*(2026-10-25, source: shared-tasks-root)*
-
-The parent of `--git-common-dir` is only the project root when the git directory sits inside the working tree. With `git init --separate-git-dir`, or in a submodule, that parent is outside the project. In the main working tree, `--git-dir` equals `--git-common-dir` and `--show-toplevel` is correct; only linked worktrees need the parent-of-common-dir branch. Canonicalize with `realpath` before comparing, because macOS temp paths are symlinked. See `resolveProjectRoot()` in `src/lib/project-root.ts`.
-
----
-
-### Check `git ls-files` before planning around a path's tracked state
-
-*(2026-10-27, source: codex-implement-effort-xhigh)*
-
-A commit titled "stop committing dist/" existed on the base branch, but `git ls-files dist` still listed `dist/cli/index.js` and `dist/orchestrator/run-task.js`. A plan written from the commit title would have treated `dist/` as untracked and skipped the rebuild-and-commit step, so the committed bundle would have gone stale. Before a plan assumes a path is or isn't tracked, run `git ls-files <path>` and read the result, not the commit message. For `dist/`, a source change means `npm run build` and committing the rebuilt declared bundles.
-
----
-
-### Moving a cell out of a shared tier changes what the tier variable reaches
-
-*(2026-10-27, source: default-qa-model-to-haiku)*
-
-When a cell's default leaves a shared tier, every env var that pins that tier stops reaching the cell and the cell silently resolves to a different model. Here QA left the light tier, so an adopter who set `CLAUDE_MODEL_LIGHT` alone moved from that model to Haiku, and one who set `CLAUDE_MODEL_LIGHT` and `CLAUDE_MODEL` moved to the legacy value. The spec listed each env-var combination with its before and after value, plus a per-variable rollback, before implementation started. Prevention: before changing a cell's tier membership or its fallback chain, enumerate every env-var combination that reaches the cell today and what each resolves to after the change, and record that table in the spec. Canonical example: the pinned-adopter list in `tasks/_archive/default-qa-model-to-haiku/spec.md` and the resolution chain in `resolveClaudeModel()` in `src/lib/pipeline-policy.ts`.
-
----
-
-### A nullish fallback never fires on an extractor that returns an empty string
-
-*(2026-10-28, source: agent-backend-role-routing)*
-
-Chaining `extract(a) ?? extract(b)` does nothing when `extract` returns `''` on no match, because `??` only falls through on `null` or `undefined`. The QA done-summary salvage shipped that way. Code review caught it: the raw-stdout fallback never ran, so a summary that appeared only in the agent's text was lost. Prevention: before using `??` to chain a parser, read its no-match return value. If it is `''`, use `||` or test the result for emptiness. Add a fixture where the first source yields no match and check that the second source is used. Canonical example: the `extractDoneMdFromStdout` fallback in `src/orchestrator/phases/qa.ts`, with the no-match return in `src/orchestrator/validation.ts`.
 
 ---
 
@@ -193,107 +98,11 @@ Routing a call site to a second backend exposes every per-request flag the first
 
 ---
 
-### Key a resume entry on the writer that stored the session, not on the state it leaves
-
-*(2026-10-30, source: claude-provider-mode)*
-
-A resume predicate keyed on `blocked` plus a stored session admits every path that writes `blocked`, not only the park it was built for. Here a completed implement whose docs-refs fix-up threw an `AgentSessionError` parked through the same boundary and then resumed as "work may be partial". The outcome was benign, but the entry condition was accepted as a spec Known Risk rather than tested per writer. Prevention: for any resume predicate, list every path that writes the same state. Then either tag the stored session with the writer that created it, or add one regression per writer. Canonical example: the park boundary `withAgentSessionPark` in `src/orchestrator/main.ts`.
-
----
-
-### Splicing another module's text with exact-string replace fails silently
-
-*(2026-10-30, source: claude-provider-mode)*
-
-When a spec keeps the owning module out of scope, a prompt builder that rewrites one sentence of that module's output with `.replace('…')` works until the source wording changes. Then the replacement does nothing and no test fails. Here the Claude implementer startup is built by replacing a sentence inside `CODEX_STARTUP`, and code review flagged it as fragile. Prevention: when a derived prompt replaces text it does not own, assert that the new text is present and the old text is absent. A wording change then fails the test instead of silently changing the prompt. Canonical example: `CLAUDE_IMPLEMENTER_STARTUP` in `src/orchestrator/prompts/helpers.ts`.
-
----
-
-### Derive loop-local state from fields a reset actually clears, not from a lifetime counter
-
-*(2026-10-30, source: claude-provider-mode)*
-
-A reroute keeps a lifetime counter (`changes_requested_total`) and clears the reviewer session and loop counters. A re-review predicate that used the lifetime counter to decide whether a resumed reviewer had already reviewed in this loop was wrong. It kept the old history after the reset had cleared the session, so the revised-spec preamble went to a reviewer that had no prior review in the current loop. The first fix, which switched to the lifetime counter, was caught on review round 2. Prevention: before using a cumulative counter as a proxy for a loop-local fact, list every reset path that zeroes one field but not the other, and key the predicate on the field that the reset clears together with the session. Canonical example: the re-review predicate in `src/orchestrator/phases/spec-review.ts` and the reviewer clear in `src/task/index.ts`.
-
----
-
-### Re-run a sandbox probe under the same flags the pipeline uses before documenting it
-
-*(2026-10-31, source: provider-neutral-vendor-wording)*
-
-A backlog probe of Claude Code's opt-in sandbox (2026-09) ran in default permission mode and reported that network access was denied. Canon's headless sessions pass `--dangerously-skip-permissions`, and under that flag the same sandbox let `curl` through even with `network.allowedDomains` set. The earlier note was true for the mode it tested and wrong for canon's runs. A task that documents, trusts or relies on a permission or sandbox behavior must probe it with the exact flags canon passes, plus one control run in the default mode, and record the Claude Code version. Canonical example: the 2026-10-31 probe in `docs/BACKLOG.md` and the sandbox section of `README.md`.
-
----
-
-### Keep the other checks in a startup block when one step is skipped
-
-*(2026-11-01, source: provider-pin-agent-free-paths)*
-
-When a mode skips one step in a shared startup block, keep the rest of that block running. The provider-pin fix skipped provider resolution for `--ship`, and the status-file read and validation share the same `try` block. Skipping the whole block would have turned a malformed status file on `--ship` from a clean refusal into an uncaught stack trace. Before gating a block on mode, list each step in it and decide per step. Pin the clean-refusal case with a test. The canonical example is the startup block in `src/orchestrator/main.ts`.
-
----
-
-### Scope a parser's new exclusion rule to the consumer that needs it, not the shared helper
-
-*(2026-11-01, source: spec-manifest-lint)*
-
-Teaching a shared section extractor to skip fenced code and HTML comments would have changed its output for four non-manifest callers (handoff iterations, review rounds, the Quality Log section), which the spec forbids. The fix was a second, manifest-only scanner that the manifest parser and lint both consume, and the shared helper stayed as it was. Before changing a shared parser's output, grep every caller and check each one's test fixtures for the input the change will alter. Put the new behavior behind a new function when any caller's output would move. Also, when a comment or fence stripper runs before table splitting, protect inline code spans: a literal `<!--` in a Change cell hid a live table in an archived spec until calibration caught it. Canonical example: `scanSpecManifest` in `src/orchestrator/markdown-table.ts`.
-
----
-
-### Enumerate option forms per tool before writing a command matcher
-
-*(2026-11-01, source: adopter-bypass-guards)*
-
-A regex over a CLI's flags misses valid invocations and over-matches flag values. Two review rounds found bypasses the spec's AC list did not name: `gh -R owner/repo pr merge` (a global repo flag before the subcommand) skipped the merge rule, and Perl switch clusters were read as in-place edits because any `i` matched. Perl value-taking switches (`-M`, `-F`, `-C`, `-D`) consume their own text, so `-Fi` is a read, while `-lpi` and `-0777pi` are in-place. A fix that narrowed one pattern regressed another. Prevention: before writing a matcher for a CLI, read that CLI's option grammar (its `--help` or parser) and enumerate leading global flags, value-taking short flags, and clustered short flags. Add an allow case and a deny case for each form, and check the flag position as well as the subcommand.
-
----
-
-### Restore side effects before `die()`, not in a `finally`
-
-*(date 2026-11-01, source: ship-merge-method)*
-
-`die()` calls `process.exit`, so a `try`/`finally` around a call that dies never runs its cleanup. Before this task, `shipTasks` backed up the supervising checkout's telemetry appends and then died on a failed merge, leaving the appends only in a temp backup. The fix is to have the failing step return a result so the caller restores the state and then dies. Canonical example: `mergeOpenPRsAndPull` in `src/orchestrator/main.ts` returns a failed result, and `shipTasks` restores the preserved dirt before it exits. Any new cleanup that must survive a failed irreversible step (a merge, a push) needs the same shape, and the test should seed the state and assert it is restored after a forced failure.
-
----
-
-### Pin matrix expectations to literal values, not to the config they test
-
-*(2026-11-04, source: cold-lens-full-model-l-xl)*
-
-A test that reads its expected model from the same config it is checking cannot fail on a wrong cell, because the expected value moves with the bug. The existing review-invocation parity test and the `makeDeps` stub both did this, so they passed on the old mini cells for L and XL. Prevention: for any size, phase, or tier matrix, write the expected value as a literal next to the cell it pins, and pick distinct override values (for example `mini-x` and `full-x`) so a fallback to the wrong tier shows up as a wrong literal. If the matrix reads env vars at module load, put the test in a spawned process that sets them first. Confirm the test fails on the old cells before editing production code. Canonical example: the fresh-process literal `-m` assertions in `tests/run-task-code-review.test.ts` and the matrix table in `tests/pipeline-policy.test.ts`.
-
----
-
-### A fail-open test must reach the throw path, not only the early return
-
-*(date 2026-11-08, source: implementer-blast-radius-map)*
-
-A fake `git` that fails every call returns from the first guard, so the test never reaches the `throw` inside the fail-open `try`. Three of the nine first-round findings on this task were test-integrity gaps: an assertion on a hand-typed string instead of rendered output, a byte-cap check that still passes if every entry is dropped, and a fail-open check that never reached the outer catch. Write the fake to pass early calls through and fail only the call under test, assert a non-empty result when nothing fails (a positive control, so the test cannot go vacuous), and assert exact omitted counts. Reference `buildBlastRadiusBlock` in `src/orchestrator/blast-radius.ts` and its fixtures in `tests/blast-radius.test.ts`.
-
----
-
-### Judge cumulative handoff evidence by its effective record, not each block
-
-*(date 2026-11-08, source: handoff-self-check-evidence)*
-
-When a gate reads an artifact that accumulates across review rounds, define the effective row for each check (the latest block with a filled row for it; placeholder rows supersede nothing) and state that superseded rows are never judged. Otherwise a baseline `N/A — no tests changed` stays active after a revision adds a test, and a correction appended later leaves the original false claim standing. The revision prompt appends only the delta, so the supersession rule has to live in the gate's charter, the revision prompt, and the foreman's re-review instruction, each with the two canonical examples. Before writing such a check, grep the revision prompt for "delta only" wording and confirm the spec says what supersedes what. Spec review caught the gap in round 1 for this task.
-
----
-
 ### Classify a table by its position or header, not by what its cells contain
 
 *(2026-11-08, source: path-scoped-pitfalls)*
 
 A parser that decides whether a markdown table is an index (a lookup of docs or sections) by sniffing its cells misclassified tables in three consecutive review rounds. Each content rule (a path token, an em dash, a heading-like cell) fixed the layout the last reviewer reported and broke one the previous rule handled, because an explanatory table inside an entry can carry the same signals as an index. The rule that settled it was positional: only tables directly under the section heading, before the first entry, are indexes; a table inside an entry is entry content. The same pattern held for choosing a row's target cell: a header hint ("Read this doc", "Section") beat any content precedence. Prevention: when a spec needs to tell two kinds of table apart, write the rule as position or header text in the spec before implementing, and pin each real layout in a test. Do not add a content heuristic to a parser already in review. Canonical example: `knownPitfallsIndexTables` in `src/orchestrator/pitfalls.ts`, with the rule stated in `tasks/_archive/path-scoped-pitfalls/spec.md` Amendment 1.
-
----
-
-### Renaming a required CI job strands the branch ruleset until a human edits it
-
-*(2026-11-08, source: support-node-26)*
-
-A branch ruleset that requires a CI job by name keeps waiting on that name after a rename: the old check never reports again, so PRs sit at "Expected — waiting" and a plain `gh pr merge` can be refused. The ruleset lives outside the repo, so no file change fixes it. Before merging a task that renames or adds required-check jobs, list the old and new names in `done.md` as a pending human step that comes before `--ship`, and confirm the new names have reported green on the PR. The worked example is the `test (shard N/3)` → `test (node N, shard M/3)` rename in `.github/workflows/ci.yml`.
 
 ---
 
@@ -311,10 +120,10 @@ When a matcher asks "could some path inside this directory match this glob," a g
 
 The Self-Check placeholder check moved from matching the template's exact `_(` prefix to rejecting any Evidence cell that is entirely parenthesized. That also rejects real evidence written the same way, such as `(verified both entry points against the diff)`. Two cold reviewers flagged it. The spec had accepted the shape rule as a Known Risk, so it shipped with the cost. Rule of thumb: when a check moves from exact-text matching to shape matching, list the real values that share the shape (parenthesized prose, a bare `(N/A)`) in the spec, and either accept each one or keep the exact match. Canonical example: `checkSelfCheckEvidence` in `src/orchestrator/validation.ts`, with its tests in `tests/run-task-validation.test.ts`.
 
----
 
-### Give every writer of a checked artifact the same post-write check, and list the writers in the spec
-
-*(2026-11-08, source: review-artifact-refs-fixup)*
-
-The first spec for this fix added a reference fix-up after the code-review reviewer session, the one writer of `review.md` it had considered. spec_review round 1 found a second writer, the one-shot recovery session that runs when the reviewer returns with code review not done, so the same gap would have stayed open after the first fix. Rounds 2 and 3 found two more cases the first pass had not enumerated: a blocked review that must not be fixed up, and the archived `review-prior-N.md` that a reset leaves behind. Rule of thumb: before writing a decision that adds a check to an artifact, grep every call site that runs an agent with the role that writes that artifact (here `runSession` and `backend.run` for the reviewer role, in `runPhase` and `retryAgentForPhase`), and state in the spec which writers get the check and which do not, with a reason. Prevention: one AC per writer that can reach the artifact, so a missed writer fails a test rather than a later `--pr`. Canonical example: the `fixUpOwnArtifactRefs` call sites in `src/orchestrator/main.ts` and the spec's Known Risks entry "Two writers of `review.md`".
+<!-- Buffer swept 2026-11-09 (35 entries reviewed: 12 promoted into 6 carriers, 10 kept in buffer, 13 pruned).
+     Promotions → docs/patterns.md: Validation Gate Discipline bullet "Enumerate every writer of each state the gate reads" (guard-on-one-field, gate-fixtures-from-writer, resume-keyed-on-writer, loop-local-vs-lifetime-counter, every-writer-of-checked-artifact); new pitfall "Read a CLI's option grammar before parsing or matching its argv" (flag look-behind, matcher option forms); Test-writing bullet "A skipped test is unverified, not passing"; Pure Policy bullets "Pin expected values as literals" and "Moving a cell between tiers changes what each env var reaches". Site comments: die() in src/orchestrator/cli.ts (finally never runs); required-job names in .github/workflows/ci.yml (ruleset requires them by name).
+     Kept in buffer: one-boundary-check — re-evaluate if a scope/boundary task hits it; overlap-winner — re-evaluate on the next adopter file-list config; round-trip-two-cycles — re-evaluate on another parse-and-rewrite cell bug; exit-handler-files — re-evaluate if crash detection is touched; message-restates-value — graft into the clause-builder pitfall if it recurs; prompt-names-file — re-evaluate if another prompt cites an artifact without a read step; backend-flag-no-op — re-evaluate when another call site changes backend; classify-table-by-position — re-evaluate if another parser churns on a content heuristic in review; shape-vs-exact-placeholder — re-evaluate if a shape check rejects real values again; directory-glob-depth — structural, stays until a test pins the equal-depth boundary (`src/*` against `src/a/`) in tests/pitfalls.test.ts.
+     Pruned: ls-remote exact ref (site comment in git.ts); fail-closed prune (write-safety fail-closed pitfall); override-vs-absolute (tests landed); git fake argv (fakes-honest bullet); show-toplevel (git list item); ls-files tracked state (architecture.md dist/ rule); nullish-on-empty (self-evident, fixture landed); splice exact-replace (prompt test pins splice); sandbox probe flags (recorded in README); startup-block skip (test pinned); shared-parser exclusion (canon-spec enumerate-callers rule); fail-open throw path (prove-can-fail bullet); cumulative handoff evidence (rule in anchored charter + foreman).
+     Unresolved follow-ups: the canon-spec "Codebase-wide term renames" rule is skill-only, not in the spec/spec-revision phase prompts — a separate decision. The equal-depth boundary test for `globCouldMatchInsideDir` has not landed.
+     Prior entries are in git history. -->
