@@ -1,7 +1,7 @@
 {
   "id": "spec-prompts-term-renames-rule",
   "title": "Carry the term-renames rule in the spec phase prompts",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-09",
   "updated": "2026-11-09",
   "branch": "task/spec-prompts-term-renames-rule",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

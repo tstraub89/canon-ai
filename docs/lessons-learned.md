@@ -127,3 +127,11 @@ The Self-Check placeholder check moved from matching the template's exact `_(` p
      Pruned: ls-remote exact ref (site comment in git.ts); fail-closed prune (write-safety fail-closed pitfall); override-vs-absolute (tests landed); git fake argv (fakes-honest bullet); show-toplevel (git list item); ls-files tracked state (architecture.md dist/ rule); nullish-on-empty (self-evident, fixture landed); splice exact-replace (prompt test pins splice); sandbox probe flags (recorded in README); startup-block skip (test pinned); shared-parser exclusion (canon-spec enumerate-callers rule); fail-open throw path (prove-can-fail bullet); cumulative handoff evidence (rule in anchored charter + foreman).
      Unresolved follow-ups: the canon-spec "Codebase-wide term renames" rule is skill-only, not in the spec/spec-revision phase prompts — a separate decision. The equal-depth boundary test for `globCouldMatchInsideDir` has not landed.
      Prior entries are in git history. -->
+
+---
+
+### Delete unused Validation Required placeholders instead of leaving them unchecked
+
+*(2026-11-09, source: spec-prompts-term-renames-rule)*
+
+The spec's Validation Required list kept an unchecked `<E2E>` line from the template, and the implementer could not tell whether it was a required check or a placeholder. It logged an ambiguity blocker and had to decide on its own that E2E was N/A for a prompt-template-only change. Prevention: when a spec has no end-to-end surface, delete the `<E2E>` line rather than leaving it unchecked, and write the N/A reason in the spec. Before handoff, grep the spec's Validation Required section for any `<...>` placeholder that is still unchecked.

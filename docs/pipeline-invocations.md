@@ -1635,3 +1635,10 @@
 | 2026-11-09T04:32:54.738Z | review-artifact-refs-fixup | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 28.5s | 331744 | ok |
 | 2026-11-09T04:32:54.740Z | review-artifact-refs-fixup | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 48.4s | 545768 | ok |
 | 2026-11-09T04:34:29.235Z | review-artifact-refs-fixup | qa | claude | claude-haiku-5-5 | 0 | 94.5s | 1415277 | ok |
+| 2026-11-09T06:05:32.742Z | spec-prompts-term-renames-rule | implement | codex | gpt-6-luna | 0 | 594.4s | 1860505 | ok |
+| 2026-11-09T06:05:57.711Z | spec-prompts-term-renames-rule | implement_fixup | codex | gpt-6-luna | - | 24.4s | 2194519 | ok |
+| 2026-11-09T06:06:29.160Z | spec-prompts-term-renames-rule | code_review | codex | gpt-6-luna | 0 | 30.7s | - | ok |
+| 2026-11-09T06:07:08.443Z | spec-prompts-term-renames-rule | code_review | claude | sonnet | 0 | 39.3s | 442750 | ok |
+| 2026-11-09T06:07:08.447Z | spec-prompts-term-renames-rule | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 11.9s | 176810 | ok |
+| 2026-11-09T06:07:08.449Z | spec-prompts-term-renames-rule | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 12.9s | 270176 | ok |
+| 2026-11-09T06:07:57.785Z | spec-prompts-term-renames-rule | qa | claude | claude-haiku-5-5 | 0 | 49.3s | 888596 | ok |
