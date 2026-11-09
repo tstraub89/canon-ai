@@ -32,7 +32,7 @@ canon task new my-first-feature "Short description"
 canon run my-first-feature
 ```
 
-Needs Node 24.x and git. See [Getting started](#getting-started) below for prerequisites, permission allowlists, and the trust model before running this on a repo you care about.
+Needs Node 24.x or 26.x and git. See [Getting started](#getting-started) below for prerequisites, permission allowlists, and the trust model before running this on a repo you care about.
 
 ## What this is
 
@@ -113,7 +113,7 @@ Multiple task IDs in one invocation activates **bundle mode** — `canon run id1
 
 ### Prerequisites
 
-- **Node 24.x**
+- **Node 24.x or 26.x**
 - **git**
 - **Claude Code (≥ 2.1.72)** — `npm install -g @anthropic-ai/claude-code`
 - **Codex CLI** (required for the default `mixed` provider and for `/canon-inline-review` under either provider; `CANON_PROVIDER=claude` pipeline runs don't need it, and Claude Code's `/code-review` covers inline review without it) — `npm install -g @openai/codex`
@@ -488,7 +488,7 @@ Drop this into any repo and you have:
 
 - **macOS** and **Linux** are the supported targets. Canon's worktree helpers shell out to `git` for `worktree add`/`remove` and `worktree list --porcelain` parsing.
 - **Windows is not supported.** Use WSL2.
-- **Node**: 24.x.
+- **Node**: 24.x or 26.x.
 
 ## The canon philosophy
 

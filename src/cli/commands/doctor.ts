@@ -234,14 +234,28 @@ export function checkPlatform(): Check {
     };
 }
 
-export function checkNodeVersion(): Check {
-    const match = process.version.match(/^v(\d+)/);
+/** Node majors canon is tested on; must match package.json engines.node. */
+export const SUPPORTED_NODE_MAJORS: readonly number[] = [24, 26];
+
+/** Build floor (tsup target node24), deliberately separate from supported majors. */
+const NODE_BUILD_FLOOR = 24;
+
+export function checkNodeVersion(version: string = process.version): Check {
+    const match = version.match(/^v(\d+)/);
     const major = match ? parseInt(match[1], 10) : 0;
-    if (major >= 24) return { label: `node ${process.version}`, status: 'pass' };
+    const label = `node ${version}`;
+    if (major < NODE_BUILD_FLOOR) {
+        return {
+            label,
+            status: 'fail',
+            detail: 'node 24+ required — https://nodejs.org',
+        };
+    }
+    if (SUPPORTED_NODE_MAJORS.includes(major)) return { label, status: 'pass' };
     return {
-        label: `node ${process.version}`,
-        status: 'fail',
-        detail: 'node 24+ required — https://nodejs.org',
+        label,
+        status: 'warn',
+        detail: `untested Node major; canon supports ${SUPPORTED_NODE_MAJORS.join(' and ')} — https://nodejs.org`,
     };
 }
 
