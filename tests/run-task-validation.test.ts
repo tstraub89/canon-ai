@@ -448,13 +448,17 @@ void test('isPrBodyTemplate returns true for the unfilled template stub', () => 
         fs.writeFileSync(prBodyPath, [
             '<!-- [pr-body-stub] QA fills this file during the qa phase. Do not edit manually before QA runs. -->',
             '',
-            '# PR Body: [TASK-ID] - [Title]',
-            '',
             '> Stub - QA will replace this entire file with the filled PR body.',
             '',
         ].join('\n'));
         assert.equal(isPrBodyTemplate(prBodyPath), true);
     });
+});
+
+void test('the shipped pr-body.md stub is detected as a stub and carries no heading', () => {
+    const stubPath = path.resolve('.canon/templates/pr-body.md');
+    assert.equal(isPrBodyTemplate(stubPath), true);
+    assert.doesNotMatch(fs.readFileSync(stubPath, 'utf8'), /^#/m);
 });
 
 void test('isPrBodyTemplate returns false for a populated PR body', () => {

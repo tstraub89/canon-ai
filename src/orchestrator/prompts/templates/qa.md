@@ -19,7 +19,7 @@ For each task:
    - Apply the "would a user notice" test to every candidate bullet (or the project's equivalent scope test): if a candidate falls outside the project's defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change — omit from changelog") rather than inventing a bullet.
    - Implementation mechanics belong in the "What Changed" section above — not in the proposed changelog.
    The human finalizes the changelog entry.
-4. **For single tasks only — use the Write tool** to create `tasks/<id>/pr-body.md` — the outward-facing PR body draft for `--pr`. Write it as if a human wrote it after doing the work.
+4. **For single tasks only — use the Write tool** to create `tasks/<id>/pr-body.md` — the outward-facing PR body draft for `--pr`. Write it as if a human wrote it after doing the work. Start with the first section heading and keep every section heading. Do not add a title heading for the PR title or task id above it, since GitHub already shows the PR title above the body.
    {{#prTemplate}}
    The repo has this PR template. Fill every section with specifics from what shipped. Keep the headings; replace every placeholder:
 
