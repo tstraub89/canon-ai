@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [3.19.1] — 2026-11-14
+
+### Fixed
+
+- **QA-drafted PR bodies no longer open with a `# PR Body: <id> - <title>` heading.** The `pr-body.md` stub no longer carries that heading, and QA starts the body with its first section.
+
 ## [3.19.0] — 2026-11-09
 
 ### Added
