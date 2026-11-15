@@ -149,3 +149,20 @@ void test('formatShipFollowups groups both blocks by task and omits empty blocks
     assert.equal(formatShipFollowups([{ taskId: 'task-a', rows: [rows[0].rows[2]] }]).length, 0);
     assert.deepEqual(formatShipFollowups([]), []);
 });
+
+void test('parseFollowups rejects the done.md template placeholder row, alone or beside real rows', () => {
+    for (const rows of [
+        ['| (category) | (what remains and why it matters) | untracked |'],
+        ['| risk | real item | untracked |', '| (category) | (what remains and why it matters) | untracked |'],
+    ]) {
+        const result = parseFollowups(followups([header, ...rows].join('\n')));
+        assert.equal(result.kind, 'unparseable');
+        assert.match(result.kind === 'unparseable' ? result.reason : '', /placeholder row/);
+    }
+});
+
+void test('followupsProblem missing-section message does not end in a doubled period once the gate appends its sentence', async () => {
+    const { followupsProblem } = await import('../src/orchestrator/followups.js');
+    const message = `${followupsProblem('# QA Summary\n') ?? ''}. Fix done.md.`;
+    assert.doesNotMatch(message, /\.`\./);
+});

@@ -2827,8 +2827,10 @@ function shipTasks(taskIds: string[], mergeMethod: ShipMergeMethod): void {
         let parsed: FollowupsParse;
         try {
             parsed = parseFollowups(fs.readFileSync(path.join(taskDirForRepoRoot(taskId), 'done.md'), 'utf8'));
-        } catch {
-            warn(`Follow-ups for '${taskId}' not listed: done.md is missing.`);
+        } catch (err) {
+            const missing = (err as NodeJS.ErrnoException).code === 'ENOENT';
+            const detail = missing ? 'done.md is missing' : `done.md could not be read (${err instanceof Error ? err.message : String(err)})`;
+            warn(`Follow-ups for '${taskId}' not listed: ${detail}.`);
             continue;
         }
         if (parsed.kind === 'missing') {

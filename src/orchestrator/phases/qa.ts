@@ -11,7 +11,7 @@ import { getBaseBranch, getAffectedFiles, verifyBranch } from '../git.js';
 import { readStatus } from '../state.js';
 import type { PipelineState, PhaseRunResult } from '../types.js';
 import { promptQa, type QaDocsFreshnessPrompt } from '../prompts/index.js';
-import { taskPhase } from '../../task/index.js';
+import { PHASE_GATE_ERROR_PREFIX, taskPhase } from '../../task/index.js';
 
 export function resolveQaDocsFreshness(taskIds: string[], activeCwd: string,
     deps = { getBaseBranch, getAffectedFiles }): QaDocsFreshnessPrompt {
@@ -64,7 +64,7 @@ export async function runQaPhase(
                         warn(`Also advanced qa → done for ${taskId} (sub-agent skipped canon task).`);
                     } catch (err) {
                         const message = err instanceof Error ? err.message : String(err);
-                        if (!message.startsWith('check-phase-gate:')) throw err;
+                        if (!message.startsWith(PHASE_GATE_ERROR_PREFIX)) throw err;
                         warn(`Salvaged done.md for ${taskId} did not pass the qa gate; left qa not done. ${message}`);
                     }
                 }

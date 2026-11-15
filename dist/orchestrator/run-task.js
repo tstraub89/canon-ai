@@ -3672,6 +3672,7 @@ function parseTable(markdown, sectionHeading2) {
 }
 
 // src/orchestrator/followups.ts
+var TEMPLATE_PLACEHOLDER_CATEGORY = "(category)";
 function classifyTracked(cell) {
   const value = cell.replace(/^[\s`]+|[\s`]+$/g, "").toLowerCase();
   if (value === "dropped") return "dropped";
@@ -3714,6 +3715,13 @@ function parseFollowups(markdown) {
   if (visibleBody.some((line) => /^none\.?$/i.test(line))) {
     return { kind: "unparseable", reason: "a `None.` line cannot appear with a table" };
   }
+  const placeholder = block.rows.find((row) => row.cells[0] === TEMPLATE_PLACEHOLDER_CATEGORY);
+  if (placeholder) {
+    return {
+      kind: "unparseable",
+      reason: `line ${placeholder.line} is the template's placeholder row; replace it with real rows or write \`None.\` alone`
+    };
+  }
   return {
     kind: "rows",
     rows: block.rows.map(({ cells }) => ({ category: cells[0], text: cells[1], tracked: classifyTracked(cells[2]) }))
@@ -3723,7 +3731,7 @@ function followupsProblem(markdown) {
   const parsed = parseFollowups(markdown);
   if (parsed.kind === "rows") return null;
   if (parsed.kind === "missing") {
-    return "done.md has no `## Follow-ups` section. Add it after `## Open Questions` with a `| Category | Follow-up | Tracked |` table, or the line `None.`";
+    return "done.md has no `## Follow-ups` section. Add it after `## Open Questions` with a `| Category | Follow-up | Tracked |` table, or the line `None.` alone";
   }
   return `done.md \`## Follow-ups\` cannot be parsed: ${parsed.reason}`;
 }
@@ -7825,6 +7833,7 @@ Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon
   "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
   "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a PR merge lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
 };
+var PHASE_GATE_ERROR_PREFIX = "check-phase-gate:";
 function validateTaskId2(id) {
   if (isValidTaskId(id)) return;
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
@@ -7944,7 +7953,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     const result = checkPhaseGate(id, phaseArg, verdictArg, taskRootForGate(taskCwd));
     if (!result.ok) {
       throw new Error(
-        `check-phase-gate: ${result.reason}
+        `${PHASE_GATE_ERROR_PREFIX} ${result.reason}
   Resolution: either fix the artifact (most common) or, for a known-template case, do not advance the phase to 'done'.`
       );
     }
@@ -8561,7 +8570,7 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
             warn(`Also advanced qa \u2192 done for ${taskId} (sub-agent skipped canon task).`);
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            if (!message.startsWith("check-phase-gate:")) throw err;
+            if (!message.startsWith(PHASE_GATE_ERROR_PREFIX)) throw err;
             warn(`Salvaged done.md for ${taskId} did not pass the qa gate; left qa not done. ${message}`);
           }
         }
@@ -11004,8 +11013,10 @@ Recovery:
     let parsed;
     try {
       parsed = parseFollowups(fs27.readFileSync(path25.join(taskDirForRepoRoot2(taskId), "done.md"), "utf8"));
-    } catch {
-      warn2(`Follow-ups for '${taskId}' not listed: done.md is missing.`);
+    } catch (err) {
+      const missing = err.code === "ENOENT";
+      const detail = missing ? "done.md is missing" : `done.md could not be read (${err instanceof Error ? err.message : String(err)})`;
+      warn2(`Follow-ups for '${taskId}' not listed: ${detail}.`);
       continue;
     }
     if (parsed.kind === "missing") {

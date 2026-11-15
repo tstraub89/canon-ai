@@ -285,6 +285,7 @@ Code review round 1 found three surfaces the original Affected Files missed. All
 
 | File | Change |
 |---|---|
+| `src/task/index.ts` | Export the phase-gate error prefix as a shared constant so the salvage catch does not match a duplicated string (human_review nit, fixed inline) |
 | `src/orchestrator/phases/qa.ts` | Catch a qa gate rejection on the stdout-salvage path: warn with the message, keep done.md, leave qa not done (AC-15) |
 | `tests/run-task-safety-providers.test.ts` | Add a valid Follow-ups section to the three salvage fixtures; add the AC-15 rejected-salvage test |
 | `tests/run-task-safety-base-drift.test.ts` | Add a valid Follow-ups section to the QA artifact fixture |

@@ -57,7 +57,7 @@ Not confirmable by QA:
 - [ ] PR body current — drafted in `tasks/ship-followup-capture/pr-body.md`; recheck after `--pr`.
 - [ ] Final CI/CD checks green — not run by QA.
 - [ ] Final diff matches spec intent — human review.
-- [ ] Human Test Plan (spec §Human Test Plan, steps 1–4) — not run. Step 5 (replay of the QA step on about five past tasks in a scratch copy) is also not run; it decides whether the QA model is good enough for this table.
+- [ ] Human Test Plan (spec §Human Test Plan, steps 1–4) — not run. Step 5 (replay of the QA step on about five past tasks in a scratch copy) is deferred: watching live runs instead. At each human_review, compare the Follow-ups table against review.md findings and handoff Blockers; tighten the QA prompt or model if items go missing.
 
 ## Proposed Changelog
 
@@ -81,31 +81,25 @@ Not confirmable by QA:
 - **A header-only table is valid and has zero rows.** A prose-only or empty body is unparseable. Two tables, or a table plus `None.`, are unparseable.
 - **The salvage catch is narrow.** `qa.ts` catches only `check-phase-gate:` errors. Other errors still rethrow. The blocked-session check runs first, so a blocked QA stays blocked.
 - **Ship warns once per missing or unparseable task section** and continues.
+- **Five human_review nits fixed inline on the task branch** (human decision, no reroute): the parser rejects the template's placeholder row; the missing-section gate message no longer ends in a doubled period; the ship warning distinguishes a missing done.md from a read error; the salvage catch matches a shared `PHASE_GATE_ERROR_PREFIX` constant; the recovery guide's gate sentence sits above its lead-in. The unclosed-fence message nit was dropped (cosmetic; the gate still rejects).
 
 ## Open Questions
 
-- **Confirm the Quality Log's first spec verdict.** The spec_review history shows 5 iterations and 3 changes-requested verdicts, but the spec-review artifact keeps only the latest verdict. I recorded `changes_requested`, inferred from the spec being revised after its first review. Correct it if the first verdict was different.
-- **Confirm Human reroute? = No.** The code-review reroute was the pipeline's automatic loop, and no human reroute appears in the record. Correct it if you rerouted by hand.
-- **Decide the six nit follow-ups at human review.** They are listed as one batch. Choose whether to file them, write them after merge, drop them, or fix the placeholder-row nit in this task.
+None.
 
 ## Follow-ups
 
 | Category | Follow-up | Tracked |
 |---|---|---|
-| nit | The unfilled scaffold row (placeholder category and text, Tracked `untracked`) in `.canon/templates/done.md` passes the qa gate and would print as a real follow-up at `--ship`. Have the parser reject that exact row as a placeholder. | untracked |
-| nit | The missing-section gate message in `src/orchestrator/validation.ts` ends with a doubled period after `` `None.` `` (`` `None.`. Fix done.md… ``). Adopters see it. | untracked |
-| nit | The ship warning in `src/orchestrator/main.ts` reports any read or parse error as "done.md is missing". Narrow the catch to a missing-file error, or include the underlying message. | untracked |
-| nit | `src/orchestrator/phases/qa.ts` matches the `check-phase-gate:` prefix as a string built in `src/task/index.ts`, with no shared constant. A rewording would break the salvage catch silently. | untracked |
-| nit | `src/orchestrator/followups.ts` ignores the unclosed-fence result, so a fenced heading gives a misleading "no section" message. The gate still rejects. | untracked |
-| nit | `.claude/skills/canon-pipeline/recovery.md` puts a sentence between the lead-in colon and its bash block. Move it above the lead-in or into the block as a comment. | untracked |
+| nit | `src/orchestrator/followups.ts` ignores the unclosed-fence result, so a fenced heading gives a misleading "no section" message. The gate still rejects. | dropped |
 
 ## Quality Log
 
 - Spec verdict: changes_requested
-- Human reroute?: No
-- Dropped ACs: 3
+- Human reroute?: Yes
+- Dropped ACs: 0
 - Validation gaps: 0
-- Notes: Code review round 1 blocked on a `None.`-with-prose parser bug and three Affected Files gaps (AC-15 to AC-17, added by amendment); reroute fixed all of them, and six nit follow-ups remain.
+- Notes: Code review round 1 blocked on a `None.`-with-prose parser bug and three Affected Files gaps (AC-15 to AC-17, added by amendment); reroute fixed all of them, and five nits were fixed inline at human review and one was dropped.
 
 ## Root Cause
 

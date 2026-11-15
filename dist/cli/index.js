@@ -3808,6 +3808,7 @@ import fs15 from "fs";
 import path15 from "path";
 
 // src/orchestrator/followups.ts
+var TEMPLATE_PLACEHOLDER_CATEGORY = "(category)";
 function classifyTracked(cell) {
   const value = cell.replace(/^[\s`]+|[\s`]+$/g, "").toLowerCase();
   if (value === "dropped") return "dropped";
@@ -3850,6 +3851,13 @@ function parseFollowups(markdown) {
   if (visibleBody.some((line) => /^none\.?$/i.test(line))) {
     return { kind: "unparseable", reason: "a `None.` line cannot appear with a table" };
   }
+  const placeholder = block.rows.find((row) => row.cells[0] === TEMPLATE_PLACEHOLDER_CATEGORY);
+  if (placeholder) {
+    return {
+      kind: "unparseable",
+      reason: `line ${placeholder.line} is the template's placeholder row; replace it with real rows or write \`None.\` alone`
+    };
+  }
   return {
     kind: "rows",
     rows: block.rows.map(({ cells }) => ({ category: cells[0], text: cells[1], tracked: classifyTracked(cells[2]) }))
@@ -3859,7 +3867,7 @@ function followupsProblem(markdown) {
   const parsed = parseFollowups(markdown);
   if (parsed.kind === "rows") return null;
   if (parsed.kind === "missing") {
-    return "done.md has no `## Follow-ups` section. Add it after `## Open Questions` with a `| Category | Follow-up | Tracked |` table, or the line `None.`";
+    return "done.md has no `## Follow-ups` section. Add it after `## Open Questions` with a `| Category | Follow-up | Tracked |` table, or the line `None.` alone";
   }
   return `done.md \`## Follow-ups\` cannot be parsed: ${parsed.reason}`;
 }
@@ -4587,6 +4595,7 @@ Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon
 function usage() {
   return TASK_USAGE;
 }
+var PHASE_GATE_ERROR_PREFIX = "check-phase-gate:";
 function validateTaskId(id) {
   if (isValidTaskId(id)) return;
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
@@ -4913,7 +4922,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     const result = checkPhaseGate(id, phaseArg, verdictArg, taskRootForGate(taskCwd));
     if (!result.ok) {
       throw new Error(
-        `check-phase-gate: ${result.reason}
+        `${PHASE_GATE_ERROR_PREFIX} ${result.reason}
   Resolution: either fix the artifact (most common) or, for a known-template case, do not advance the phase to 'done'.`
       );
     }

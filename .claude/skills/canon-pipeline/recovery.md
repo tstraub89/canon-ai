@@ -97,8 +97,9 @@ Fix: raise the cap and resume (see "Auto-block" above for the command). Never re
 
 Cause: a squash or rebase merge captured a pre-progression `status.json`.
 
-Fix (artifacts are on disk — this is paperwork). Use the verdict actually checked in `tasks/<task-id>/review.md` (`approved` or `approved_with_nits`) — the phase gate rejects a verdict argument that doesn't match the artifact:
 `canon task phase <task-id> qa done` requires `tasks/<task-id>/done.md` to contain a parseable `## Follow-ups` section (`None.` or a valid table), or the QA gate rejects it.
+
+Fix (artifacts are on disk — this is paperwork). Use the verdict actually checked in `tasks/<task-id>/review.md` (`approved` or `approved_with_nits`) — the phase gate rejects a verdict argument that doesn't match the artifact:
 ```bash
 canon task phase <task-id> code_review done <verdict-from-review.md>
 canon task phase <task-id> qa done

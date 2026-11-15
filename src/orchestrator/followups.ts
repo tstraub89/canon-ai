@@ -1,6 +1,9 @@
 import { isValidTaskId } from '../lib/project-root.js';
 import { scanSpecManifest, scanTableBlocks } from './markdown-table.js';
 
+// The done.md template's example row; a done.md that still carries it was not filled in.
+const TEMPLATE_PLACEHOLDER_CATEGORY = '(category)';
+
 export const FOLLOWUP_CATEGORIES = ['correctness', 'risk', 'spec-gap', 'nit', 'scope', 'observation'] as const;
 
 export type FollowupTracked = 'untracked' | 'dropped' | 'post-ship' | 'tracked';
@@ -65,6 +68,13 @@ export function parseFollowups(markdown: string): FollowupsParse {
     if (visibleBody.some(line => /^none\.?$/i.test(line))) {
         return { kind: 'unparseable', reason: 'a `None.` line cannot appear with a table' };
     }
+    const placeholder = block.rows.find(row => row.cells[0] === TEMPLATE_PLACEHOLDER_CATEGORY);
+    if (placeholder) {
+        return {
+            kind: 'unparseable',
+            reason: `line ${placeholder.line} is the template's placeholder row; replace it with real rows or write \`None.\` alone`,
+        };
+    }
 
     return {
         kind: 'rows',
@@ -76,7 +86,7 @@ export function followupsProblem(markdown: string): string | null {
     const parsed = parseFollowups(markdown);
     if (parsed.kind === 'rows') return null;
     if (parsed.kind === 'missing') {
-        return 'done.md has no `## Follow-ups` section. Add it after `## Open Questions` with a `| Category | Follow-up | Tracked |` table, or the line `None.`';
+        return 'done.md has no `## Follow-ups` section. Add it after `## Open Questions` with a `| Category | Follow-up | Tracked |` table, or the line `None.` alone';
     }
     return `done.md \`## Follow-ups\` cannot be parsed: ${parsed.reason}`;
 }
