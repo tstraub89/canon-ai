@@ -303,7 +303,7 @@ Claude uses the light tier for XS/S spec, plan, code review, and (in Claude mode
 | `PIPELINE_STALL_TIMEOUT_MS` | `600000` | Idle window before a stalled agent is terminated (see Streaming + Stall Detection). |
 | `CANON_UPSTREAM_REPO` | _(canon's own upstream repo)_ | Overrides the upstream repo slug that `canon update` installs from and that task snapshots record. |
 | `CANON_STOP_WAIT_MS` | `30000` | How long `canon stop` waits for a launching run's first heartbeat before deciding whether to signal. |
-| `CANON_SKIP_PHASE_GATE` | _(unset)_ | Any non-empty value bypasses the `canon task phase <id> spec done` Affected Files lint (not the plan/implement pre-flights; those take `--force`). |
+| `CANON_SKIP_PHASE_GATE` | _(unset)_ | Any non-empty value bypasses every artifact check that `canon task phase <id> <phase> done` runs, including the spec Affected Files lint and the qa Follow-ups check, and the same checks in evidence recovery (not the plan/implement pre-flights; those take `--force`). |
 | `CANON_PATTERNS_MD_PATH` | `docs/patterns.md` | Overrides the patterns doc used to select pitfalls and Trigger Table sections for implement prompts; lessons and linked pitfall docs still resolve from the docs root. |
 | `CANON_PITFALLS_DOCS_ROOT` | active checkout | Test-only root for `docs/lessons-learned.md` and linked pitfall docs in implement prompts; it also roots `docs/patterns.md` when `CANON_PATTERNS_MD_PATH` is unset or empty. |
 
