@@ -14,14 +14,15 @@ export type FollowupsParse =
     | { kind: 'unparseable'; reason: string };
 
 export function classifyTracked(cell: string): FollowupTracked {
-    const value = cell.replace(/^[\s`]+|[\s`]+$/g, '').toLowerCase();
+    const raw = cell.replace(/^[\s`]+|[\s`]+$/g, '');
+    const value = raw.toLowerCase();
     if (value === 'dropped') return 'dropped';
     if (value === 'post-ship') return 'post-ship';
     if (
         /^https?:\/\/\S+$/.test(value) ||
         /^#\d+$/.test(value) ||
         /^\[[^\]]+\]\([^\s)]+\)$/.test(value) ||
-        (value.startsWith('task:') && isValidTaskId(value.slice('task:'.length)))
+        (value.startsWith('task:') && isValidTaskId(raw.slice('task:'.length)))
     ) return 'tracked';
     return 'untracked';
 }

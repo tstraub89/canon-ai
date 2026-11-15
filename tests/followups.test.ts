@@ -166,3 +166,9 @@ void test('followupsProblem missing-section message does not end in a doubled pe
     const message = `${followupsProblem('# QA Summary\n') ?? ''}. Fix done.md.`;
     assert.doesNotMatch(message, /\.`\./);
 });
+
+void test('classifyTracked validates the task id with its original case', () => {
+    assert.equal(classifyTracked('task:follow-up-task'), 'tracked');
+    assert.equal(classifyTracked('TASK:follow-up-task'), 'tracked');
+    assert.equal(classifyTracked('task:Follow-Up-Task'), 'untracked');
+});
