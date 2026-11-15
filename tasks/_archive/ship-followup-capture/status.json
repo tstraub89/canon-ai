@@ -1,7 +1,7 @@
 {
   "id": "ship-followup-capture",
   "title": "Capture done.md follow-ups at ship",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-15",
   "updated": "2026-11-15",
   "branch": "task/ship-followup-capture",
@@ -63,7 +63,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

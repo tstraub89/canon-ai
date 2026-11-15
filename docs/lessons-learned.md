@@ -135,3 +135,19 @@ The Self-Check placeholder check moved from matching the template's exact `_(` p
 *(2026-11-09, source: spec-prompts-term-renames-rule)*
 
 The spec's Validation Required list kept an unchecked `<E2E>` line from the template, and the implementer could not tell whether it was a required check or a placeholder. It logged an ambiguity blocker and had to decide on its own that E2E was N/A for a prompt-template-only change. Prevention: when a spec has no end-to-end surface, delete the `<E2E>` line rather than leaving it unchecked, and write the N/A reason in the spec. Before handoff, grep the spec's Validation Required section for any `<...>` placeholder that is still unchecked.
+
+---
+
+### Gate every caller of a shared phase transition, including salvage paths
+
+*(2026-11-15, source: ship-followup-capture)*
+
+A new rejection in a phase gate reached a caller that did not expect it. The QA stdout-salvage path calls the qa → done transition directly, so a salvaged done.md without the new section threw out of the phase runner and left qa `in_progress` with no repair route. The plan had flagged the path and deferred it, and code review caught it in round 1. Prevention: when a gate adds a rejection to a transition, grep every call site of that transition, including recovery and salvage paths, and confirm each one either handles the rejection or is left alone on purpose. Canonical example: `runQaPhase` in `src/orchestrator/phases/qa.ts`, which calls `taskPhase` and is the path that escaped.
+
+---
+
+### Put a file the plan finds outside Affected Files into the spec before implement
+
+*(2026-11-15, source: ship-followup-capture)*
+
+The plan noticed that a salvage path, five QA test fixtures, and a recovery guide also had to change, but kept them out of the spec's Affected Files and left them as notes for the operator. Implement is capped by Affected Files, so the implementer logged them as Blockers, and code review raised three spec-gap findings that needed an amendment. Prevention: when a plan or notes entry says a file outside Affected Files must change, amend the spec's Affected Files before implement starts instead of leaving it as a note. When writing the list, grep for the tests that drive the changed gate or phase, because fixtures that supply the old input are the usual omissions.
