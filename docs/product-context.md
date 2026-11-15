@@ -69,7 +69,7 @@ The thesis: LLMs are excellent at writing code and bad at four specific things �
 2. **Human reads spec, approves at the spec gate.** Claude invokes `canon run <id>`.
 3. **Pipeline runs**: spec_review (full tier) → plan → implement → code_review → qa, with automatic review loops on `changes_requested` and auto-block on loop-cap hits.
 4. **Human reviews `done.md` and decides each untracked follow-up** (file now, write after merge, drop, or fix in this task with `--reroute`), recording the outcome in its Tracked cell before marking the phase done with `canon task phase <id> human_review done` (pending checks in `done.md` must be completed or waived with an `Acknowledged:` line).
-5. Open the draft PR with `canon run <id> --pr`; after approval, `canon run <id> --ship` merges it, lists post-ship follow-ups to write in the post-ship docs commit and untracked follow-ups to decide, tears down the worktree and archives the task. Lessons are distilled into `lessons-learned.md`.
+5. Open the draft PR with `canon run <id> --pr`; after approval, `canon run <id> --ship` merges it, tears down the worktree and archives the task, then lists post-ship follow-ups to write in the post-ship docs commit and untracked follow-ups to decide. Lessons are distilled into `lessons-learned.md`.
 
 ### Flow 3: Recover from a stuck pipeline
 
