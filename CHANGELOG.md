@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [3.20.0] — 2026-11-15
+
+### Added
+
+- **QA records follow-ups in a table, and `--ship` lists the ones still open.** `done.md` gains a required `## Follow-ups` table (Category, Follow-up, Tracked), or the line `None.`, and `canon task phase <id> qa done` rejects a done.md whose section is missing or unreadable. At human review, `/canon-pipeline` walks each untracked row: file it now, write it after merge (`post-ship`), drop it, or fix it in the task. After its final "Shipped" line, `--ship` lists the `post-ship` rows to write in the post-ship docs commit and any rows still untracked. Shipping never prompts, files anything, or fails because of follow-ups.
+
+### Changed
+
+- **Open Questions in `done.md` holds decisions only.** Later work moves to the Follow-ups table.
+
 ## [3.19.1] — 2026-11-14
 
 ### Fixed
