@@ -39,6 +39,15 @@ void test('parseFollowups accepts None. and a header-only table as zero rows', (
     assert.deepEqual(parseFollowups(followups(header)), { kind: 'rows', rows: [] });
 });
 
+void test('parseFollowups rejects None. when other visible content is present', () => {
+    for (const body of ['None.\n- follow up item', '- follow up item\nNone.', 'Notes.\nNone.']) {
+        assert.deepEqual(parseFollowups(followups(body)), {
+            kind: 'unparseable',
+            reason: '`None.` must be the only visible content line',
+        });
+    }
+});
+
 void test('parseFollowups distinguishes a missing section from an empty section', () => {
     assert.deepEqual(parseFollowups('# QA Summary\n\n## Open Questions\n\nNone.\n'), { kind: 'missing' });
     assert.deepEqual(parseFollowups(followups('')), { kind: 'unparseable', reason: 'no table and no `None.` line' });

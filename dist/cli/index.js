@@ -3825,7 +3825,10 @@ function parseFollowups(markdown) {
   if (blocks.length > 1) return { kind: "unparseable", reason: "more than one table" };
   const visibleBody = lines.slice(start, end).filter((_, offset) => !hidden[start + offset]).map((line) => line.trim()).filter(Boolean);
   if (blocks.length === 0) {
-    if (visibleBody.some((line) => /^none\.?$/i.test(line))) return { kind: "rows", rows: [] };
+    if (visibleBody.length === 1 && /^none\.?$/i.test(visibleBody[0] ?? "")) return { kind: "rows", rows: [] };
+    if (visibleBody.some((line) => /^none\.?$/i.test(line))) {
+      return { kind: "unparseable", reason: "`None.` must be the only visible content line" };
+    }
     return { kind: "unparseable", reason: "no table and no `None.` line" };
   }
   const [block] = blocks;

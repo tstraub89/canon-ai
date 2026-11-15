@@ -22,7 +22,7 @@ import {
 } from './run-task-safety-helpers.js';
 
 
-for (const text of ['No summary heading in the normalized text.', '', '# QA Summary\n\nPrefer normalized text.\n']) {
+for (const text of ['No summary heading in the normalized text.', '', '# QA Summary\n\nPrefer normalized text.\n\n## Follow-ups\n\nNone.\n']) {
     const hasSummary = text.startsWith('# QA Summary');
     void test(`QA salvage output selection: ${hasSummary ? 'text wins' : text ? 'stdout fallback' : 'empty text fallback'}`, () => {
         withTempDir('role-qa-fallback-', dir => {
@@ -34,7 +34,7 @@ for (const text of ['No summary heading in the normalized text.', '', '# QA Summ
             writeTaskStatus(tasksRoot, taskId, status);
             const bins = path.join(dir, 'bins');
             fs.mkdirSync(bins);
-            const stdoutSummary = '# QA Summary\n\nRecover the raw stdout summary.\n';
+            const stdoutSummary = '# QA Summary\n\nRecover the raw stdout summary.\n\n## Follow-ups\n\nNone.\n';
             const transcript = JSON.stringify({ type: 'result', result: text, session_id: 'qa-fallback-session' }) + '\n' + stdoutSummary;
             writeExecutable(bins, 'claude', [`printf '%s' '${transcript}'`]);
             const result = runNodeInline([
@@ -51,6 +51,35 @@ for (const text of ['No summary heading in the normalized text.', '', '# QA Summ
         });
     });
 }
+
+void test('QA salvage leaves qa not done when the salvaged done.md fails the qa gate', () => {
+    withTempDir('role-qa-gate-rejection-', dir => {
+        const { localDir } = makeGitFixture(dir);
+        const taskId = 'qa-followup-rejection';
+        const tasksRoot = writeReviewLoopFixture(localDir, taskId, 'code_review', 0, 0, true);
+        const status = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        status.phases.code_review!.status = 'done';
+        writeTaskStatus(tasksRoot, taskId, status);
+        const bins = path.join(dir, 'bins');
+        fs.mkdirSync(bins);
+        const body = '# QA Summary\n\nNo follow-ups section.\n';
+        const transcript = JSON.stringify({ type: 'result', result: body, session_id: 'qa-gate-rejection-session' }) + '\n';
+        writeExecutable(bins, 'claude', [`printf '%s' '${transcript}'`]);
+        const result = runNodeInline([
+            `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,
+            `import { runQaPhase } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/phases/qa.ts')).href)};`,
+            `await runQaPhase(buildPipelineState(['${taskId}']), false, null);`,
+        ].join('\n'), { ...process.env, PATH: `${bins}${path.delimiter}${process.env.PATH ?? ''}`, CANON_TASKS_DIR_OVERRIDE: tasksRoot }, localDir);
+        assert.equal(result.status, 0, combinedOutput(result));
+        const donePath = path.join(tasksRoot, taskId, 'done.md');
+        assert.equal(fs.existsSync(donePath), true, 'the rejected salvaged done.md must stay on disk');
+        assert.equal(fs.readFileSync(donePath, 'utf8'), body);
+        const after = JSON.parse(fs.readFileSync(path.join(tasksRoot, taskId, 'status.json'), 'utf8')) as StatusJson;
+        assert.equal(after.phases.qa?.status, 'in_progress');
+        assert.match(combinedOutput(result), /did not pass the qa gate/);
+        assert.match(combinedOutput(result), /Follow-ups/);
+    });
+});
 
 for (const phase of ['spec_review', 'implement'] as const) for (const hasSession of [true, false]) {
     void test(`Claude provider ${phase} park/resume (session=${hasSession})`, () => {

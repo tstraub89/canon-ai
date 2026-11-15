@@ -3689,7 +3689,10 @@ function parseFollowups(markdown) {
   if (blocks.length > 1) return { kind: "unparseable", reason: "more than one table" };
   const visibleBody = lines.slice(start, end).filter((_, offset) => !hidden[start + offset]).map((line) => line.trim()).filter(Boolean);
   if (blocks.length === 0) {
-    if (visibleBody.some((line) => /^none\.?$/i.test(line))) return { kind: "rows", rows: [] };
+    if (visibleBody.length === 1 && /^none\.?$/i.test(visibleBody[0] ?? "")) return { kind: "rows", rows: [] };
+    if (visibleBody.some((line) => /^none\.?$/i.test(line))) {
+      return { kind: "unparseable", reason: "`None.` must be the only visible content line" };
+    }
     return { kind: "unparseable", reason: "no table and no `None.` line" };
   }
   const [block] = blocks;
@@ -8553,8 +8556,14 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
         if (phaseStatus === "blocked") {
           warn(`Left qa blocked for ${taskId}; the QA session marked it blocked.`);
         } else if (phaseStatus !== "done") {
-          taskPhase(taskId, "qa", "done");
-          warn(`Also advanced qa \u2192 done for ${taskId} (sub-agent skipped canon task).`);
+          try {
+            taskPhase(taskId, "qa", "done");
+            warn(`Also advanced qa \u2192 done for ${taskId} (sub-agent skipped canon task).`);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (!message.startsWith("check-phase-gate:")) throw err;
+            warn(`Salvaged done.md for ${taskId} did not pass the qa gate; left qa not done. ${message}`);
+          }
         }
       }
     }

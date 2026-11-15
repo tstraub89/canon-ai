@@ -3333,6 +3333,12 @@ const qaDoneBodies = [
         markdown: '# QA Summary: phase-gate-task\n\n## What Changed\n\nImplemented the requested behavior.\n\n## Follow-ups\n\nNone.\n',
         ok: true,
     },
+    {
+        name: 'None line with other content',
+        markdown: '# QA Summary: phase-gate-task\n\n## What Changed\n\nImplemented the requested behavior.\n\n## Follow-ups\n\nNone.\n\n- check the retry boundary\n',
+        ok: false,
+        reason: /must be the only visible content line/,
+    },
 ] as const;
 
 for (const scenario of qaDoneBodies) {

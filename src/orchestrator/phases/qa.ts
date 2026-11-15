@@ -59,8 +59,14 @@ export async function runQaPhase(
                 if (phaseStatus === 'blocked') {
                     warn(`Left qa blocked for ${taskId}; the QA session marked it blocked.`);
                 } else if (phaseStatus !== 'done') {
-                    taskPhase(taskId, 'qa', 'done');
-                    warn(`Also advanced qa → done for ${taskId} (sub-agent skipped canon task).`);
+                    try {
+                        taskPhase(taskId, 'qa', 'done');
+                        warn(`Also advanced qa → done for ${taskId} (sub-agent skipped canon task).`);
+                    } catch (err) {
+                        const message = err instanceof Error ? err.message : String(err);
+                        if (!message.startsWith('check-phase-gate:')) throw err;
+                        warn(`Salvaged done.md for ${taskId} did not pass the qa gate; left qa not done. ${message}`);
+                    }
                 }
             }
         }
