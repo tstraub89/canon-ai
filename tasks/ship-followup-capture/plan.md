@@ -367,3 +367,101 @@ Commit the rebuilt `dist/`. The new module is bundled into `dist/orchestrator/ru
 ## Rollback Plan
 
 Revert the commit. done.md files written with a Follow-ups section stay harmless, because nothing else parses them. No status.json or config change is involved.
+
+## Reroute Plan
+
+### Round Scope
+
+Scope for this round: the amendment (AC-15, AC-16, AC-17), plus the blocking findings in `review-prior-1.md` that the amendment now puts in scope. Those are Findings 2, 3 and 4, which map to AC-15, AC-16 and AC-17. Finding 1 (`None.` accepted alongside other prose) is already fixed in the worktree. The fix in `parseFollowups` (`src/orchestrator/followups.ts:41-45`) has tests in `tests/followups.test.ts` and `tests/run-task-validation.test.ts`; it is uncommitted, from implement iteration 2. Keep it and don't re-plan it. The review's three Optional Cleanup / Nit items are optional and not in this round's scope. Steps 1–12 of the original plan are implemented (see `git diff main --stat`), apart from the two items listed under "Contradictions with the spec", which this round resolves.
+
+Feasibility:
+- **Exists:**
+  - `runQaPhase` in `src/orchestrator/phases/qa.ts:26`. Its salvage branch is at lines 48–67, and the unguarded `taskPhase(taskId, 'qa', 'done')` call is at line 62.
+  - In `src/task/index.ts:469-477`, `taskPhase` throws `Error('check-phase-gate: <reason>\n  Resolution: …')` on a gate rejection. It throws before it writes status.json or the quality log, so a rejected call has no partial side effects.
+  - The gate reason for a missing section comes from `followupsProblem`, via `checkPhaseGate` (`src/orchestrator/validation.ts:1017-1023`).
+  - Fixtures: `tests/run-task-safety-providers.test.ts:25-54`, a loop of three salvage variants; `tests/run-task-safety-routing.test.ts:1536` (`role routing red-first: QA salvages result-event text`); `tests/run-task-safety-base-drift.test.ts:1848` (`'# QA Summary: task-a\n\nReady.\n'`).
+  - The recovery recipe is at `.claude/skills/canon-pipeline/recovery.md:~101` (`canon task phase <task-id> qa done`). The main skill's matching line is `SKILL.md:98`.
+- **Real path:**
+  1. `main.ts:3374` → `runQaPhase` → salvage → `taskPhase` → `checkPhaseGate`. Today a rejection throws out of `runQaPhase`.
+  2. After the fix, `runQaPhase` returns normally and `checkAndRoute('qa')` runs.
+  3. `checkAndRoute` → `recoverPhaseForTask` → `tryEvidenceAdvance('qa')`. That function already pre-checks `followupsProblem` (`main.ts:3669`) and returns `{ advanced: false, note }`.
+  4. Then `retryAgentForPhase`. If qa is still not done, the run warns "Phase 'qa' did not reach 'done' … Stopping for human review" (`main.ts:3873/3898`).
+  5. Nothing new is needed on that path.
+- **Callers:**
+  - `runQaPhase` has one caller (`main.ts:3374`), and its return contract is unchanged.
+  - The `taskPhase` error contract is unchanged. The catch is local to the salvage branch, and only errors whose message starts with `check-phase-gate:` are caught. Every other `taskPhase` error, such as prior phases not done or a missing status.json, is still rethrown, as it is today.
+- **Tests that can fail:**
+  - The new AC-15 test salvages a `# QA Summary` body with no `## Follow-ups` section, with qa `in_progress`. Before the fix, `taskPhase` throws, `runNodeInline` exits non-zero, and `assert.equal(result.status, 0)` fails, which is the red step.
+  - The AC-16 fixture edits are what make the five current failures pass. Without them those tests stay red.
+- **Predicates:** the salvage branch keeps its three states in order:
+  - `blocked`: warn and leave it alone. This is checked first and is unchanged.
+  - `done`: no-op.
+  - anything else (`pending` / `in_progress` / `changes_requested`): try `taskPhase`. On a `check-phase-gate:` error, warn and leave the status as it is. Any other error is rethrown.
+- **Scope:** `src/orchestrator/phases/qa.ts`, the three `tests/run-task-safety-*.test.ts` files, and `recovery.md` plus its mirror are all in the amendment's Affected Files. Mirror it through `npm run sync-templates`; never edit `templates/` directly. `handoff.md` is a task artifact.
+- **Async/stateful:** the salvage branch is synchronous after `await backend.run`. The salvaged done.md is written before the gate runs, and it stays on disk whether the gate passes or rejects. That is intended: AC-15 says so, and `tryEvidenceAdvance` re-reads the same file. No session or status state is written on rejection.
+
+### Step R1: QA salvage tolerates a gate rejection (AC-15, red-first)
+
+File: `tests/run-task-safety-providers.test.ts`. Write the test first and run it against the current `qa.ts`. Record the failing output (non-zero exit with a `check-phase-gate:` stack through `runQaPhase`) in the handoff as red-first evidence.
+
+- New test `QA salvage leaves qa not done when the salvaged done.md fails the qa gate`:
+  - Build the fixture the same way as the existing loop (`makeGitFixture`, `writeReviewLoopFixture(..., 'code_review', 0, 0, true)`, code_review `done`).
+  - The fake `claude` prints a result event whose text is `'# QA Summary\n\nNo follow-ups section.\n'`. Keep the body free of `'` and `%`, because it goes through `printf '%s'`.
+  - Call `runQaPhase` only, the same way the existing tests do.
+- Asserts:
+  - `result.status === 0` (no throw).
+  - `status.phases.qa.status !== 'done'`. Concretely it is `in_progress`, because `runQaPhase` set it at line 36.
+  - done.md exists and equals the salvaged body.
+  - `combinedOutput(result)` matches the new warning's own phrase (`/did not pass the qa gate/`) and `/Follow-ups/`. This proves the catch branch ran and that the warning carries the gate's rejection reason.
+
+File: `src/orchestrator/phases/qa.ts`. In the `else if (phaseStatus !== 'done')` branch (line 61):
+
+```ts
+try {
+    taskPhase(taskId, 'qa', 'done');
+    warn(`Also advanced qa → done for ${taskId} (sub-agent skipped canon task).`);
+} catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.startsWith('check-phase-gate:')) throw err;
+    warn(`Salvaged done.md for ${taskId} did not pass the qa gate; left qa not done. ${message}`);
+}
+```
+
+- Keep the `blocked` branch first and unchanged.
+- Don't pre-call `checkPhaseGate` or `followupsProblem` here. Catching the real gate error covers every qa gate reason (template, Follow-ups), not just the Follow-ups one, and keeps a single source of truth.
+- Don't call `retryAgentForPhase` or set the phase to `blocked` here. The existing `checkAndRoute` recovery path owns that.
+- The warning text is adopter-visible. Keep it generic: name done.md and qa, and no canon-ai paths.
+
+### Step R2: add a valid section to the five fixtures (AC-16)
+
+Append `\n## Follow-ups\n\nNone.\n` to each body. Make no other change.
+
+- `tests/run-task-safety-providers.test.ts`, the salvage loop at lines 25–54:
+  - Add the section to `stdoutSummary` (line 38), which covers the "stdout fallback" and "empty text fallback" variants.
+  - Add it to the third loop value, `'# QA Summary\n\nPrefer normalized text.\n'`, which covers the "text wins" variant. `hasSummary` still holds, because the value still starts with `# QA Summary`.
+  - The `.trim()` equality assertions compare the whole salvaged text, so they still hold.
+- `tests/run-task-safety-routing.test.ts:1545`: in `QA salvages result-event text`, add the section to `body`. The body travels through `JSON.stringify` inside single-quoted `printf`, and the section adds no quotes. Leave the blocked-session test (`QA salvage keeps a qa phase the session blocked`, line ~1559) as it is: no section. That keeps it as the AC-15 coverage that a blocked qa stays `blocked` even when the salvaged file would fail the gate. Its existing asserts (`status 2`, qa `blocked`, the `QA session marked qa blocked` warning) must pass unchanged.
+- `tests/run-task-safety-base-drift.test.ts:1848`: change it to `'# QA Summary: task-a\n\nReady.\n\n## Follow-ups\n\nNone.\n'`.
+
+### Step R3: recovery guide (AC-17)
+
+File: `.claude/skills/canon-pipeline/recovery.md`, section "`--ship` refuses: wrong phase" (around lines 95–104).
+
+- Before the bash block, add one sentence matching `SKILL.md:98`: `canon task phase <task-id> qa done` requires `tasks/<task-id>/done.md` to carry a parseable `## Follow-ups` section (`None.` or the table), or the qa gate rejects it.
+- Put it in prose, not as a `# ` comment line inside the fenced block.
+- Run `npm run sync-templates` and confirm the mirror `templates/.claude/skills/canon-pipeline/recovery.md` changed.
+- Name no canon-internal source paths. `sync-templates:check` runs the leak gate.
+
+### Step R4: validate and update the handoff
+
+Run these and record each result in a new handoff iteration section:
+
+- `npm run build && npm run type-check && npm run lint && npm test`. `npm test` must now pass in full. Replace the earlier `Fail – unrelated` row with the real outcome; don't carry the old label forward.
+- `npm run sync-templates:check`.
+- `npm run docs-refs-check`.
+- `grep -rn "'issue'" src`: still empty (AC-12).
+- The focused re-run: `node --import tsx --test tests/run-task-safety-providers.test.ts tests/run-task-safety-routing.test.ts tests/run-task-safety-base-drift.test.ts`.
+- Include whatever `npm run build` changes under `dist/` (both `dist/orchestrator/run-task.js` and `dist/cli/index.js` bundle this code).
+- In the handoff, mark the `[scope]` Blocker resolved. Record AC-4 and AC-13 as Met, because their Partial status came only from Findings 2 and 4. Record AC-15, AC-16 and AC-17 with their evidence.
+
+If any other test fails, record it as plain `Fail` with its output; don't pre-label it `Fail – unrelated`.

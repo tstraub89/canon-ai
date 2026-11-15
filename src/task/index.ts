@@ -78,6 +78,9 @@ export const TASK_SUBCOMMAND_ARGS: Readonly<Record<string, ArgDeclaration>> = {
 };
 function usage(): string { return TASK_USAGE; }
 
+/** Prefix of the error `taskPhase` throws when a phase gate rejects the artifact; callers match on it. */
+export const PHASE_GATE_ERROR_PREFIX = 'check-phase-gate:';
+
 export function validateTaskId(id: string): void {
     if (isValidTaskId(id)) return;
     if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
@@ -471,7 +474,7 @@ export function taskPhase(id: string, phaseArg: string, statusArg: string, verdi
         const result = checkPhaseGate(id, phaseArg, verdictArg, taskRootForGate(taskCwd));
         if (!result.ok) {
             throw new Error(
-                `check-phase-gate: ${result.reason}\n` +
+                `${PHASE_GATE_ERROR_PREFIX} ${result.reason}\n` +
                 `  Resolution: either fix the artifact (most common) or, for a known-template case, do not advance the phase to 'done'.`,
             );
         }

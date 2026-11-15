@@ -1543,7 +1543,7 @@ void test('role routing red-first: QA salvages result-event text', () => {
         writeTaskStatus(tasksRoot, taskId, status);
         const bins = path.join(dir, 'bins');
         fs.mkdirSync(bins);
-        const body = '# QA Summary\n\nAll checks passed.\n';
+        const body = '# QA Summary\n\nAll checks passed.\n\n## Follow-ups\n\nNone.\n';
         writeExecutable(bins, 'claude', [`printf '%s\\n' '${JSON.stringify({ type: 'result', result: body, session_id: 'qa-session' })}'`]);
         const result = runNodeInline([
             `import { buildPipelineState } from ${JSON.stringify(pathToFileURL(path.join(WORKTREE_ROOT, 'src/orchestrator/main.ts')).href)};`,

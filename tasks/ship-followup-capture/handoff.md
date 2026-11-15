@@ -1,157 +1,117 @@
 # Implementation Handoff: ship-followup-capture
 
 > Author: implementer | Spec: `tasks/ship-followup-capture/spec.md` | Plan: `tasks/ship-followup-capture/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a canon-managed root file with its `templates/` mirror, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
-
-## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
-| Canon version | `status.json.canon.canon_version` |
-
-Codex CLI applies in mixed mode only.
+| `.canon/templates/done.md` | Added the required Follow-ups section after Open Questions and narrowed Open Questions to decisions. |
+| `templates/.canon/templates/done.md` | Synced the done.md template mirror. |
+| `src/orchestrator/prompts/templates/qa.md` | Added QA’s Follow-ups sources, category mapping, tracking defaults, escaping, None. form, and decision-only Open Questions rule. |
+| `tests/run-task-prompts.golden.json` | Regenerated QA prompt golden entries. |
+| `tests/run-task-prompts.test.ts` | Pinned the Follow-ups, post-ship, and nit prompt instructions. |
+| `src/orchestrator/followups.ts` | Added Follow-ups parsing, row classification, and ship block formatting; rejects None. with other visible content. |
+| `src/orchestrator/validation.ts` | Requires a valid Follow-ups section at the QA phase gate. |
+| `src/orchestrator/main.ts` | Checks QA evidence advancement and prints read-only follow-up listings and warnings on both ship paths. |
+| `src/orchestrator/cli.ts` | Documents follow-up listing in run usage. |
+| `tests/followups.test.ts` | Added parser, classification, and formatter coverage, including None. mixed with prose. |
+| `tests/run-task-validation.test.ts` | Added QA gate, taskPhase, and evidence-advance coverage. |
+| `tests/run-task-ship-docs-fold.test.ts` | Added ship listing, omission, bundle, warning, external-merge, and read-only tests. |
+| `tests/run-task-ship-helpers.ts` | Extended ship fixture setup for custom or missing done.md files. |
+| `.claude/skills/canon-pipeline/SKILL.md` | Added the human_review follow-up decision step and ship block instructions. |
+| `templates/.claude/skills/canon-pipeline/SKILL.md` | Synced the canon-pipeline skill mirror. |
+| `docs/pipeline-orchestrator.md` | Updated ship usage and numbered ship order. |
+| `templates/docs/pipeline-orchestrator.md` | Synced the pipeline orchestrator doc mirror. |
+| `README.md` | Updated both --ship descriptions. |
+| `docs/codebase-map.md` | Added parser and test locations. |
+| `docs/product-context.md` | Added the follow-up decision to the human flow. |
+| `docs/decisions.md` | Recorded the QA table, human_review decision, and post-ship handling. |
+| `dist/cli/index.js` | Rebuilt CLI bundle. |
+| `dist/orchestrator/run-task.js` | Rebuilt orchestrator bundle. |
+| `src/orchestrator/phases/qa.ts` | Catches QA gate rejection during stdout salvage, warns with the gate message, preserves done.md, and leaves qa not done. |
+| `tests/run-task-safety-providers.test.ts` | Added the rejected-salvage regression test and valid Follow-ups sections to all three salvage fixtures. |
+| `tests/run-task-safety-base-drift.test.ts` | Added a valid Follow-ups section to the QA artifact fixture. |
+| `tests/run-task-safety-routing.test.ts` | Added a valid Follow-ups section to the result-event salvage fixture. |
+| `.claude/skills/canon-pipeline/recovery.md` | Documented the valid Follow-ups requirement for qa done. |
+| `templates/.claude/skills/canon-pipeline/recovery.md` | Synced the recovery guide mirror. |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+QA requires a parseable Follow-ups section. The QA stdout-salvage path now handles a gate rejection without crashing: it keeps the salvaged file, prints the actual gate rejection, and leaves the phase unfinished for the existing recovery route. Valid salvaged content still advances, and a QA session that blocked itself remains blocked.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None. | Implemented the original plan and reroute steps R1–R3. | None. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
-| AC | Status | Notes |
+| AC | Status | Evidence |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | The done.md template places the section immediately after Open Questions, documents all columns and values, narrows Open Questions, and its mirror passes sync validation. |
+| AC-2 | Met | The QA prompt and golden cover all four sources, category mapping and default, nits, Docs drift, tracked values, task references, escaping, None., and decision-only Open Questions. |
+| AC-3 | Met | Parser tests cover valid triples, every state form, malformed input, hidden tables, repeated headings, escaped pipes, and None. mixed with prose. |
+| AC-4 | Met | Gate and taskPhase tests cover missing, malformed, valid table, and None. forms. |
+| AC-5 | Met | Ship integration tests verify both blocks, their rows and instructions, normal completion, and archiving. |
+| AC-6 | Met | Tests verify None., dropped-only, and reference-only sections print no block or warning. |
+| AC-7 | Met | Bundle test verifies one Untracked block grouped by task id. |
+| AC-8 | Met | Missing section, malformed table, and missing file each produce one warning and still complete and archive. |
+| AC-9 | Met | External-merge resume test verifies the Untracked block. |
+| AC-10 | Met | Tests compare archived done.md bytes and verify no issue subcommand in the fake gh log. |
+| AC-11 | Met | Main skill and mirror cover the four choices, batched nits, open-item confirmation, project filing convention, Tracked updates before --pr, and both ship blocks. |
+| AC-12 | Met | Config extra-key coverage remains; rg for 'issue' in src returns no matches in gh argument lists. |
+| AC-13 | Met | Usage, pipeline doc and mirror, README, codebase map, product context, and the amended recovery guide consistently state their respective ship and QA-gate contracts. |
+| AC-14 | Met | docs/decisions.md records the required table, human_review decision, post-ship docs commit, and non-interactive/adopter-specific rationale. |
+| AC-15 | Met | The new salvage regression test proves gate rejection warns without throwing, leaves done.md, and leaves qa in_progress; valid and blocked salvage paths remain covered. |
+| AC-16 | Met | All five QA fixtures now contain a valid None. section; npm test passes in full. |
+| AC-17 | Met | Recovery guide and mirror state the parseable Follow-ups requirement; template sync check passes. |
 
-## Edge Cases Considered
+## Edge Cases
 
-- ...
+- A missing section differs from None.; malformed headers, separators, row widths, and None. mixed with visible prose are rejected.
+- Fenced and commented tables are ignored; the last Follow-ups heading wins; escaped pipes parse; unknown categories remain visible.
+- Unclear tracking values stay untracked. Only valid URLs, issue numbers, markdown links, and task:<id> references count as tracked.
+- Ship warns once for missing or unparseable task sections and continues; empty, dropped-only, and reference-only sections print no blocks.
+- The QA blocked-session branch remains first and does not attempt to advance through the gate.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+None.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-15 | node --import tsx --test --test-name-pattern='QA salvage leaves qa not done when the salvaged done.md fails the qa gate' tests/run-task-safety-providers.test.ts | 7537f6ec52887cedbfebeaa56d08d310d558defb | The new assertion expected exit 0 but got exit 1; the captured stack showed check-phase-gate rejection escaping through taskPhase and runQaPhase at qa.ts:62. | The test passes; the three focused QA safety suites pass 181/181 and the full npm test suite passes 2,210 with one skipped. |
 
 ## Self-Check
 
-> One row per pre-handoff self-check, each with evidence a reviewer can check against the diff. **Test integrity:** each behavioral test added or changed, the assertion that pins its failure reason, and how you know it fails without the change (a Red-First Evidence row counts; regenerated snapshots and fixture-only edits are exempt and can be summarized in one line). **Restatement sweep:** the search pattern(s) you ran for each changed contract, and every hit outside Affected Files with how it was handled — updated, or recorded as a Blocker. **Sibling parity:** the parallel paths you examined for each added guard or branch, and whether each got the same treatment, or why not. A row may read `N/A — <reason>`. Write a literal pipe inside a cell as `\|`. Cite paths by the same file-citation rule as the rest of this handoff (full repository-root paths; the markdown-link form for a file that does not exist).
-
 | Check | Evidence |
 |---|---|
-| Test integrity | _(tests added or changed → the assertion that pins each failure reason → how you know it fails without the change)_ |
-| Restatement sweep | _(search pattern(s) run per changed contract → hits outside Affected Files and how each was handled)_ |
-| Sibling parity | _(parallel paths examined per added guard or branch → same treatment, or why not)_ |
+| Test integrity | The AC-15 test in `tests/run-task-safety-providers.test.ts` asserts no throw, the salvaged bytes remain on disk, qa remains in_progress, and the warning contains the gate message. It failed before the fix against the task branch HEAD with the escaping check-phase-gate stack recorded above; it now passes. AC-16 changed fixtures only, as specified. The earlier parser tests in `tests/followups.test.ts` pin triples, classification, malformed-cell reasons, hidden-table handling, last-heading behavior, and rejection of None. plus prose; the prior red run showed the parser returned empty rows without the fix. `tests/run-task-validation.test.ts` pins gate and taskPhase outcomes. Prompt tests and goldens pin QA instructions. Ship tests pin block contents, warnings, grouping, external merge, and unchanged archived bytes. Focused and full suites pass. |
+| Restatement sweep | Searched for Follow-ups, qa done, done.md near ship, and ship near done.md across the template, QA prompt, skills, docs, README, and orchestrator; searched `canon task phase <task-id> qa done` across both canon-pipeline skill files; ran `rg -n "'issue'" src` with no hits. The recovery guide and its mirror now name the parseable section; all in-scope AC-13 surfaces remain aligned. |
+| Sibling parity | Checked direct qa gate and taskPhase, the QA evidence-advance path, stdout salvage, valid salvage, blocked salvage, and normal/external-merge/bundled ship paths. The stdout salvage catch handles only check-phase-gate errors; other errors rethrow. Blocked QA is checked first and stays blocked. All five legacy fixtures now supply valid content. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| npm run lint | Pass | |
+| npm run type-check | Pass | |
+| npm test | Pass | 2,210 passed; 1 skipped; 2,211 total. |
+| npm run build | Pass | Rebuilt both dist bundles. |
+| npm run docs-refs-check | Pass | All refs OK after the handoff rewrite. |
+| npm run sync-templates:check | Pass | All canon-managed files in sync. |
+| npm run sync-templates | Pass | Regenerated the recovery guide mirror. |
+| Focused QA safety suites | Pass | node --test --import ./tests/md-loader-register.mjs --import tsx tests/run-task-safety-providers.test.ts tests/run-task-safety-routing.test.ts tests/run-task-safety-base-drift.test.ts — 181/181. |
+| AC-12 source grep | Pass | rg -n "'issue'" src returned no matches. |
+| git diff --check | Pass | No whitespace errors. |
+| E2E | not_configured | The spec marks E2E N/A because there is no end-to-end surface. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Self-Check
-
-_Include only when this round makes an earlier Self-Check row incomplete or untrue, and include only the rows it updates. Each row restates that check's evidence for all work on the branch, not only this round, and supersedes every earlier version of that row (earlier rows stay in place as history). This subsection never replaces the baseline `## Self-Check` section._
-
-| Check | Evidence |
-|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met.
+- [x] All applicable validation checks pass.
+- [x] All deviations from plan documented with rationale.

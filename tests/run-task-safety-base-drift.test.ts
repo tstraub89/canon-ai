@@ -1845,7 +1845,7 @@ void test('checkAndRoute commits QA artifacts after evidence-advancing qa to don
         phases.human_review = { status: 'pending', agent: 'human' };
         writeTaskStatus(tasksRoot, taskId, status);
         const taskDir = path.join(tasksRoot, taskId);
-        fs.writeFileSync(path.join(taskDir, 'done.md'), '# QA Summary: task-a\n\nReady.\n', 'utf8');
+        fs.writeFileSync(path.join(taskDir, 'done.md'), '# QA Summary: task-a\n\nReady.\n\n## Follow-ups\n\nNone.\n', 'utf8');
         const qualityLogPath = path.join(dir, 'task-quality-log.md');
 
         const currentBranchPath = path.join(dir, 'current-branch.txt');

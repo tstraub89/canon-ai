@@ -4,11 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { parseTable, parseTableH3, blocksToRecords, scanSpecManifest, scanTableBlocks, extractSectionBodies, scanAllTables } from './markdown-table.js';
+import { followupsProblem } from './followups.js';
 import { PIPELINE_TELEMETRY_FILES, getActiveCwd } from './worktree.js';
 import { warn } from './cli.js';
 import { decodePorcelainPath, filterGitIgnoredPaths, getTreeDriftFiles, getUnpushedBaseCommits, getLocalOnlyBaseCommits, probeOriginBranch, type SafeToPushVerdict, gitSafeAt, gitSafeAtRaw, parsePorcelainEntries, probeMergeConflicts, type MergeConflictProbe } from './git.js';
 import { readStatus, shellQuoteArg, taskDirFor } from './state.js';
 import type { Phase, Verdict } from './types.js';
+
+export { followupsProblem };
 
 export type DocsRefsFinding = { file: string; line: number; ref: string; reason: string; raw: string };
 export type DocsRefsRunResult =
@@ -1009,6 +1012,16 @@ export function checkPhaseGate(
             : isTemplateUnfilled(content);
         if (isTemplate) {
             return { ok: false, reason: `${config.artifactName} is still the unfilled template for phase '${phase}'` };
+        }
+
+        if (phase === 'qa') {
+            const problem = followupsProblem(content);
+            if (problem) {
+                return {
+                    ok: false,
+                    reason: `${problem}. Fix done.md, then rerun \`canon task phase ${taskId} qa done\`.`,
+                };
+            }
         }
 
         if (phase === 'spec') {

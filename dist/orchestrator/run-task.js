@@ -215,6 +215,7 @@ var RUN_USAGE = [
   "                      after the PR is approved \u2014 do NOT merge the PR manually first. If you",
   "                      already merged externally, --ship detects the merged state and resumes",
   "                      at cleanup.",
+  "                      After the Shipped line, lists done.md follow-ups left to write or decide.",
   "  --dry-run           Print each planned phase and exit without spawning any LLM",
   "  --reroute           Reset a task once implementation has begun: current phase code_review,",
   "                      qa, or human_review, or implement when it is in progress or blocked,",
@@ -3670,6 +3671,98 @@ function parseTable(markdown, sectionHeading2) {
   return rows;
 }
 
+// src/orchestrator/followups.ts
+var TEMPLATE_PLACEHOLDER_CATEGORY = "(category)";
+function classifyTracked(cell) {
+  const raw = cell.replace(/^[\s`]+|[\s`]+$/g, "");
+  const value = raw.toLowerCase();
+  if (value === "dropped") return "dropped";
+  if (value === "post-ship") return "post-ship";
+  if (/^https?:\/\/\S+$/.test(value) || /^#\d+$/.test(value) || /^\[[^\]]+\]\([^\s)]+\)$/.test(value) || value.startsWith("task:") && isValidTaskId(raw.slice("task:".length))) return "tracked";
+  return "untracked";
+}
+function parseFollowups(markdown) {
+  const { lines, hidden, headings } = scanSpecManifest(markdown);
+  const heading = headings.filter((candidate) => candidate.level === 2 && /^## follow-ups\s*$/i.test(candidate.text)).at(-1);
+  if (!heading) return { kind: "missing" };
+  const start = heading.index + 1;
+  const end = headings.find((candidate) => candidate.index > heading.index && candidate.level <= 2)?.index ?? lines.length;
+  const blocks = scanTableBlocks(lines, hidden, start, end);
+  if (blocks.length > 1) return { kind: "unparseable", reason: "more than one table" };
+  const visibleBody = lines.slice(start, end).filter((_, offset) => !hidden[start + offset]).map((line) => line.trim()).filter(Boolean);
+  if (blocks.length === 0) {
+    if (visibleBody.length === 1 && /^none\.?$/i.test(visibleBody[0] ?? "")) return { kind: "rows", rows: [] };
+    if (visibleBody.some((line) => /^none\.?$/i.test(line))) {
+      return { kind: "unparseable", reason: "`None.` must be the only visible content line" };
+    }
+    return { kind: "unparseable", reason: "no table and no `None.` line" };
+  }
+  const [block] = blocks;
+  const expectedHeader = ["category", "follow-up", "tracked"];
+  if (block.header.cells.map((cell) => cell.toLowerCase()).join("\0") !== expectedHeader.join("\0")) {
+    return { kind: "unparseable", reason: `table header on line ${block.header.line} must be Category / Follow-up / Tracked` };
+  }
+  if (!block.hasSeparator) {
+    return { kind: "unparseable", reason: `table on line ${block.header.line} has no separator row` };
+  }
+  for (const row of block.rows) {
+    if (row.cells.length !== 3) {
+      return {
+        kind: "unparseable",
+        reason: `line ${row.line} has ${row.cells.length} cells, expected 3 (escape a literal pipe as \\|)`
+      };
+    }
+  }
+  if (visibleBody.some((line) => /^none\.?$/i.test(line))) {
+    return { kind: "unparseable", reason: "a `None.` line cannot appear with a table" };
+  }
+  const placeholder = block.rows.find((row) => row.cells[0] === TEMPLATE_PLACEHOLDER_CATEGORY);
+  if (placeholder) {
+    return {
+      kind: "unparseable",
+      reason: `line ${placeholder.line} is the template's placeholder row; replace it with real rows or write \`None.\` alone`
+    };
+  }
+  return {
+    kind: "rows",
+    rows: block.rows.map(({ cells }) => ({ category: cells[0], text: cells[1], tracked: classifyTracked(cells[2]) }))
+  };
+}
+function followupsProblem(markdown) {
+  const parsed = parseFollowups(markdown);
+  if (parsed.kind === "rows") return null;
+  if (parsed.kind === "missing") {
+    return "done.md has no `## Follow-ups` section. Add it after `## Open Questions` with a `| Category | Follow-up | Tracked |` table, or the line `None.` alone";
+  }
+  return `done.md \`## Follow-ups\` cannot be parsed: ${parsed.reason}`;
+}
+function formatShipFollowups(byTask) {
+  const formatBlock = (heading, tracked, instruction) => {
+    const lines = [heading];
+    for (const { taskId, rows } of byTask) {
+      const matching = rows.filter((row) => row.tracked === tracked);
+      if (matching.length === 0) continue;
+      lines.push(`  ${taskId}:`);
+      for (const row of matching) lines.push(`    - [${row.category}] ${row.text}`);
+    }
+    if (lines.length === 1) return [];
+    lines.push(`  ${instruction}`);
+    return lines;
+  };
+  const postShip = formatBlock(
+    "Post-ship follow-ups:",
+    "post-ship",
+    "Write these in the post-ship docs commit (backlog entries or doc fixes)."
+  );
+  const untracked = formatBlock(
+    "Untracked follow-ups:",
+    "untracked",
+    "Put these to the human: file now, write post-ship, or drop."
+  );
+  if (postShip.length > 0 && untracked.length > 0) return [...postShip, "", ...untracked];
+  return postShip.length > 0 ? postShip : untracked;
+}
+
 // src/orchestrator/validation.ts
 function parseDocsRefsFindings(stderr) {
   const findings = [];
@@ -4200,6 +4293,15 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     const isTemplate = config3.customTemplateCheck ? config3.customTemplateCheck(artifactPath) : isTemplateUnfilled(content);
     if (isTemplate) {
       return { ok: false, reason: `${config3.artifactName} is still the unfilled template for phase '${phase}'` };
+    }
+    if (phase === "qa") {
+      const problem = followupsProblem(content);
+      if (problem) {
+        return {
+          ok: false,
+          reason: `${problem}. Fix done.md, then rerun \`canon task phase ${taskId} qa done\`.`
+        };
+      }
     }
     if (phase === "spec") {
       const issues = lintSpecManifest(content);
@@ -6740,7 +6842,7 @@ var plan_reroute_default = "You are updating the implementation plan for {{taskS
 var plan_default = "You are writing implementation plans for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\n{{{verdictLines}}}\n\nFor each task, read tasks/<id>/spec.md and tasks/<id>/spec-review.md. Address any `changes_requested` items before writing the plan. If the verdict is `approved_with_nits`, incorporate the nits into the plan \u2014 they don't require spec changes but should inform implementation decisions.\n\nWrite tasks/<id>/plan.md for each task with ordered implementation steps. Reference specific files, existing patterns, and code examples from the codebase. {{implementer}} implements directly from this plan.\n\n{{{feasibilityCheck}}}\n\nIf you encounter spec gaps, append to tasks/<id>/notes.md (prefix: [plan]).\n\nWhen done, run:\n{{{phaseCommands}}}\n";
 
 // src/orchestrator/prompts/templates/qa.md
-var qa_default = 'You are writing QA summaries for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks:\n{{{taskLines}}}\n\nFor each task:\n1. **Use the Write tool** to create tasks/<id>/done.md \u2014 plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, judgment calls to confirm, decisions made, open questions.\n   \u26A0\uFE0F CRITICAL: Use the `Write` tool \u2014 do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.\n   - **Judgment Calls to Confirm**: add the section immediately before `## Decisions Made`. List every `Author` row from the spec\'s *Judgment Calls* section (the call, chosen option, and strongest alternative), or write `None.` if there are no such rows or no section.\n2. Read the latest `## Validation Outcomes` table in `tasks/<id>/handoff.md`, including any later iteration `### Re-run validation` tables. If any check\'s latest result is `human_pending`, include a **Human Verification Required** section in done.md that lists each pending check and its Notes. If none remain, write `None.` in that section. Do not hide `human_pending` checks inside the generic Test Results table.\n   - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.\n   - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.\n3. Include a **Proposed Changelog** section in done.md \u2014 the changelog **entry text only**. Do **NOT** include a version number, a "Proposed version" line, or a bump tier (Patch/Minor/Major): the version is decided at the release step (`/canon-changelog` + human), never by QA.\n   - **Canon release rules (non-negotiable)**: (1) Agents do not bump versions or land changelog edits without explicit scope authorization. (2) The QA step proposes a draft changelog entry text only \u2014 not the version number. (3) Changelog + version bump are committed separately from code changes (when a project versions its releases). (4) No major versioning surprises: if a task introduces a breaking change the spec didn\'t flag, raise it before shipping.\n   - Read `docs/decisions.md` \xA7"Versioning and release policy" for this project\'s changelog **scope** (which changes warrant an entry). The bump tier / SemVer interpretation is the release step\'s call, not QA\'s \u2014 do not propose one.\n   - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.\n   - Apply the "would a user notice" test to every candidate bullet (or the project\'s equivalent scope test): if a candidate falls outside the project\'s defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change \u2014 omit from changelog") rather than inventing a bullet.\n   - Implementation mechanics belong in the "What Changed" section above \u2014 not in the proposed changelog.\n   The human finalizes the changelog entry.\n4. **For single tasks only \u2014 use the Write tool** to create `tasks/<id>/pr-body.md` \u2014 the outward-facing PR body draft for `--pr`. Write it as if a human wrote it after doing the work. Start with the first section heading and keep every section heading. Do not add a title heading for the PR title or task id above it, since GitHub already shows the PR title above the body.\n   {{#prTemplate}}\n   The repo has this PR template. Fill every section with specifics from what shipped. Keep the headings; replace every placeholder:\n\n   {{{prTemplate}}}\n   {{/prTemplate}}\n\n   {{^prTemplate}}\n   No PR template found. Use this structure:\n\n   ## Summary\n   1\u20133 bullets: what changed and why.\n\n   ## Changes\n   Key files or areas touched, described for a reviewer.\n\n   ## How to Test\n   Steps a reviewer can follow to verify the change.\n\n   ## Notes for Reviewer\n   Any context, caveats, or follow-up items.\n   {{/prTemplate}}\n   For each `Author` row in the spec\'s *Judgment Calls* section, add a short note phrased in the engineer\'s voice as a call not explicitly confirmed during spec review. With no PR template, put the rows under "Notes for Reviewer". With a PR template, use its closest notes-like section, or append a short `Judgment calls` heading at the end if it has none. If there are no `Author` rows, add nothing to the PR body.\n   \u26A0\uFE0F Write as the human engineer who did the work \u2014 not as the AI or tool that produced it ({{toolExamples}}). \u2705 e.g. "Fix the pagination off-by-one that dropped the last row." \u274C e.g. "\u{1F916} Generated with Claude Code."\n   Skip this step entirely for bundle tasks \u2014 per-task bodies are not combined for bundle PRs.\n\n**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix \u2014 never a path relative to a package or to the current directory. For a file that does not exist \u2014 one this task deleted, or one only planned \u2014 use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.\n\nAfter writing all done.md files:\n- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to its own lessons fragment, using the entry format in docs/lessons-learned.md. The fragment holds only `###` entries: create it if it doesn\'t exist, and give it no title or other `#`/`##` heading. Do not edit docs/lessons-learned.md; `--ship` folds the fragments into it. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries \u2014 not this task\'s earlier entries, and never another task\'s. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action \u2014 never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md \u2192 "How to use this doc".)\n\n{{{lessonsFragments}}}\n\n- Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly \u2014 the qa \u2192 done transition writes or upserts that row automatically into each task\'s quality-log.md fragment from status.json plus this section. `--ship` folds it into the shared log.\n\n  ```markdown\n  ## Quality Log\n  - Spec verdict: <the FIRST spec_review verdict this task ever received \u2014 approved / approved_with_nits / changes_requested; leave blank only if truly unknown>\n  - Human reroute?: <Yes/No \u2014 did the human reroute this task at any phase, forcing rework? Do not infer this from any reroute counter; if this is a fresh QA pass with no human reroute yet, answer No>\n  - Dropped ACs: <count of ACs the implementation missed, caught in code review>\n  - Validation gaps: <count of validation checks that should have run but did not>\n  - Notes: <one-line summary of anything notable \u2014 single line, no embedded line breaks>\n  ```\n\n  On a re-upsert after a reroute, only fill in cells that changed or that you are correcting \u2014 an omitted cell keeps its previously recorded value. In particular, do not overwrite an already-recorded `Spec verdict` with the current status.json verdict; that column means the first spec_review verdict, and status.json only retains the latest.\n\n- Add a `## Root Cause` section to done.md, after `## Quality Log`. It stays in done.md and is not copied to the quality log. For each blocking review finding, reroute, or dropped AC this task had, write one line `- <class>: <one-line cause>`, where class is one of `context-missing` (a doc or spec lacked a fact the agent needed), `context-conflicting` (docs, spec, or code said two different things, or a term was ambiguous), `spec-gap`, `plan-error`, `execution` (the context was adequate and the agent still got it wrong), or `unrequested-change` (the implementer changed or reinterpreted something the spec did not ask for). If the task had none, write `None.`\n\n**Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):\n- [ ] Version correct (per project policy; skip if unversioned)\n- [ ] Changelog updated if needed (per project policy; skip if unversioned)\n- [ ] PR body current\n- [ ] Final CI/CD checks green\n- [ ] Final diff matches spec intent\n\n**Output Format for Human** \u2014 `done.md` must contain:\n1. One-paragraph plain-English summary\n2. Files changed\n3. How to test (product-level steps, not code)\n4. Test results table\n5. Judgment calls to confirm (`## Judgment Calls to Confirm`)\n6. Decisions made during implementation\n7. Open questions needing human input\n8. Root cause of each blocking finding, reroute, or dropped AC (`## Root Cause`)\n\n**Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently \u2014 reference the symbol or path; do not restate the value.\n\n**Commit Ownership** \u2014 three change categories:\n- Code changes \u2192 task branch, committed by the orchestrator after {{implementer}} static validation.\n- Pre-implement scaffold \u2192 base branch, committed by the orchestrator before first implement.\n- Changelog + version bump (if versioned) \u2192 separate commit, human + Claude, after human_review.\n\n- **Docs freshness \u2014 Two-checkpoint**: {{#docsEditable}}scan these docs ({{{docsEditable}}}) for references that {{docsScope}} *contradicts* \u2014 a renamed symbol, a moved file, a behavior this task changed \u2014 and correct those stale references. That is the only edit QA makes to permanent docs.{{/docsEditable}}{{^docsEditable}}no docs are configured for correction in this project, so QA makes no edits to permanent docs under this step.{{/docsEditable}} Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries \u2014 promotion is the human sweep, not Docs freshness.\n{{#docsFlagged}}\n- **Docs drift (flag only)**: also check {{{docsFlagged}}} for statements {{docsScope}} makes stale. Do **not** edit these docs. Report each stale statement in a `## Docs drift` section of done.md (doc, the stale statement, and what is now true). Omit the section if nothing is stale.\n{{/docsFlagged}}\n- **Buffer signal** (not an action): after appending, if docs/lessons-learned.md plus this task\'s lessons fragment now hold more than ~15 entries, add one line to this task\'s done.md \u2014 `Maintenance: lessons-learned.md plus this task\u2019s fragment have N entries; a human lessons sweep is due (see docs/lessons-learned.md \u2192 "How to use this doc").` Do not perform the sweep yourself.\n\nWhen done, run (use the Bash tool \u2014 do not just output the command as text):\n{{{phaseCommands}}}\n';
+var qa_default = 'You are writing QA summaries for {{taskScope}} for {{projectName}}.\n\n{{{startup}}}\n\nTasks:\n{{{taskLines}}}\n\nFor each task:\n1. **Use the Write tool** to create tasks/<id>/done.md \u2014 plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, judgment calls to confirm, decisions made, open questions, and follow-ups.\n   \u26A0\uFE0F CRITICAL: Use the `Write` tool \u2014 do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.\n   - **Judgment Calls to Confirm**: add the section immediately before `## Decisions Made`. List every `Author` row from the spec\'s *Judgment Calls* section (the call, chosen option, and strongest alternative), or write `None.` if there are no such rows or no section.\n   - **Follow-ups**: add `## Follow-ups` immediately after `## Open Questions`, with the `| Category | Follow-up | Tracked |` table or the single line `None.`. Include all four sources:\n     1. Every handoff Blocker describing work outside this task\'s scope and every AC whose final status is Partial \u2192 `scope`; a Blocker labelled `[spec-gap]` \u2192 `spec-gap`.\n     2. Every code-review finding not resolved by the final review round, including deferred findings. Map the reviewer\'s label: Correctness Bugs / `correctness bug` \u2192 `correctness`; Risk / Guardrails / `risk/guardrail` \u2192 `risk`; Spec Gaps \u2192 `spec-gap`; Optional Cleanup / Nit \u2192 `nit`. For an unlabelled later-round finding, choose the closest of those four, defaulting to `risk` when unsure. Include every nit; do not filter by worth.\n     3. Every edit you leave for the operator outside this task\'s scope \u2192 `scope`, Tracked `post-ship`.\n     4. Every piece of later work you recommend \u2192 `observation`.\n     Tracked starts as `untracked`; use `post-ship` for the operator edits above, and use a reference only when the item is already tracked (a URL, `#<n>`, a markdown link, or another canon task written as `task:<id>`). A bare task id is not a reference. Escape a literal pipe in a cell as `\\|`. Write `None.` alone when there is nothing to list. Never phrase later work as an Open Question; Open Questions contains only decisions for the human. The qa gate rejects a done.md without a parseable Follow-ups section.\n2. Read the latest `## Validation Outcomes` table in `tasks/<id>/handoff.md`, including any later iteration `### Re-run validation` tables. If any check\'s latest result is `human_pending`, include a **Human Verification Required** section in done.md that lists each pending check and its Notes. If none remain, write `None.` in that section. Do not hide `human_pending` checks inside the generic Test Results table.\n   - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.\n   - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.\n3. Include a **Proposed Changelog** section in done.md \u2014 the changelog **entry text only**. Do **NOT** include a version number, a "Proposed version" line, or a bump tier (Patch/Minor/Major): the version is decided at the release step (`/canon-changelog` + human), never by QA.\n   - **Canon release rules (non-negotiable)**: (1) Agents do not bump versions or land changelog edits without explicit scope authorization. (2) The QA step proposes a draft changelog entry text only \u2014 not the version number. (3) Changelog + version bump are committed separately from code changes (when a project versions its releases). (4) No major versioning surprises: if a task introduces a breaking change the spec didn\'t flag, raise it before shipping.\n   - Read `docs/decisions.md` \xA7"Versioning and release policy" for this project\'s changelog **scope** (which changes warrant an entry). The bump tier / SemVer interpretation is the release step\'s call, not QA\'s \u2014 do not propose one.\n   - If CHANGELOG.md exists, read the top of it (the most recent version section) to calibrate on scope and voice.\n   - Apply the "would a user notice" test to every candidate bullet (or the project\'s equivalent scope test): if a candidate falls outside the project\'s defined changelog scope, omit it. If a task is entirely out of scope, say so explicitly ("no user-facing change \u2014 omit from changelog") rather than inventing a bullet.\n   - Implementation mechanics belong in the "What Changed" section above \u2014 not in the proposed changelog.\n   The human finalizes the changelog entry.\n4. **For single tasks only \u2014 use the Write tool** to create `tasks/<id>/pr-body.md` \u2014 the outward-facing PR body draft for `--pr`. Write it as if a human wrote it after doing the work. Start with the first section heading and keep every section heading. Do not add a title heading for the PR title or task id above it, since GitHub already shows the PR title above the body.\n   {{#prTemplate}}\n   The repo has this PR template. Fill every section with specifics from what shipped. Keep the headings; replace every placeholder:\n\n   {{{prTemplate}}}\n   {{/prTemplate}}\n\n   {{^prTemplate}}\n   No PR template found. Use this structure:\n\n   ## Summary\n   1\u20133 bullets: what changed and why.\n\n   ## Changes\n   Key files or areas touched, described for a reviewer.\n\n   ## How to Test\n   Steps a reviewer can follow to verify the change.\n\n   ## Notes for Reviewer\n   Any context, caveats, or follow-up items.\n   {{/prTemplate}}\n   For each `Author` row in the spec\'s *Judgment Calls* section, add a short note phrased in the engineer\'s voice as a call not explicitly confirmed during spec review. With no PR template, put the rows under "Notes for Reviewer". With a PR template, use its closest notes-like section, or append a short `Judgment calls` heading at the end if it has none. If there are no `Author` rows, add nothing to the PR body.\n   \u26A0\uFE0F Write as the human engineer who did the work \u2014 not as the AI or tool that produced it ({{toolExamples}}). \u2705 e.g. "Fix the pagination off-by-one that dropped the last row." \u274C e.g. "\u{1F916} Generated with Claude Code."\n   Skip this step entirely for bundle tasks \u2014 per-task bodies are not combined for bundle PRs.\n\n**Citing files in task artifacts:** cite every repository file by its full path from the repository root, including any workspace or package prefix \u2014 never a path relative to a package or to the current directory. For a file that does not exist \u2014 one this task deleted, or one only planned \u2014 use the markdown-link form `[path](path)` instead of backticks, because `docs-refs-check` reports a backticked path to a missing file as a broken reference.\n\nAfter writing all done.md files:\n- Read tasks/<id>/notes.md for each task. For each insight, ask: "would this have changed how a *different* task was approached?" If yes, **append** one new entry for *this* task to its own lessons fragment, using the entry format in docs/lessons-learned.md. The fragment holds only `###` entries: create it if it doesn\'t exist, and give it no title or other `#`/`##` heading. Do not edit docs/lessons-learned.md; `--ship` folds the fragments into it. If no, the detail stays in notes.md only. Append-only: never edit, prune, promote, reorganize, or delete existing entries \u2014 not this task\'s earlier entries, and never another task\'s. Promoting entries into permanent docs (patterns.md / decisions.md) and pruning the buffer is a **human-initiated, human-approved** action \u2014 never perform it during QA, and no entry count ever triggers it. (See docs/lessons-learned.md \u2192 "How to use this doc".)\n\n{{{lessonsFragments}}}\n\n- Add a `## Quality Log` section to done.md with the five judgment cells the pipeline cannot derive from status.json. Do **not** edit docs/task-quality-log.md directly \u2014 the qa \u2192 done transition writes or upserts that row automatically into each task\'s quality-log.md fragment from status.json plus this section. `--ship` folds it into the shared log.\n\n  ```markdown\n  ## Quality Log\n  - Spec verdict: <the FIRST spec_review verdict this task ever received \u2014 approved / approved_with_nits / changes_requested; leave blank only if truly unknown>\n  - Human reroute?: <Yes/No \u2014 did the human reroute this task at any phase, forcing rework? Do not infer this from any reroute counter; if this is a fresh QA pass with no human reroute yet, answer No>\n  - Dropped ACs: <count of ACs the implementation missed, caught in code review>\n  - Validation gaps: <count of validation checks that should have run but did not>\n  - Notes: <one-line summary of anything notable \u2014 single line, no embedded line breaks>\n  ```\n\n  On a re-upsert after a reroute, only fill in cells that changed or that you are correcting \u2014 an omitted cell keeps its previously recorded value. In particular, do not overwrite an already-recorded `Spec verdict` with the current status.json verdict; that column means the first spec_review verdict, and status.json only retains the latest.\n\n- Add a `## Root Cause` section to done.md, after `## Quality Log`. It stays in done.md and is not copied to the quality log. For each blocking review finding, reroute, or dropped AC this task had, write one line `- <class>: <one-line cause>`, where class is one of `context-missing` (a doc or spec lacked a fact the agent needed), `context-conflicting` (docs, spec, or code said two different things, or a term was ambiguous), `spec-gap`, `plan-error`, `execution` (the context was adequate and the agent still got it wrong), or `unrequested-change` (the implementer changed or reinterpreted something the spec did not ask for). If the task had none, write `None.`\n\n**Handoff Validation pre-merge checklist** (include in `done.md` Human Verification section if any item cannot be confirmed):\n- [ ] Version correct (per project policy; skip if unversioned)\n- [ ] Changelog updated if needed (per project policy; skip if unversioned)\n- [ ] PR body current\n- [ ] Final CI/CD checks green\n- [ ] Final diff matches spec intent\n\n**Output Format for Human** \u2014 `done.md` must contain:\n1. One-paragraph plain-English summary\n2. Files changed\n3. How to test (product-level steps, not code)\n4. Test results table\n5. Judgment calls to confirm (`## Judgment Calls to Confirm`)\n6. Decisions made during implementation\n7. Open questions needing a human decision\n8. Follow-ups after this task ships (`## Follow-ups`)\n9. Root cause of each blocking finding, reroute, or dropped AC (`## Root Cause`)\n\n**Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently \u2014 reference the symbol or path; do not restate the value.\n\n**Commit Ownership** \u2014 three change categories:\n- Code changes \u2192 task branch, committed by the orchestrator after {{implementer}} static validation.\n- Pre-implement scaffold \u2192 base branch, committed by the orchestrator before first implement.\n- Changelog + version bump (if versioned) \u2192 separate commit, human + Claude, after human_review.\n\n- **Docs freshness \u2014 Two-checkpoint**: {{#docsEditable}}scan these docs ({{{docsEditable}}}) for references that {{docsScope}} *contradicts* \u2014 a renamed symbol, a moved file, a behavior this task changed \u2014 and correct those stale references. That is the only edit QA makes to permanent docs.{{/docsEditable}}{{^docsEditable}}no docs are configured for correction in this project, so QA makes no edits to permanent docs under this step.{{/docsEditable}} Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries \u2014 promotion is the human sweep, not Docs freshness.\n{{#docsFlagged}}\n- **Docs drift (flag only)**: also check {{{docsFlagged}}} for statements {{docsScope}} makes stale. Do **not** edit these docs. Report each stale statement in a `## Docs drift` section of done.md (doc, the stale statement, and what is now true). Add every item in `## Docs drift` as a `scope` / `post-ship` row in `## Follow-ups`. Omit the section if nothing is stale.\n{{/docsFlagged}}\n- **Buffer signal** (not an action): after appending, if docs/lessons-learned.md plus this task\'s lessons fragment now hold more than ~15 entries, add one line to this task\'s done.md \u2014 `Maintenance: lessons-learned.md plus this task\u2019s fragment have N entries; a human lessons sweep is due (see docs/lessons-learned.md \u2192 "How to use this doc").` Do not perform the sweep yourself.\n\nWhen done, run (use the Bash tool \u2014 do not just output the command as text):\n{{{phaseCommands}}}\n';
 
 // src/orchestrator/prompts/templates/spec.md
 var spec_default = '{{{header}}}\n\n{{{startup}}}\n\n{{{instructions}}}\n{{{bundleNote}}}\n{{#doneNote}}\nNote: {{{doneNote}}}{{/doneNote}}\n\n{{#docsMapBlock}}\n{{{docsMapBlock}}}\n\n{{/docsMapBlock}}\n**Spec-writing rules of thumb** \u2014 apply when writing each spec:\n\n- **Name effects to DELETE** \u2014 frame supersession as replacement, not add-plus-remove. State: "replace `oldFn` with `newFn`; `oldFn` must not exist after" \u2014 not separate "Add" and "Remove" bullets.\n- **Prefer positive or structural assertions** over prose negations for load-bearing constraints. Back a "must not" with a grep AC or positive reframe; bare prose negation is fragile.\n- **Symbols named in ACs must exist** \u2014 grep for every function or symbol an AC names; verify its return shape matches the spec\'s assumed data contract before marking spec done.\n- **Enumerate every caller and classify its execution context before asserting how a mechanism works** \u2014 "counter X only increments on event Y" or "this writer can only be invoked from surface Z" is a control-flow claim, and control-flow claims need every caller traced. A helper named for one trigger routinely serves several, and whether a call site runs inside an agent\'s own session or in the orchestrator\'s process is invisible from the function body. Grep every caller of the function or counter \u2014 including skills and docs, not just source \u2014 and classify each site as in-agent-session or orchestrator-context before the spec asserts anything about it.\n- **Find sibling implementations, not just callers** \u2014 before settling Affected Files, search for every other place that implements the behavior the spec changes: a second listener or entry path, a parallel component, or a test or doc that asserts the current behavior. A change that reaches one of two implementations ships half-done, and the gap usually surfaces only at code review.\n- **Behavioral contracts, not mechanics** \u2014 ACs describe observable behavior; defer implementation mechanics (signatures, constant names, precise algorithms) to plan/implement. If review rounds start re-litigating literal regexes, exact file layouts, or verbatim command strings, the spec has dropped to code altitude and each round\'s "underspecified" finding just adds more reviewable surface: move the mechanics into a clearly-labeled non-binding *Implementation Notes* subsection owned by plan/implement, rather than wording the same mechanism more precisely.\n- **List every judgment call in *Judgment Calls*** \u2014 A judgment call is a choice between two or more defensible options where the choice changes behavior or scope. A choice a project doc already settles is not a judgment call: follow the doc and cite it. For each call record the chosen option, the strongest alternative, why the choice fits, and Decided by: `Human` only when the human explicitly chose it, otherwise `Author`. Listing them is your own obligation as author: on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so the author\'s list is the only check.\n- **Bug and flake-fix specs need a confirmed mechanism and red-first test** \u2014 For a bug or flake fix, the spec author must state, in *Problem*, both the confirmed mechanism and how it was confirmed \u2014 not merely a plausible cause. Evidence must match the mechanism class: a deterministic mechanism (fixed inputs hit the same wrong branch every run) may cite a trace with the verified trigger values; a runtime-dependent mechanism (race, timing, environment/config interaction) needs executed confirmation \u2014 a throwaway prototype-fix spike that makes the symptom vanish, or a deterministic forced repro. The author must satisfy that checkpoint before the spec is marked done; on fast-tier (XS, non-delicate) tasks the `spec_review` checkpoint is skipped, so no reviewer will catch an unverified mechanism. The *Acceptance Criteria* must include a red-first regression-test AC: a test that fails on the pre-fix code for the stated reason and passes after the fix. If the mechanism is environment-bound and a faithful repro is impractical, *Problem* must say so and name a deterministic alternative (integration fixture or documented manual repro) instead of skipping verification silently.\n- **At \u22653 spec_review iterations, read the rounds\' content, not the count** \u2014 label each round *edge-fine-tune* (it narrows an already-identified case \u2014 converging, safe to finish once the remaining findings are addressed) or *scope-expansion* (it names a **new** structural case the spec hadn\'t covered \u2014 a real design gap). Round count alone is not the signal; a 6-round run of successive fine-tunes is convergence, not churn. On genuine scope-expansion, don\'t refine again: check whether the last two rejections share one structural root, and whether an existing layer already owns the concern. Dropping the whole mechanism class \u2014 or deleting the mechanism in favor of the layer that already owns it \u2014 is usually cheaper than another round of hardening.\n- **Refactor specs need structural caps** \u2014 provide hard size caps, explicit deletion expectations per symbol, and an allow-list grep AC for any symbol that must disappear.\n- **Refactor specs need a correctness audit** \u2014 For each behavior a refactor declares preserved, record in Problem whether it is correct today, and state one outcome: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk. A behavior confirmed correct needs only a one-line record. N/A for features and bug fixes.\n- **Codebase-wide term renames: gate per string family, not per enumerated hit** \u2014 a hand-enumerated list of grep hits grows every review round, because each round surfaces a new label *family* rather than a missed instance. Before writing ACs, sweep the codebase once to split the old term into its distinct string families, and gate each family with a zero-result grep AC whose word-bounded pattern catches every separator variant and cannot match the new term. Where the old string is a substring of the new one, a zero-result grep cannot work: verify those surfaces with positive targeted ACs and say so in the spec, so reviewers don\'t read it as a gap. Before finalizing a zero-result AC, read each affected prose file for paraphrases of the retired claim, and fold hits the spec already tolerates elsewhere (historical docs, test fixtures) into a permitted-to-remain list inside the same AC.\n- **UI spatial / gesture tasks** \u2014 flag "visual positioning \u2014 expect human iteration" or "runtime debugging required" in *Known Risks*.\n- **Sensitive-surface escalation** \u2014 flag these categories with `canon task set <id> delicate true` and call them out in *Known Risks*: auth, billing / payments, privacy / data handling, destructive operations, schema / data-model migrations, analytics-event changes. The human spec gate is where such tasks stop for review.\n\n{{{selfCheck}}}\n\nWhen done, run (one per task):\n{{{phaseCommands}}}\n';
@@ -7732,6 +7834,7 @@ Settable fields: ${SETTABLE_FIELDS.join(", ")}. Guarded fields redirect to canon
   "reset-code-review": { command: "task reset-code-review", usage: "Usage: canon task reset-code-review <TASK-ID>\n\nClear state for a fresh code-review pass after an auto-block. Zeroes loop counters, clears verdict, archives prior review.md.", ...noTaskFlags, completion: { positionals: [{ kind: "taskId" }] } },
   "post-merge-sync": { command: "task post-merge-sync", usage: "Usage: canon task post-merge-sync [<branch>]\n\nAfter a PR merge lands, reconcile the local branch with origin. Hard-reset when only pipeline telemetry diverged; refuse when real unmerged work is present.", ...noTaskFlags }
 };
+var PHASE_GATE_ERROR_PREFIX = "check-phase-gate:";
 function validateTaskId2(id) {
   if (isValidTaskId(id)) return;
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) {
@@ -7851,7 +7954,7 @@ function taskPhase(id, phaseArg, statusArg, verdictArg) {
     const result = checkPhaseGate(id, phaseArg, verdictArg, taskRootForGate(taskCwd));
     if (!result.ok) {
       throw new Error(
-        `check-phase-gate: ${result.reason}
+        `${PHASE_GATE_ERROR_PREFIX} ${result.reason}
   Resolution: either fix the artifact (most common) or, for a known-template case, do not advance the phase to 'done'.`
       );
     }
@@ -8463,8 +8566,14 @@ async function runQaPhase(state, interactive, resolvedPrTemplate) {
         if (phaseStatus === "blocked") {
           warn(`Left qa blocked for ${taskId}; the QA session marked it blocked.`);
         } else if (phaseStatus !== "done") {
-          taskPhase(taskId, "qa", "done");
-          warn(`Also advanced qa \u2192 done for ${taskId} (sub-agent skipped canon task).`);
+          try {
+            taskPhase(taskId, "qa", "done");
+            warn(`Also advanced qa \u2192 done for ${taskId} (sub-agent skipped canon task).`);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (!message.startsWith(PHASE_GATE_ERROR_PREFIX)) throw err;
+            warn(`Salvaged done.md for ${taskId} did not pass the qa gate; left qa not done. ${message}`);
+          }
         }
       }
     }
@@ -10900,6 +11009,25 @@ Recovery:
   - --force does not bypass this gate.`
     );
   }
+  const followupsByTask = [];
+  for (const taskId of taskIds) {
+    let parsed;
+    try {
+      parsed = parseFollowups(fs27.readFileSync(path25.join(taskDirForRepoRoot2(taskId), "done.md"), "utf8"));
+    } catch (err) {
+      const missing = err.code === "ENOENT";
+      const detail = missing ? "done.md is missing" : `done.md could not be read (${err instanceof Error ? err.message : String(err)})`;
+      warn2(`Follow-ups for '${taskId}' not listed: ${detail}.`);
+      continue;
+    }
+    if (parsed.kind === "missing") {
+      warn2(`Follow-ups for '${taskId}' not listed: done.md has no \`## Follow-ups\` section.`);
+    } else if (parsed.kind === "unparseable") {
+      warn2(`Follow-ups for '${taskId}' not listed: ${parsed.reason}.`);
+    } else {
+      followupsByTask.push({ taskId, rows: parsed.rows });
+    }
+  }
   let foldedDocs = [];
   try {
     foldedDocs = foldTelemetryFragments(REPO_ROOT2, taskIds, taskDirForRepoRoot2);
@@ -10971,6 +11099,13 @@ ${formatPostFoldFailureHint(foldedDocs, "uncommitted", baseBranch)}` : "";
     else warn2(`Could not delete local branch ${branch}: ${result.stderr}`);
   }
   info2(`Shipped ${taskIds.length} task${taskIds.length > 1 ? "s" : ""} to _archive/.`);
+  const followupLines = formatShipFollowups(followupsByTask);
+  if (followupLines.length > 0) {
+    process.stdout.write(`
+${followupLines.join("\n")}
+`, () => process.exit(0));
+    return;
+  }
   process.exit(0);
 }
 function rerouteAmendmentHeading(status) {
@@ -11474,6 +11609,16 @@ function tryEvidenceAdvance(taskId, phase) {
     case "qa": {
       const donePath = path25.join(taskDirFor(taskId), "done.md");
       if (isDoneMdTemplate(donePath)) return { advanced: false, note: "done.md is still the template" };
+      if (!process.env.CANON_SKIP_PHASE_GATE) {
+        let content;
+        try {
+          content = fs27.readFileSync(donePath, "utf8");
+        } catch {
+          return { advanced: false, note: "done.md unreadable" };
+        }
+        const problem = followupsProblem(content);
+        if (problem) return { advanced: false, note: problem };
+      }
       taskPhase(taskId, "qa", "done");
       return { advanced: true, note: "done.md is populated" };
     }

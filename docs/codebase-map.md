@@ -81,6 +81,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Task quality log | `src/orchestrator/quality-log.ts` | Fail-soft QA row writer plus exported `CANON_LOG_HEADERS` / `locateLogTable` detection helpers used by `canon doctor` |
 | Canon snapshot | `src/orchestrator/canon-snapshot.ts` | Records and compares the canon-ai git snapshot governing a run; used for provenance stamping |
 | Markdown table parser | `src/orchestrator/markdown-table.ts` | Parses markdown tables including escaped-pipe cells; used by handoff and spec parsers |
+| done.md Follow-ups parser | `src/orchestrator/followups.ts` | Parses and classifies `## Follow-ups`; used by the QA phase gate and `--ship` listing |
 | Prompt rendering | `src/orchestrator/prompts/render.ts` | Mustache rendering with LLM-safe escape-disable; consumed by `src/orchestrator/prompts/index.ts` |
 | Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | Startup and headless strings, `implementationStartup(provider)`, `PHASE_ARTIFACT_COMPLETION`, `toResumePrompt()`, `makePromptArgSafe()` (NUL-byte escaping for prompt args) |
 | Agent stream handler | `src/orchestrator/agents/stream.ts` | Child process stdout/stderr muxer with stall detection and graceful kill; shared by `claude.ts` and `codex.ts` |
@@ -151,6 +152,7 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | Signal + detach tests | `tests/run-task-signals.test.ts`, `tests/detach.test.ts` | SIGHUP handler registration, process group isolation |
 | Heartbeat tests | `tests/heartbeat.test.ts` | Write intervals, stale-detection thresholds |
 | Markdown table parser tests | `tests/markdown-table.test.ts` | Escaped pipes, empty cells, malformed rows |
+| Follow-ups parser tests | `tests/followups.test.ts` | done.md section parsing, tracked-state classification and ship block formatting |
 | `canon stop` command tests | `tests/stop.test.ts` | CASE A–D pid selection, SIGTERM → SIGKILL sequencing |
 | Prompt rendering and golden tests | `tests/run-task-prompts.test.ts`, `tests/run-task-prompts.golden.json` | Regenerate the golden when prompt templates change |
 | Safety, worktree and PR gate tests | `tests/run-task-safety-*.test.ts` | Shared setup in `tests/run-task-safety-helpers.ts` |
