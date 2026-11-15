@@ -153,6 +153,7 @@ var RUN_USAGE = [
   "                      after the PR is approved \u2014 do NOT merge the PR manually first. If you",
   "                      already merged externally, --ship detects the merged state and resumes",
   "                      at cleanup.",
+  "                      After the Shipped line, lists done.md follow-ups left to write or decide.",
   "  --dry-run           Print each planned phase and exit without spawning any LLM",
   "  --reroute           Reset a task once implementation has begun: current phase code_review,",
   "                      qa, or human_review, or implement when it is in progress or blocked,",
@@ -3805,6 +3806,62 @@ function isPristineTaskArtifact(content, basename2, taskId, title) {
 import { spawnSync as spawnSync8 } from "child_process";
 import fs15 from "fs";
 import path15 from "path";
+
+// src/orchestrator/followups.ts
+function classifyTracked(cell) {
+  const value = cell.replace(/^[\s`]+|[\s`]+$/g, "").toLowerCase();
+  if (value === "dropped") return "dropped";
+  if (value === "post-ship") return "post-ship";
+  if (/^https?:\/\/\S+$/.test(value) || /^#\d+$/.test(value) || /^\[[^\]]+\]\([^\s)]+\)$/.test(value) || value.startsWith("task:") && isValidTaskId(value.slice("task:".length))) return "tracked";
+  return "untracked";
+}
+function parseFollowups(markdown) {
+  const { lines, hidden, headings } = scanSpecManifest(markdown);
+  const heading = headings.filter((candidate) => candidate.level === 2 && /^## follow-ups\s*$/i.test(candidate.text)).at(-1);
+  if (!heading) return { kind: "missing" };
+  const start = heading.index + 1;
+  const end = headings.find((candidate) => candidate.index > heading.index && candidate.level <= 2)?.index ?? lines.length;
+  const blocks = scanTableBlocks(lines, hidden, start, end);
+  if (blocks.length > 1) return { kind: "unparseable", reason: "more than one table" };
+  const visibleBody = lines.slice(start, end).filter((_, offset) => !hidden[start + offset]).map((line) => line.trim()).filter(Boolean);
+  if (blocks.length === 0) {
+    if (visibleBody.some((line) => /^none\.?$/i.test(line))) return { kind: "rows", rows: [] };
+    return { kind: "unparseable", reason: "no table and no `None.` line" };
+  }
+  const [block] = blocks;
+  const expectedHeader = ["category", "follow-up", "tracked"];
+  if (block.header.cells.map((cell) => cell.toLowerCase()).join("\0") !== expectedHeader.join("\0")) {
+    return { kind: "unparseable", reason: `table header on line ${block.header.line} must be Category / Follow-up / Tracked` };
+  }
+  if (!block.hasSeparator) {
+    return { kind: "unparseable", reason: `table on line ${block.header.line} has no separator row` };
+  }
+  for (const row of block.rows) {
+    if (row.cells.length !== 3) {
+      return {
+        kind: "unparseable",
+        reason: `line ${row.line} has ${row.cells.length} cells, expected 3 (escape a literal pipe as \\|)`
+      };
+    }
+  }
+  if (visibleBody.some((line) => /^none\.?$/i.test(line))) {
+    return { kind: "unparseable", reason: "a `None.` line cannot appear with a table" };
+  }
+  return {
+    kind: "rows",
+    rows: block.rows.map(({ cells }) => ({ category: cells[0], text: cells[1], tracked: classifyTracked(cells[2]) }))
+  };
+}
+function followupsProblem(markdown) {
+  const parsed = parseFollowups(markdown);
+  if (parsed.kind === "rows") return null;
+  if (parsed.kind === "missing") {
+    return "done.md has no `## Follow-ups` section. Add it after `## Open Questions` with a `| Category | Follow-up | Tracked |` table, or the line `None.`";
+  }
+  return `done.md \`## Follow-ups\` cannot be parsed: ${parsed.reason}`;
+}
+
+// src/orchestrator/validation.ts
 function computeLatestValidationResults(handoffContent) {
   const latest = /* @__PURE__ */ new Map();
   const baseline = parseTable(handoffContent, "Validation Outcomes");
@@ -3981,6 +4038,15 @@ function checkPhaseGate(taskId, phase, verdict, taskDirOverride) {
     const isTemplate = config3.customTemplateCheck ? config3.customTemplateCheck(artifactPath) : isTemplateUnfilled(content);
     if (isTemplate) {
       return { ok: false, reason: `${config3.artifactName} is still the unfilled template for phase '${phase}'` };
+    }
+    if (phase === "qa") {
+      const problem = followupsProblem(content);
+      if (problem) {
+        return {
+          ok: false,
+          reason: `${problem}. Fix done.md, then rerun \`canon task phase ${taskId} qa done\`.`
+        };
+      }
     }
     if (phase === "spec") {
       const issues = lintSpecManifest(content);

@@ -50,6 +50,7 @@ export const RUN_USAGE = [
     '                      after the PR is approved — do NOT merge the PR manually first. If you',
     '                      already merged externally, --ship detects the merged state and resumes',
     '                      at cleanup.',
+    '                      After the Shipped line, lists done.md follow-ups left to write or decide.',
     '  --dry-run           Print each planned phase and exit without spawning any LLM',
     '  --reroute           Reset a task once implementation has begun: current phase code_review,',
     '                      qa, or human_review, or implement when it is in progress or blocked,',

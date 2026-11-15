@@ -67,6 +67,10 @@ Use `--expect` whenever you have a specific next phase in mind — it fails fast
 
 Valid phases: `spec | spec_review | plan | implement | code_review | qa | human_review`
 
+### 2b. Decide follow-ups at human review
+
+Before `--pr`, read `tasks/<id>/done.md` → `## Follow-ups`. For each `untracked` row, ask the human to choose one of four options: file it now, write it after merge (`post-ship`), drop it, or fix it in this task with `canon run <id> --reroute` and an amendment. Offer all `nit` rows as one batch. Before filing an item, confirm it is still open in the current tree. File accepted items the project's way (issue tracker, backlog, or its established convention); if no convention is evident, ask the human where to file it. Record each outcome in the row's Tracked cell (`dropped`, `post-ship`, a link, `#<n>`, or `task:<id>`) before `--pr`. In worktree mode, edit the worktree's copy. Full-send skips this human_review stop, so its follow-ups first appear at `--ship`.
+
 ### 3. Open a draft PR
 
 ```bash
@@ -91,9 +95,12 @@ If the task targeted a release branch (`base_branch` in `status.json`), `--ship`
 
 ```bash
 canon task phase <task-id> code_review done <verdict-from-review.md>
+# Before marking qa done, make sure done.md has a parseable ## Follow-ups section (None. or the table).
 canon task phase <task-id> qa done
 canon run <task-id> --ship
 ```
+
+After `--ship`, write the rows in the **Post-ship follow-ups** block in the post-ship docs commit on the base branch. Put each row in the **Untracked follow-ups** block to the human for a decision. A `Follow-ups … not listed` warning means the section is missing or unparseable; inspect the archived `done.md` by hand.
 
 ### 5. Release and shipping operations
 
@@ -176,7 +183,8 @@ When the pipeline gets stuck — auto-block on a review loop, phase mismatch, `-
 2. All ACs marked Met in `handoff.md` AC Coverage table.
 3. Validation Outcomes table has no Fail rows except clearly-labeled unrelated-flake rows.
 4. `done.md` exists (qa phase wrote it).
-5. `review.md` shows `approved` or `approved_with_nits`.
+5. Follow-ups are decided (no `untracked` rows) or deliberately left for `--ship` to surface.
+6. `review.md` shows `approved` or `approved_with_nits`.
 
 If any are missing post-pipeline, manually advance or fix before `--pr` / `--ship`.
 

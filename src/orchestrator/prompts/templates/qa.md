@@ -6,9 +6,15 @@ Tasks:
 {{{taskLines}}}
 
 For each task:
-1. **Use the Write tool** to create tasks/<id>/done.md — plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, judgment calls to confirm, decisions made, open questions.
+1. **Use the Write tool** to create tasks/<id>/done.md — plain-English summary for the human. Include: what changed, files changed, how to test, test results, human verification required, judgment calls to confirm, decisions made, open questions, and follow-ups.
    ⚠️ CRITICAL: Use the `Write` tool — do NOT simply output the done.md content as text in your response. Content in your chat reply does not get saved to disk. The pipeline validates that done.md contains real content (not the template) before advancing. Write the file.
    - **Judgment Calls to Confirm**: add the section immediately before `## Decisions Made`. List every `Author` row from the spec's *Judgment Calls* section (the call, chosen option, and strongest alternative), or write `None.` if there are no such rows or no section.
+   - **Follow-ups**: add `## Follow-ups` immediately after `## Open Questions`, with the `| Category | Follow-up | Tracked |` table or the single line `None.`. Include all four sources:
+     1. Every handoff Blocker describing work outside this task's scope and every AC whose final status is Partial → `scope`; a Blocker labelled `[spec-gap]` → `spec-gap`.
+     2. Every code-review finding not resolved by the final review round, including deferred findings. Map the reviewer's label: Correctness Bugs / `correctness bug` → `correctness`; Risk / Guardrails / `risk/guardrail` → `risk`; Spec Gaps → `spec-gap`; Optional Cleanup / Nit → `nit`. For an unlabelled later-round finding, choose the closest of those four, defaulting to `risk` when unsure. Include every nit; do not filter by worth.
+     3. Every edit you leave for the operator outside this task's scope → `scope`, Tracked `post-ship`.
+     4. Every piece of later work you recommend → `observation`.
+     Tracked starts as `untracked`; use `post-ship` for the operator edits above, and use a reference only when the item is already tracked (a URL, `#<n>`, a markdown link, or another canon task written as `task:<id>`). A bare task id is not a reference. Escape a literal pipe in a cell as `\|`. Write `None.` alone when there is nothing to list. Never phrase later work as an Open Question; Open Questions contains only decisions for the human. The qa gate rejects a done.md without a parseable Follow-ups section.
 2. Read the latest `## Validation Outcomes` table in `tasks/<id>/handoff.md`, including any later iteration `### Re-run validation` tables. If any check's latest result is `human_pending`, include a **Human Verification Required** section in done.md that lists each pending check and its Notes. If none remain, write `None.` in that section. Do not hide `human_pending` checks inside the generic Test Results table.
    - If the human chooses to waive or defer a pending check later, the waiver line in done.md must begin with `Acknowledged:`. The `human_review` gate only treats that explicit prefix as a waiver.
    - Preserve `deferred_by_spec` rows in Test Results with the spec citation from Notes; do not translate them to `Pass`.
@@ -81,8 +87,9 @@ After writing all done.md files:
 4. Test results table
 5. Judgment calls to confirm (`## Judgment Calls to Confirm`)
 6. Decisions made during implementation
-7. Open questions needing human input
-8. Root cause of each blocking finding, reroute, or dropped AC (`## Root Cause`)
+7. Open questions needing a human decision
+8. Follow-ups after this task ships (`## Follow-ups`)
+9. Root cause of each blocking finding, reroute, or dropped AC (`## Root Cause`)
 
 **Code is Canonical; Docs Reference Symbols**: Code is the source of truth for anything derivable from code: numbers, thresholds, file locations, function signatures, type shapes, observable behavior. Docs that restate these facts inline rot silently — reference the symbol or path; do not restate the value.
 
@@ -93,7 +100,7 @@ After writing all done.md files:
 
 - **Docs freshness — Two-checkpoint**: {{#docsEditable}}scan these docs ({{{docsEditable}}}) for references that {{docsScope}} *contradicts* — a renamed symbol, a moved file, a behavior this task changed — and correct those stale references. That is the only edit QA makes to permanent docs.{{/docsEditable}}{{^docsEditable}}no docs are configured for correction in this project, so QA makes no edits to permanent docs under this step.{{/docsEditable}} Do not add new lessons, pitfalls, or decisions here, and do not promote buffer entries — promotion is the human sweep, not Docs freshness.
 {{#docsFlagged}}
-- **Docs drift (flag only)**: also check {{{docsFlagged}}} for statements {{docsScope}} makes stale. Do **not** edit these docs. Report each stale statement in a `## Docs drift` section of done.md (doc, the stale statement, and what is now true). Omit the section if nothing is stale.
+- **Docs drift (flag only)**: also check {{{docsFlagged}}} for statements {{docsScope}} makes stale. Do **not** edit these docs. Report each stale statement in a `## Docs drift` section of done.md (doc, the stale statement, and what is now true). Add every item in `## Docs drift` as a `scope` / `post-ship` row in `## Follow-ups`. Omit the section if nothing is stale.
 {{/docsFlagged}}
 - **Buffer signal** (not an action): after appending, if docs/lessons-learned.md plus this task's lessons fragment now hold more than ~15 entries, add one line to this task's done.md — `Maintenance: lessons-learned.md plus this task’s fragment have N entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").` Do not perform the sweep yourself.
 

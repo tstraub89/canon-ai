@@ -47,6 +47,131 @@ void test('allowed merge-method response requires all three boolean fields', () 
     assert.deepEqual(parseAllowedMergeMethods('not json'), { ok: false });
 });
 
+function doneWithFollowups(rows: string): string {
+    return `# QA Summary\n\n## Follow-ups\n\n| Category | Follow-up | Tracked |\n|---|---|---|\n${rows}`;
+}
+
+function externalMergeEnv(branch: string, tip: string): Record<string, string> {
+    return {
+        FAKE_GH_MERGED_PR_NUMBER: '107',
+        FAKE_GH_PR_HEAD: branch,
+        FAKE_GH_PR_BASE: 'main',
+        FAKE_GH_HEAD_REF_OID: tip,
+    };
+}
+
+void test('--ship lists post-ship and untracked rows after archive without changing done.md', () => {
+    withTempDir('run-task-ship-followups-main-', dir => {
+        const taskId = 'followups-main';
+        const doneMd = doneWithFollowups([
+            '| risk | confirm the retry boundary | untracked |',
+            '| scope | update the operator guide | post-ship |',
+            '| nit | rename the local variable | dropped |',
+            '| scope | already filed reference | #7 |',
+        ].join('\n') + '\n');
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            deleteRemote: false,
+            taskFiles: { [`tasks/${taskId}/done.md`]: doneMd },
+        });
+        const ghLog = path.join(dir, 'gh.log');
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_LOG: ghLog,
+            FAKE_GH_OPEN_PR_NUMBER: '107',
+            FAKE_GH_MERGED_PR_NUMBER: '107',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+        const shippedAt = result.stdout.indexOf('Shipped 1 task');
+        assert.ok(shippedAt >= 0, result.stdout);
+        const listing = result.stdout.slice(shippedAt);
+        assert.ok(listing.indexOf('Post-ship follow-ups:') > 0, listing);
+        assert.match(listing, /Post-ship follow-ups:\n  followups-main:\n    - \[scope\] update the operator guide\n  Write these in the post-ship docs commit \(backlog entries or doc fixes\)\./);
+        assert.match(listing, /Untracked follow-ups:\n  followups-main:\n    - \[risk\] confirm the retry boundary\n  Put these to the human: file now, write post-ship, or drop\./);
+        assert.doesNotMatch(listing, /rename the local variable|already filed reference/);
+        assert.equal((listing.match(/Post-ship follow-ups:/g) ?? []).length, 1);
+        assert.equal((listing.match(/Untracked follow-ups:/g) ?? []).length, 1);
+        assert.equal(
+            fs.readFileSync(path.join(localDir, 'tasks', '_archive', taskId, 'done.md'), 'utf8'),
+            gitRawIn(localDir, 'show', `${tip}:tasks/${taskId}/done.md`),
+        );
+        assert.doesNotMatch(fs.readFileSync(ghLog, 'utf8'), /^issue\b/m);
+        assert.doesNotMatch(result.stderr, /Follow-ups for/);
+    });
+});
+
+for (const scenario of [
+    { name: 'None.', doneMd: doneWithFollowups('').replace('| Category | Follow-up | Tracked |\n|---|---|---|\n', 'None.\n') },
+    { name: 'only dropped or references', doneMd: doneWithFollowups('| nit | no longer needed | dropped |\n| scope | tracked elsewhere | task:follow-up-task |\n') },
+] as const) {
+    void test(`--ship omits follow-up output for ${scenario.name}`, () => {
+        withTempDir('run-task-ship-followups-empty-', dir => {
+            const taskId = 'followups-empty';
+            const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+                taskFiles: { [`tasks/${taskId}/done.md`]: scenario.doneMd },
+            });
+            const result = runCanon(localDir, [taskId, '--ship'], fakeTools, externalMergeEnv(branch, tip));
+            assert.equal(result.status, 0, result.stderr);
+            expectArchivedAndDeleted(localDir, taskId, branch);
+            assert.doesNotMatch(result.stdout, /Post-ship follow-ups:|Untracked follow-ups:/);
+            assert.doesNotMatch(result.stderr, /Follow-ups for/);
+        });
+    });
+}
+
+void test('--ship groups untracked follow-ups for a bundle under one heading', () => {
+    withTempDir('run-task-ship-followups-bundle-', dir => {
+        const taskIds = ['followups-a', 'followups-b'] as const;
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, taskIds, {
+            taskFiles: {
+                [`tasks/${taskIds[0]}/done.md`]: doneWithFollowups('| risk | first item | untracked |\n'),
+                [`tasks/${taskIds[1]}/done.md`]: doneWithFollowups('| nit | second item | untracked |\n'),
+            },
+        });
+        const result = runCanon(localDir, [...taskIds, '--ship'], fakeTools, externalMergeEnv(branch, tip));
+        assert.equal(result.status, 0, result.stderr);
+        expectArchivedAndDeleted(localDir, taskIds[0], branch);
+        assert.ok(fs.existsSync(path.join(localDir, 'tasks', '_archive', taskIds[1])));
+        const listing = result.stdout.slice(result.stdout.indexOf('Shipped 2 tasks'));
+        assert.equal((listing.match(/Untracked follow-ups:/g) ?? []).length, 1);
+        assert.ok(listing.indexOf('  followups-a:') < listing.indexOf('  followups-b:'), listing);
+        assert.match(listing, /  followups-a:\n    - \[risk\] first item\n  followups-b:\n    - \[nit\] second item/);
+    });
+});
+
+for (const scenario of [
+    { name: 'missing section', options: {} },
+    { name: 'unparseable table', options: { taskFiles: { 'tasks/followups-warning/done.md': doneWithFollowups('| risk | broken row | untracked | extra |\n') } } },
+    { name: 'missing done.md', options: { omitTaskFiles: ['tasks/followups-warning/done.md'] } },
+] as const) {
+    void test(`--ship warns once and continues for ${scenario.name}`, () => {
+        withTempDir('run-task-ship-followups-warning-', dir => {
+            const taskId = 'followups-warning';
+            const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], scenario.options);
+            const result = runCanon(localDir, [taskId, '--ship'], fakeTools, externalMergeEnv(branch, tip));
+            assert.equal(result.status, 0, result.stderr);
+            expectArchivedAndDeleted(localDir, taskId, branch);
+            assert.equal((result.stderr.match(/Follow-ups for 'followups-warning' not listed/g) ?? []).length, 1, result.stderr);
+        });
+    });
+}
+
+void test('--ship lists follow-ups when resuming after an external merge', () => {
+    withTempDir('run-task-ship-followups-external-', dir => {
+        const taskId = 'followups-external';
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], {
+            taskFiles: { [`tasks/${taskId}/done.md`]: doneWithFollowups('| observation | recheck this later | untracked |\n') },
+        });
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, externalMergeEnv(branch, tip));
+        assert.equal(result.status, 0, result.stderr);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+        assert.match(result.stdout, /Untracked follow-ups:[\s\S]*\[observation\] recheck this later/);
+    });
+});
+
 void test('merge failure message reports partial progress only when an earlier PR merged', () => {
     const common = { prNum: 12, stderr: 'merge queue pending', taskIds: ['example-task'] };
     const noEarlierMerge = formatMergeFailureMessage({ ...common, mergedEarlier: [] });

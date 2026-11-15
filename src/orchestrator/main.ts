@@ -30,6 +30,8 @@ import { registerShutdownHook } from './signals.js';
 import { archivePriorReview, rescaffoldReview } from './review-archive.js';
 import { taskPhase } from '../../src/task/index.js';
 import { foldTelemetryFragments, formatPostFoldFailureHint, sharedTelemetryDocsTouched } from './telemetry-fold.js';
+import { formatShipFollowups, parseFollowups } from './followups.js';
+import type { FollowupRow, FollowupsParse } from './followups.js';
 
 const REPO_ROOT = splitEnv.REPO_ROOT;
 const TASKS_DIR = splitEnv.TASKS_DIR;
@@ -2820,6 +2822,24 @@ function shipTasks(taskIds: string[], mergeMethod: ShipMergeMethod): void {
         );
     }
 
+    const followupsByTask: Array<{ taskId: string; rows: FollowupRow[] }> = [];
+    for (const taskId of taskIds) {
+        let parsed: FollowupsParse;
+        try {
+            parsed = parseFollowups(fs.readFileSync(path.join(taskDirForRepoRoot(taskId), 'done.md'), 'utf8'));
+        } catch {
+            warn(`Follow-ups for '${taskId}' not listed: done.md is missing.`);
+            continue;
+        }
+        if (parsed.kind === 'missing') {
+            warn(`Follow-ups for '${taskId}' not listed: done.md has no \`## Follow-ups\` section.`);
+        } else if (parsed.kind === 'unparseable') {
+            warn(`Follow-ups for '${taskId}' not listed: ${parsed.reason}.`);
+        } else {
+            followupsByTask.push({ taskId, rows: parsed.rows });
+        }
+    }
+
     // Fold before teardown, status writes, or archive moves so a fold failure leaves
     // --ship re-runnable. Failures after the fold need the documented manual recovery.
     let foldedDocs: string[] = [];
@@ -2927,6 +2947,11 @@ function shipTasks(taskIds: string[], mergeMethod: ShipMergeMethod): void {
     }
 
     info(`Shipped ${taskIds.length} task${taskIds.length > 1 ? 's' : ''} to _archive/.`);
+    const followupLines = formatShipFollowups(followupsByTask);
+    if (followupLines.length > 0) {
+        console.log();
+        for (const line of followupLines) console.log(line);
+    }
     process.exit(0);
 }
 
@@ -3637,6 +3662,13 @@ export function tryEvidenceAdvance(taskId: string, phase: Phase): EvidenceResult
             // done.md on disk is what we have to work with.
             const donePath = path.join(splitState.taskDirFor(taskId), 'done.md');
             if (splitValidation.isDoneMdTemplate(donePath)) return { advanced: false, note: 'done.md is still the template' };
+            if (!process.env.CANON_SKIP_PHASE_GATE) {
+                let content: string;
+                try { content = fs.readFileSync(donePath, 'utf8'); }
+                catch { return { advanced: false, note: 'done.md unreadable' }; }
+                const problem = splitValidation.followupsProblem(content);
+                if (problem) return { advanced: false, note: problem };
+            }
             taskPhase(taskId, 'qa', 'done');
             return { advanced: true, note: 'done.md is populated' };
         }

@@ -1141,6 +1141,13 @@ void test('promptQa', () => {
     recordOrAssert('promptQa', actual);
 });
 
+void test('promptQa names the Follow-ups section and its post-ship and nit values', () => {
+    const prompt = promptQa(baseState);
+    assert.match(prompt, /## Follow-ups/);
+    assert.match(prompt, /`post-ship`/);
+    assert.match(prompt, /`nit`/);
+});
+
 void test('promptQa renders each task’s own lessons fragment and combined buffer count', () => {
     for (const ids of [['example-task'], ['bundle-a', 'bundle-b']]) {
         const state: PipelineState = { tasks: ids.map(taskId => makeTask({ taskId })), provider: 'mixed', tier: 'full', isBundle: ids.length > 1 };

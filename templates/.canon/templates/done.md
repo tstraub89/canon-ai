@@ -51,7 +51,18 @@ Any choices that were made during implementation that you should be aware of.
 
 ## Open Questions
 
-Anything that still needs your input or a follow-up task.
+Decisions that still need your input. Work recommended for later goes in the next section, not here.
+
+## Follow-ups
+
+Work that should happen after this task ships. One row per item, or write `None.` alone in place of the table. Write a literal pipe inside a cell as `\|`.
+
+- Category: `correctness`, `risk`, `spec-gap`, `nit`, `scope`, or `observation`.
+- Tracked: `untracked` (not yet decided), `dropped` (decided not to do), `post-ship` (written on base after the merge as a backlog entry or doc fix), or a reference: a link, an issue reference such as `#42`, or another canon task as `task:<id>`. A bare task id is not a reference.
+
+| Category | Follow-up | Tracked |
+|---|---|---|
+| (category) | (what remains and why it matters) | untracked |
 
 ## Quality Log
 

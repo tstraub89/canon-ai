@@ -358,7 +358,13 @@ export function advanceBranchOnOrigin(dir: string, originDir: string, branch: st
     return sha;
 }
 
-export function simulateMergeOnOrigin(dir: string, originDir: string, statuses: Record<string, Record<string, unknown>>, files: Record<string, string> = {}): void {
+export function simulateMergeOnOrigin(
+    dir: string,
+    originDir: string,
+    statuses: Record<string, Record<string, unknown>>,
+    files: Record<string, string> = {},
+    omit: readonly string[] = [],
+): void {
     const mergeDir = path.join(dir, `merge-${Math.random().toString(16).slice(2)}`);
     execFileSync('git', ['clone', originDir, mergeDir], { stdio: 'ignore' });
     gitIn(mergeDir, 'config', 'user.email', 'test@example.com');
@@ -368,6 +374,7 @@ export function simulateMergeOnOrigin(dir: string, originDir: string, statuses: 
         writeTaskFiles(mergeDir, taskId, status);
     }
     for (const [file, content] of Object.entries(files)) writeRel(mergeDir, file, content);
+    for (const file of omit) fs.rmSync(path.join(mergeDir, file), { force: true });
     gitIn(mergeDir, 'add', 'tasks', ...Object.keys(files));
     gitIn(mergeDir, 'commit', '-m', 'simulate squash merge');
     gitIn(mergeDir, 'push', 'origin', 'main');
@@ -385,6 +392,7 @@ export function prepareShipFixture(
         materializeAdvancedHead?: boolean;
         initialFiles?: Record<string, string>;
         taskFiles?: Record<string, string>;
+        omitTaskFiles?: readonly string[];
         providers?: Record<string, unknown>;
     } = {},
 ): { localDir: string; originDir: string; branch: string; tip: string; prHead: string; fakeTools: string } {
@@ -404,6 +412,7 @@ export function prepareShipFixture(
         }
     }
     for (const [file, content] of Object.entries(options.taskFiles ?? {})) writeRel(localDir, file, content);
+    for (const file of options.omitTaskFiles ?? []) fs.rmSync(path.join(localDir, file), { force: true });
     gitIn(localDir, 'add', 'tasks', ...Object.keys(options.taskFiles ?? {}));
     gitIn(localDir, 'commit', '-m', 'add task artifacts');
     const tip = gitIn(localDir, 'rev-parse', branch);
@@ -414,7 +423,7 @@ export function prepareShipFixture(
     }
 
     if (options.mergeToOrigin !== false) {
-        simulateMergeOnOrigin(dir, originDir, statuses, options.taskFiles);
+        simulateMergeOnOrigin(dir, originDir, statuses, options.taskFiles, options.omitTaskFiles ?? []);
     }
     if (options.deleteRemote !== false) {
         gitIn(localDir, 'push', 'origin', '--delete', branch);

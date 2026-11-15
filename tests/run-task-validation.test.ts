@@ -64,7 +64,7 @@ import {
     verifyRerouteAmendment,
 } from '../src/orchestrator/validation.js';
 import { PIPELINE_TELEMETRY_FILES } from '../src/orchestrator/worktree.js';
-import { checkAndRoute, resolveQaPrBody } from '../src/orchestrator/main.js';
+import { checkAndRoute, resolveQaPrBody, tryEvidenceAdvance } from '../src/orchestrator/main.js';
 import {
     buildPreflightReviewBlock,
     determinePreflightRoute,
@@ -3307,6 +3307,83 @@ void test('checkPhaseGate: qa rejects done.md template via the multi-sentinel de
         const result = checkPhaseGate(taskId, 'qa');
         assert.equal(result.ok, false);
         if (!result.ok) assert.match(result.reason, /done\.md is still the unfilled template/);
+    });
+});
+
+const qaDoneBodies = [
+    {
+        name: 'missing Follow-ups section',
+        markdown: '# QA Summary: phase-gate-task\n\n## What Changed\n\nImplemented the requested behavior.\n',
+        ok: false,
+        reason: /no `## Follow-ups` section/,
+    },
+    {
+        name: 'unparseable Follow-ups table',
+        markdown: '# QA Summary: phase-gate-task\n\n## What Changed\n\nImplemented the requested behavior.\n\n## Follow-ups\n\n| Category | Follow-up | Tracked |\n|---|---|---|\n| risk | broken row | untracked | extra |\n',
+        ok: false,
+        reason: /cannot be parsed/,
+    },
+    {
+        name: 'valid Follow-ups table',
+        markdown: '# QA Summary: phase-gate-task\n\n## What Changed\n\nImplemented the requested behavior.\n\n## Follow-ups\n\n| Category | Follow-up | Tracked |\n|---|---|---|\n| risk | still needs a check | untracked |\n',
+        ok: true,
+    },
+    {
+        name: 'None form',
+        markdown: '# QA Summary: phase-gate-task\n\n## What Changed\n\nImplemented the requested behavior.\n\n## Follow-ups\n\nNone.\n',
+        ok: true,
+    },
+] as const;
+
+for (const scenario of qaDoneBodies) {
+    void test(`checkPhaseGate: qa ${scenario.name}`, () => {
+        withTempTaskDir((taskId, taskDir) => {
+            fs.writeFileSync(path.join(taskDir, 'done.md'), scenario.markdown);
+            const result = checkPhaseGate(taskId, 'qa');
+            assert.equal(result.ok, scenario.ok);
+            if (!scenario.ok && !result.ok) assert.match(result.reason, scenario.reason);
+        });
+    });
+}
+
+for (const scenario of qaDoneBodies) {
+    void test(`canon task phase qa done: ${scenario.name}`, () => {
+        withTempTaskDir((taskId, taskDir) => {
+            fs.writeFileSync(path.join(taskDir, 'done.md'), scenario.markdown);
+            const status = JSON.parse(fs.readFileSync(path.join(process.cwd(), '.canon/templates/status.json'), 'utf8')) as StatusJson;
+            status.id = taskId;
+            for (const phase of ['spec', 'spec_review', 'plan', 'implement', 'code_review'] as const) {
+                status.phases[phase]!.status = 'done';
+            }
+            status.phases.qa!.status = 'in_progress';
+            fs.writeFileSync(path.join(taskDir, 'status.json'), JSON.stringify(status));
+
+            const previousQualityLog = process.env.CANON_QUALITY_LOG_FILE_OVERRIDE;
+            process.env.CANON_QUALITY_LOG_FILE_OVERRIDE = path.join(taskDir, 'quality-log.md');
+            try {
+                if (!scenario.ok) {
+                    assert.throws(
+                        () => taskPhase(taskId, 'qa', 'done'),
+                        scenario.reason,
+                    );
+                } else {
+                    taskPhase(taskId, 'qa', 'done');
+                    assert.equal(readStatus(taskId).phases.qa?.status, 'done');
+                }
+            } finally {
+                if (previousQualityLog === undefined) delete process.env.CANON_QUALITY_LOG_FILE_OVERRIDE;
+                else process.env.CANON_QUALITY_LOG_FILE_OVERRIDE = previousQualityLog;
+            }
+        });
+    });
+}
+
+void test('qa evidence advance refuses done.md without a parseable Follow-ups section without throwing', () => {
+    withTempTaskDir((taskId, taskDir) => {
+        fs.writeFileSync(path.join(taskDir, 'done.md'), qaDoneBodies[0].markdown);
+        const result = tryEvidenceAdvance(taskId, 'qa');
+        assert.equal(result.advanced, false);
+        assert.match(result.note, /Follow-ups/);
     });
 });
 
