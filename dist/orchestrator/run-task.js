@@ -11101,8 +11101,10 @@ ${formatPostFoldFailureHint(foldedDocs, "uncommitted", baseBranch)}` : "";
   info2(`Shipped ${taskIds.length} task${taskIds.length > 1 ? "s" : ""} to _archive/.`);
   const followupLines = formatShipFollowups(followupsByTask);
   if (followupLines.length > 0) {
-    console.log();
-    for (const line of followupLines) console.log(line);
+    process.stdout.write(`
+${followupLines.join("\n")}
+`, () => process.exit(0));
+    return;
   }
   process.exit(0);
 }

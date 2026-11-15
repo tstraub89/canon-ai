@@ -2951,8 +2951,10 @@ function shipTasks(taskIds: string[], mergeMethod: ShipMergeMethod): void {
     info(`Shipped ${taskIds.length} task${taskIds.length > 1 ? 's' : ''} to _archive/.`);
     const followupLines = formatShipFollowups(followupsByTask);
     if (followupLines.length > 0) {
-        console.log();
-        for (const line of followupLines) console.log(line);
+        // Exit from the write callback: process.exit() right after console.log
+        // drops queued output when stdout is a pipe with a slow reader.
+        process.stdout.write(`\n${followupLines.join('\n')}\n`, () => process.exit(0));
+        return;
     }
     process.exit(0);
 }
