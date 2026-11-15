@@ -270,3 +270,23 @@ QA checks this.
 - [x] (Bug/flake fixes; N/A for features/refactors) N/A — feature
 - [x] (Refactors; N/A for features/bug fixes) N/A — feature
 - [x] *Judgment Calls* lists every judgment call the spec makes, each with its strongest alternative and a Decided by value (`Human` or `Author`), or says `None — <reason>`
+
+## Amendment
+
+Code review round 1 found three surfaces the original Affected Files missed. All three follow from the new qa gate (AC-4).
+
+**Problem (AC-15 mechanism, confirmed by trace).** The mechanism is deterministic. When QA streams done.md to stdout instead of writing it, the QA phase runner salvages the text, writes it to done.md, and calls `taskPhase(<id>, 'qa', 'done')` directly when the session did not block itself. With this task's change, `qa done` runs the qa evidence gate, which now returns a rejection when the Follow-ups section is missing or unparseable (the `followupsProblem` check in the phase gate). `taskPhase` throws on a rejected gate, and the salvage path has no handler, so the exception escapes the phase runner, the orchestrator exits, and qa stays `in_progress`. How it was confirmed: both Claude code-review lenses traced this path independently in round 1; the implementer reproduced it (the salvage fixtures in the providers and routing safety tests, given salvaged content without the section, fail through this throw); and the operator re-read the gate and `taskPhase` call chain on the task branch. No runtime-dependent factor is involved, so a trace plus fixture repro is sufficient evidence.
+
+- [ ] AC-15: When QA's done.md is salvaged from captured stdout and the qa gate rejects it (for example, no Follow-ups section), the QA phase does not throw. It prints a warning with the gate's rejection message, leaves the salvaged done.md on disk, and leaves qa not done, so the run stops through the existing "phase did not reach done" path rather than crashing. The existing blocked-session rule is unchanged and checked first: if the QA session marked qa `blocked`, salvage only restores done.md and qa stays `blocked` whether or not the salvaged file would pass the gate. Otherwise a salvaged done.md that passes the gate still advances qa → done as before. Verify (red-first): a QA salvage regression test, written first, fails on the pre-fix salvage path because the gate rejection throws out of the QA phase runner, and passes after the fix. It asserts no throw, qa status not `done`, the warning printed, and done.md written; the existing salvage tests (with a valid section added) still advance qa to done, and the existing blocked-session salvage test still leaves qa `blocked`.
+- [ ] AC-16: The five existing QA fixtures that supply done.md content without a Follow-ups section (one in the base-drift safety tests, three salvage cases in the providers safety tests, one in the routing safety tests) gain a valid section (`None.` is fine) and pass unchanged otherwise. Verify: `npm test` passes in full.
+- [ ] AC-17: The canon-pipeline recovery guide's manual `canon task phase <task-id> qa done` recipe states that done.md must contain a valid Follow-ups section, consistent with the main skill. Verify: the recovery guide and its mirror name the section; `npm run sync-templates:check` passes.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `src/orchestrator/phases/qa.ts` | Catch a qa gate rejection on the stdout-salvage path: warn with the message, keep done.md, leave qa not done (AC-15) |
+| `tests/run-task-safety-providers.test.ts` | Add a valid Follow-ups section to the three salvage fixtures; add the AC-15 rejected-salvage test |
+| `tests/run-task-safety-base-drift.test.ts` | Add a valid Follow-ups section to the QA artifact fixture |
+| `tests/run-task-safety-routing.test.ts` | Add a valid Follow-ups section to the QA salvage fixture |
+| `.claude/skills/canon-pipeline/recovery.md`, `templates/.claude/skills/canon-pipeline/recovery.md` | Note that `qa done` requires a valid Follow-ups section (AC-17) |
