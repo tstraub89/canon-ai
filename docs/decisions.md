@@ -645,3 +645,11 @@ Replaying canon-ai PR #120 (delicate M) at its PR-open head with the same cold-l
 **Decision**: QA writes a parseable `## Follow-ups` table in `done.md`, or `None.`, and the QA gate requires it. The operator session brings each untracked item to the human at `human_review` before `--pr` and records the outcome in the Tracked cell. Items marked `post-ship` are written on base in the operator's post-ship docs commit and listed by `--ship`. Canon itself never prompts or files follow-ups.
 
 **Why**: `--ship` commonly runs non-interactively, so a ship-time prompt would usually have no human to answer it. Human review already has the operator and human present. Filing conventions vary by adopter, so canon cannot choose where or how to create tracking records; it only records decisions and lists the remaining work.
+
+## Rerouted QA rewrites done.md; earlier content is not carried forward (2026-11)
+
+**Decision**: A rerouted task runs the same QA prompt as the first pass, and QA rewrites `done.md` from the current spec, handoff, and review. The prompt does not tell QA to carry forward anything from the earlier `done.md`, including `Acknowledged:` waivers.
+
+**Why**: The spec, handoff, plan, and review keep the task's full history across reroutes, so a fresh rewrite is complete, and patching the old text would leave stale claims behind. Carrying waivers forward is unsafe: the `human_review` gate accepts any `Acknowledged:` line as a waiver for every `human_pending` check, so an old waiver would silently pass checks the reroute added. Losing a waiver fails safe, because the gate blocks and lists the pending checks. QA also cannot reliably tell which done.md text a human added, and its own earlier Open Questions are usually raised again from the same sources.
+
+**Rule**: Do not add carry-forward or Edit-in-place instructions for `done.md` to the QA prompt. If a lost waiver becomes a real problem, first change the gate so each waiver matches the check it names, and only then consider carrying waivers forward.
