@@ -354,7 +354,7 @@ function loadPolicyConfigForEnv(overrides: Record<string, string>): PolicyConfig
 void test('shipped Codex model defaults apply when no Codex model variables are set', () => {
     const config = loadPolicyConfigForEnv({});
     assert.equal(config.codexModelMini, 'gpt-6-luna');
-    assert.equal(config.codexModelFull, 'gpt-6.1-sol');
+    assert.equal(config.codexModelFull, 'gpt-6.2-sol');
     assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_DELICATE: 'legacy-full' }).codexModelFull, 'legacy-full');
     assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_FULL: 'pinned-full', CODEX_MODEL_DELICATE: 'legacy-full' }).codexModelFull, 'pinned-full');
 });

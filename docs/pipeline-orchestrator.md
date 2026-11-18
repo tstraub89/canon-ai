@@ -234,7 +234,7 @@ Codex model and effort come from a fixed phase × size matrix:
 | `implement`   | mini / xhigh | mini / xhigh | mini / max | mini / max | full / high |
 | `code_review` (cold lens) | mini / high | mini / high | mini / high | full / high | full / high |
 
-Codex is tuned for token efficiency — the mini model handles most phases; the full model runs XL or delicate work and the cold-Codex review lens at L. Effort comes only from this matrix; there is no Codex effort environment override. M/L implement runs use the mini model (default `gpt-6-luna`) at `max`, while XL/delicate runs use the full model (default `gpt-6.1-sol`) at `high`: delicate work already gets the stronger model, and the full model at `xhigh` costs about 1.5–2× `high`.
+Codex is tuned for token efficiency — the mini model handles most phases; the full model runs XL or delicate work and the cold-Codex review lens at L. Effort comes only from this matrix; there is no Codex effort environment override. M/L implement runs use the mini model (default `gpt-6-luna`) at `max`, while XL/delicate runs use the full model (default `gpt-6.2-sol`) at `high`: delicate work already gets the stronger model, and the full model at `xhigh` costs about 1.5–2× `high`.
 
 In mixed mode the mandatory cold-Codex `code_review` lens runs at `high` effort at every size: the mini model at XS, S and M, and the full model at L and XL/delicate. `CODEX_MODEL_FULL` therefore also steers the lens at L and XL/delicate, and `CODEX_MODEL_MINI` steers it at XS–M. A bundle runs one cold review at its effective size, so one L, XL, or delicate member puts the whole bundle's cold review on the full model.
 
@@ -312,7 +312,7 @@ Codex model overrides:
 | Variable | Default | Purpose |
 |---|---|---|
 | `CODEX_MODEL_MINI` | `gpt-6-luna` | Codex model for non-delicate `spec_review` and `implement` at XS–L, and the non-delicate cold-Codex review lens at XS–M. |
-| `CODEX_MODEL_FULL` | `gpt-6.1-sol` | Codex model for XL or delicate phases, and the cold-Codex review lens at L. |
+| `CODEX_MODEL_FULL` | `gpt-6.2-sol` | Codex model for XL or delicate phases, and the cold-Codex review lens at L. |
 
 `CODEX_MODEL_DEFAULT` and `CODEX_MODEL_DELICATE` are deprecated fallbacks for `CODEX_MODEL_MINI` / `CODEX_MODEL_FULL`; canon warns when they are set. `CODEX_EFFORT_DEFAULT` / `CODEX_EFFORT_DELICATE` are ignored with a warning.
 
