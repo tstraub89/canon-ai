@@ -469,7 +469,21 @@ The `max` effort was probed on Codex CLI 0.164.0 with `gpt-6-luna`: both a fresh
 
 XL/delicate remains Sol at `high` because delicate work already gets the stronger model, while Sol `xhigh` costs about 1.5–2× `high`; reevaluating the full model's effort curve remains separate. Measure `code_review` rounds and `changes_requested` rates for non-delicate XS–L tasks in `docs/task-quality-log.md`, comparing rows before and after this entry's date. Exclude delicate tasks because their model also changed.
 
-**Rule**: Roll back the full model with `CODEX_MODEL_FULL=gpt-6-sol`. If a Codex CLI or mini model rejects `max`, upgrade the CLI or change/unset `CODEX_MODEL_MINI`; restore prior effort cells by installing the previous canon release because effort has no environment override. If the new effort cells increase cost or do not improve outcomes, install the previous canon release. Treat benchmark-to-canon transfer as a hypothesis to measure.
+**Rule**: Roll back the full model with `CODEX_MODEL_FULL=gpt-6-sol`. If a Codex CLI or mini model rejects `max`, upgrade the CLI or change/unset `CODEX_MODEL_MINI`; restore prior effort cells by installing the previous canon release because effort has no environment override. If the new effort cells increase cost or do not improve outcomes, install the previous canon release. Treat benchmark-to-canon transfer as a hypothesis to measure. *(Full-model default superseded by "Full-model default → GPT-6.2 Sol (2026-11)" below; the effort cells remain in force.)*
+
+---
+
+## Full-model default → GPT-6.2 Sol (2026-11)
+
+_Generation: gpt-6-luna (mini) / gpt-6.2-sol (full)._
+
+**Decision**: Change the full-model fallback (`CODEX_MODEL_FULL`) from `gpt-6.1-sol` to `gpt-6.2-sol`, triggered by OpenAI's 2026-11 release of GPT-6.2 Astra and Sol. The mini default stays `gpt-6-luna` because the release ships no new Luna. Effort cells, routing, and the override env-var chains are unchanged. This is a canon-supplied default change and a **minor** release item.
+
+**Why**: OpenAI positions GPT-6.2 Sol as the direct successor to GPT-6.1 Sol at the same API price ($2 input, $0.10 cached input, $10 output per 1M tokens), reporting better results with fewer output tokens. Its launch post reports GPT-6.2 Sol within 0.5 points of GPT-6.2 Astra on FrontierCode 2.0 at about one-fifth the cost (both at `max`). GPT-6.2 Astra was rejected for the same reason as GPT-6 Astra: at $8/$40 per 1M tokens its cost does not fit canon's token-discipline thesis. `gpt-6.2-sol` at `max` was probed on Codex CLI 0.170.0 with a fresh `codex exec`, which completed; canon's full-model cells run at `high`. Treat the vendor benchmarks as a hypothesis for canon's longer, tool-heavy sessions.
+
+Two launch-post caveats to watch: the models were more likely to omit obstacles that blocked their work (OpenAI added mitigating instructions in Codex), and they ship with tighter safeguards on higher-risk security work, which may affect the cold-Codex lens's hostile-input hunting at L and XL/delicate.
+
+**Rule**: Roll back with `CODEX_MODEL_FULL=gpt-6.1-sol`. Measure XL/delicate `code_review` rounds, `changes_requested` rates, and reroutes in `docs/task-quality-log.md` against the GPT-6.1 Sol cohort, using this entry's date as the cohort boundary, and check handoffs for missing Blockers.
 
 ---
 

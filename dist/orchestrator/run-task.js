@@ -2445,7 +2445,7 @@ var config2 = {
   claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
   claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
   codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
-  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6.1-sol",
+  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6.2-sol",
   maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   claudeBudget: process.env.CLAUDE_BUDGET ?? null
 };
