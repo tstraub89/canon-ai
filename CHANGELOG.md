@@ -8,7 +8,7 @@
 
 ### Changed
 
-- **The full Codex model now defaults to `gpt-6.2-sol`.** XL and delicate phases and the cold-Codex review lens at L use it unless `CODEX_MODEL_FULL` is set. The mini default stays `gpt-6-luna`. To keep the previous model, set `CODEX_MODEL_FULL=gpt-6.1-sol`.
+- **The full Codex model now defaults to `gpt-6.2-sol`.** XL and delicate phases and the cold-Codex review lens at L use it unless `CODEX_MODEL_FULL` (or the deprecated `CODEX_MODEL_DELICATE`) is set. The mini default stays `gpt-6-luna`. To keep the previous model, set `CODEX_MODEL_FULL=gpt-6.1-sol`.
 
 ## [3.20.0] — 2026-11-15
 
