@@ -1,7 +1,7 @@
 {
   "id": "codex-config-models-effort",
   "title": "Codex models and implement effort in .canon/config.json",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-19",
   "updated": "2026-11-19",
   "branch": "task/codex-config-models-effort",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
