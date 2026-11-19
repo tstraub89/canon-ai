@@ -135,3 +135,66 @@ All required checks ran on Node v24.21.0. Initial implementation-test failures w
 - [x] All spec ACs met under the documented combined-flag interpretation.
 - [x] All applicable validation checks pass.
 - [x] All deviations from plan documented with rationale.
+
+## Iteration 2 — addressing review round 1
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `tests/run-task-ship-docs-fold.test.ts` | Restored successful worktree dry-runs with invalid main docs-freshness/ship settings in valid JSON. Kept separate malformed-main and malformed-worktree JSON failures with specific messages; all cases preserve task status. |
+| `tests/run-task-codex-config.test.ts` | Added combined ship/dry-run to startup validation cases for both providers. Actual CLI argv assertions now require configured implement efforts low/max for M/XL while spec-review/cold-review remain high. |
+| `README.md` | Clarified malformed main JSON behavior for worktree tasks, Claude-mode startup, in-flight mixed tasks, and both doctor config checks. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documented the same malformed-main JSON behavior; regenerated the managed mirror with template sync. |
+| `docs/patterns.md` | Explicit Codex operator-policy exception to the active-checkout guidance. Docs freshness and ship retain their existing roots. |
+| `tasks/codex-config-models-effort/notes.md`, `tasks/codex-config-models-effort/handoff.md` | Recorded the fixture pitfall and cumulative revision evidence. |
+
+### Findings addressed
+
+- **Correctness bug 1 (test integrity): addressed.** The run-level fixture now has separate exit-0 cases for main `docs_freshness: false` and an invalid main ship merge method, with a valid worktree file. A malformed main file no longer masks these ownership checks. Separate cases still require the malformed-main Codex read error and malformed-worktree JSON error.
+- **Optional nit 1: addressed.** The README and Codex settings reference explicitly describe malformed main JSON stopping worktree tasks and Claude-mode startup, and in-flight mixed tasks at the next Codex resolution. The README correctly states that both doctor config checks fail for malformed JSON.
+- **Optional nit 6: addressed.** The worktree pattern now names the deliberate main-checkout Codex exception.
+- **Optional nit 8: partially addressed.** Added combined ship/dry-run validation and configured-effort CLI argv assertions. The existing parity test's use of repository config is unchanged.
+- Other optional items remain deferred: runtime error/warning wording, empty-env/raw-model semantics, doctor wiring coverage, duplicate model-default refactoring, and further gate wording. The spec and plan deliberately retain current env semantics and validation messages; this revision changes tests and documentation without changing runtime policy.
+
+### AC deltas
+
+| AC | Status | Evidence |
+|---|---|---|
+| AC-5 | Met — guard restored | Worktree startup succeeds despite invalid main docs-freshness/ship settings in syntactically valid JSON. Codex still reads main, while active-checkout docs/ship validation remains independent. |
+| AC-2, AC-3, AC-4 | Met — coverage strengthened | Captured backend-spawn argv has implement efforts low/max from config, and unchanged high effort on spec-review/cold-review. Model assertions remain cfg-mini/cfg-full. |
+| AC-6, AC-8 | Met — coverage strengthened | Both provider startup tests now include combined ship/dry-run; plain ship's successful archive regression remains. |
+| AC-13 | Met — docs clarified | Explicit malformed-main JSON consequences and the worktree-guidance exception, with the managed mirror synchronized. |
+| All other ACs | Met — unchanged | Round 1's accepted behavior remains; no runtime source changes in this iteration. |
+
+### Self-Check
+
+These rows supersede the corresponding baseline rows and cover the whole branch.
+
+| Check | Evidence |
+|---|---|
+| Test integrity | Original literal implement-default/override assertions were checked against baseline eb9a2d4a80b03ae502c2db0cf71f0231afac496a in Iteration 1: five expected failures and unchanged XL passing; all six passed on implementation. Spawned precedence tests distinguish env/legacy/config/default values per tier. Parser tests require offending key/value/allowed shape. Root tests pin main-mini/minimal then edited-mini/low, and malformed edits must leave Claude/size/cap lookup working before the next Codex error. This revision restores four explicit run-level root cases: ignored invalid main docs settings, ignored invalid main ship settings, malformed worktree JSON, malformed main JSON. All four pass. In an isolated git-archive copy of pre-revision HEAD 1d63a024a21fca7b5d1cc9ecf7d5741229fd24da with the revised test, adding shared docs/ship validation inside parseCodexSection makes exactly the two new success cases fail: exit 1 instead of 0, with docs_freshness/ship.merge_method errors. This is a deliberately injected regression, not a claimed failure of unmodified HEAD. A second isolated mutation discarding codexImplementEffort makes the backend implement test fail with actual high/high versus required low/max; spec-review and cold-review pass at high. The unmutated ten-test Codex config file passes, including combined ship/dry-run requiring the M/ultra error, no spawn marker and unchanged status for both providers. Existing metric tests require ten cells and exact session/sub-agent/rejected efforts; cold-log/error tests pin their strings, and upgrade/fold tests require the new header while preserving legacy bytes. |
+| Restatement sweep | Retained Iteration 1's repo-wide contract/caller sweep for not configurable, no equivalent knob, no effort override, release-only rollback, fixed phase matrix, old implement cells and CODEX_EFFORT; surviving historical and unchanged-phase statements remain as previously classified. This revision searched Malformed JSON, malformed main, main checkout, active checkout, active-checkout rules, Operator-policy exception and combined ship/dry-run across `README.md`, `.canon/README.md`, `docs/architecture.md`, `docs/patterns.md`, `docs/pipeline-orchestrator.md` and its mirror. Clarified the README and operator reference; added the pattern exception; other root statements remain consistent. All source/test recordMetric callers still supply effort, including the inline JavaScript caller. No out-of-scope edit was required. Documentation-only clarifications introduce no new runtime contract. |
+| Sibling parity | Codex normal/resumed spec-review, implement, cold review, fix-ups/retries and dry-run still resolve through getCodexConfig; no runtime routing changed. Main startup keeps requireCodexSection separate from loadDocsFreshnessConfig(configRoot). Shared spec/QA/validation/commit consumers retain the shared loader; the restored success tests now guard against main's unrelated docs/ship settings leaking into that Codex read. Malformed JSON is tested independently in both checkouts, while ship's existing main-root tests and plain-ship Codex exemption remain. Both providers cover combined ship/dry-run. Claude/size/cap getters still avoid the Codex loader, and the existing mid-run test verifies that isolation. Metrics still cover both agents, sub-agents, failure and rejection; header-only upgrade/fold compatibility remains. Managed mirrors match and a fresh build leaves both dist bundles unchanged. |
+
+### Re-run validation
+
+All required checks were rerun on Node v24.21.0; no checks skipped.
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run build` | Pass | Both bundles rebuilt; no dist delta from pre-revision HEAD. |
+| `npm run type-check` | Pass | Revised test tables and argv assertions compile. |
+| `npm run lint` | Pass | Type-aware lint with warnings denied. |
+| `npm test` | Pass | Full suite: 2,248 tests; 2,247 passed, zero failed, one skipped; 220.9 seconds. |
+| `npm run docs-refs-check` | Pass | All refs OK; also rerun after appending this handoff. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| Root regression selection | Pass | Node test runner with dry-run config roots pattern on `tests/run-task-ship-docs-fold.test.ts`: four passed. |
+| Codex config test file | Pass | `tests/run-task-codex-config.test.ts`: ten passed, including configured effort argv and combined ship/dry-run. |
+| Test sensitivity experiments | Pass | Injected unrelated main-section validation: two expected failures. Discarded effort overrides: one expected implement failure, two unchanged-phase passes. Product working tree was not mutated for either experiment. |
+| Cumulative scope/accounting and diff | Pass | Ran git diff main...HEAD --name-only; every committed path remains covered by the union of Changes tables. All revision source/test/doc edits are in Affected Files; other edits are this task's artifacts. Managed mirror is byte-equal; git diff --check clean. |
+
+### Blockers and decisions
+
+- No new blockers. Round 1 accepted the prior combined ship/dry-run interpretation; the combination now has explicit regression coverage.
+- No new ambiguity, dependency, git-state or production change. Staging, committing and pushing remain the orchestrator's responsibility.

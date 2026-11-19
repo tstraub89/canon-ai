@@ -412,9 +412,14 @@ listed in the spec's Affected Files.
 `canon init` does not create this file and `canon upgrade` leaves it alone.
 Commit the config before starting worktree-isolated tasks: each worktree reads its
 branch's docs-freshness/ship settings, so uncommitted main-checkout changes are not available there. The `codex` section always reads the main checkout's copy.
-Malformed JSON or invalid docs-freshness/ship settings stop runs, including reroute and ship, and fail the docs-freshness
-check in `canon doctor`; an invalid `codex` section instead fails the separate Codex config check and stops runs except plain `--ship`. Unknown keys warn. Telemetry files and task-artifact paths
-cannot be configured. Without a config, the default protected set applies.
+Invalid docs-freshness/ship settings stop their consumers, including reroute and ship,
+and fail the docs-freshness check in `canon doctor`. Invalid Codex settings fail the
+separate Codex config check and stop runs except plain `--ship`. Malformed JSON
+fails both doctor config checks. Because Codex settings require parsing the main
+checkout's file, malformed main-checkout JSON also stops worktree-task and
+`claude`-mode runs at startup, and in-flight mixed tasks at their next Codex
+resolution. Unknown keys warn. Telemetry files and task-artifact paths cannot be
+configured. Without a config, the default protected set applies.
 
 ### Configuring the merge method
 

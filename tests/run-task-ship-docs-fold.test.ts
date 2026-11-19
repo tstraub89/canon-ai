@@ -500,19 +500,26 @@ for (const kind of ['mapped', 'flag-only', 'malformed'] as const) {
     });
 }
 
-for (const worktreeInvalid of [true, false]) {
-    void test(`dry-run validates main JSON and worktree docs config: worktree ${worktreeInvalid ? 'invalid' : 'valid'}, main opposite`, () => {
+for (const [name, mainConfig, worktreeConfig, expectedError] of [
+    ['ignores invalid main docs-freshness settings', '{"docs_freshness":false}', '{}', null],
+    ['ignores invalid main ship settings', '{"ship":{"merge_method":"octopus"}}', '{}', null],
+    ['rejects malformed worktree JSON', '{}', '{', /\.canon\/config\.json.*not valid JSON/],
+    ['rejects malformed main JSON', '{', '{}', /main checkout.*not valid JSON.*codex.*cannot be read/],
+] as const) {
+    void test(`dry-run config roots: ${name}`, () => {
         withTempDir('run-config-worktree-source-', dir => {
             const { localDir, fakeTools } = prepareSharedWorktreeShipFixture(dir, ['config-a', 'config-b'], { prNumber: 602 });
             const worktreeDir = path.join(dir, 'worktrees/config-a');
-            writeRel(localDir, '.canon/config.json', worktreeInvalid ? '{}' : '{');
-            writeRel(worktreeDir, '.canon/config.json', worktreeInvalid ? '{' : '{}');
+            writeRel(localDir, '.canon/config.json', mainConfig);
+            writeRel(worktreeDir, '.canon/config.json', worktreeConfig);
             const statusPath = path.join(worktreeDir, 'tasks/config-a/status.json');
             const before = fs.readFileSync(statusPath, 'utf8');
             const result = runCanon(localDir, ['config-a', '--dry-run'], fakeTools, { CANON_WORKTREES_ROOT: path.join(dir, 'worktrees') });
-            assert.notEqual(result.status, 0, result.stderr);
-            if (worktreeInvalid) assert.match(result.stderr, /\.canon\/config.json.*not valid JSON/);
-            else assert.match(result.stderr, /main checkout.*codex.*cannot be read/);
+            if (expectedError === null) assert.equal(result.status, 0, result.stderr);
+            else {
+                assert.notEqual(result.status, 0, result.stderr);
+                assert.match(result.stderr, expectedError);
+            }
             assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
         });
     });

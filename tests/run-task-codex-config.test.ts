@@ -51,7 +51,7 @@ void test('startup dry-run ignores an invalid Codex section in the task worktree
 });
 
 for (const provider of ['mixed', 'claude'] as const) {
-    void test(`invalid main Codex policy stops ${provider} startup before spawn, including dry-run`, () => {
+    void test(`invalid main Codex policy stops ${provider} startup before spawn, including dry-run and ship dry-run`, () => {
         withTempDir('codex-start-invalid-', dir => {
             const { localDir } = makeGitFixture(dir);
             const bins = path.join(dir, 'fake-tools');
@@ -63,7 +63,7 @@ for (const provider of ['mixed', 'claude'] as const) {
             fs.writeFileSync(statusFile, JSON.stringify(status));
             writeRel(localDir, '.canon/config.json', '{"codex":{"implement_effort":{"M":"ultra"}}}');
             const before = fs.readFileSync(statusFile, 'utf8');
-            for (const args of [[], ['--dry-run']]) {
+            for (const args of [[], ['--dry-run'], ['--ship', '--dry-run']]) {
                 const result = runReviewLoopMain(localDir, tasksRoot, bins, 'codex-invalid', 3, args);
                 assert.notEqual(result.status, 0);
                 assert.match(result.stderr, /codex\.implement_effort\.M.*"ultra".*none\|minimal\|low\|medium\|high\|xhigh\|max/);
@@ -111,7 +111,7 @@ void test('Codex unknown keys warn once across startup and repeated resolutions'
 for (const phase of ['spec_review', 'implement', 'code_review'] as const) {
     void test(`config models reach the ${phase} backend invocation path`, () => {
         withTempDir('codex-routing-', root => {
-            writeRel(root, '.canon/config.json', '{"codex":{"models":{"mini":"cfg-mini","full":"cfg-full"}}}');
+            writeRel(root, '.canon/config.json', '{"codex":{"models":{"mini":"cfg-mini","full":"cfg-full"},"implement_effort":{"M":"low","XL":"max"}}}');
             const calls = path.join(root, 'calls.jsonl');
             const bins = path.join(root, 'bin');
             fs.mkdirSync(bins);
@@ -133,7 +133,8 @@ console.log(JSON.stringify({type:'turn.completed'}));
             assert.equal(result.status, 0, result.stderr);
             const args = fs.readFileSync(calls, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]);
             assert.deepEqual(args.map(argv => argv[argv.indexOf('-m') + 1]), ['cfg-mini', 'cfg-full']);
-            assert.ok(args.every(argv => argv.includes('model_reasoning_effort=high')));
+            assert.deepEqual(args.map(argv => argv.find(arg => arg.startsWith('model_reasoning_effort='))),
+                phase === 'implement' ? ['model_reasoning_effort=low', 'model_reasoning_effort=max'] : ['model_reasoning_effort=high', 'model_reasoning_effort=high']);
         });
     });
 }
