@@ -72,6 +72,9 @@ void test('runClaude records top-level sub-agent rows with deduplicated cumulati
     ], { transcript: { transcript: [assistant('turn-1', 13), assistant('turn-1', 13), assistant('turn-2', 7)] } });
     const output = rows(fragment).map(cells);
     assert.equal(output.length, 2);
+    assert.ok(output.every(row => row.length === 10));
+    assert.equal(output[0][9], 'medium');
+    assert.equal(output[1][9], '-');
     assert.deepEqual(output.map(row => row[3]), ['claude', 'claude:code-review-anchored']);
     assert.deepEqual(output[1].slice(1, 6), ['example-task', 'code_review', 'claude:code-review-anchored', 'lens-model', '2']);
     assert.equal(output[1][6], '476.4s');
@@ -121,6 +124,9 @@ void test('runClaude ignores non-lens and nested events, but retains lens rows a
     ], { exit: 1, transcript: { transcript: [assistant('turn', 1)] } });
     const output = rows(failed).map(cells);
     assert.equal(output.length, 2);
+    assert.ok(output.every(row => row.length === 10));
+    assert.equal(output[0][9], 'medium');
+    assert.equal(output[1][9], '-');
     assert.equal(output[0][8], 'failed');
     assert.equal(output[1][3], 'claude:completed-before-failure');
 });
@@ -130,7 +136,7 @@ void test('runClaude escapes hostile agent types and deduplicates results across
         resultEvent({ agentType: 'x|y\nz', status: 'completed', totalDurationMs: 1 }),
         { type: 'result', session_id: 'session-1', usage: {}, result: 'done' },
     ]);
-    assert.equal(cells(rows(hostile)[1]).length, 9);
+    assert.equal(cells(rows(hostile)[1]).length, 10);
     const resumed = await runFixture([
         notification('tool-1', '__TRANSCRIPT__'),
         resultEvent({ agentType: 'lens', status: 'completed', totalDurationMs: 3 }, 'tool-1'),

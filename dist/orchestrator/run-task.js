@@ -104,6 +104,284 @@ function isAgentSessionError(error) {
 import fs8 from "fs";
 import path7 from "path";
 
+// src/lib/pipeline-policy.ts
+var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+var CODE_REVIEW_DELTA_LINE_THRESHOLD = 400;
+function isReviewOwnedPath(filePath, facts) {
+  return facts.taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`)) || facts.telemetryFiles.includes(filePath);
+}
+function resolveCodeReviewScope(facts) {
+  const full = (reason) => ({ scope: "full", base: facts.baseBranch, reason });
+  if (facts.isRound1) return full("Round 1 (initial review)");
+  if (facts.effectiveSize === "XL" || facts.delicate) return full(facts.delicate ? "delicate" : "XL task size");
+  const prev = facts.prevRecord;
+  if (prev === null) return full(facts.previousRecordsDisagree ? "bundle members disagree on the previous reviewed commit" : facts.previousRecordConflict ? "round records for the previous round disagree on the reviewed commit" : facts.previousArchiveMalformed ? "unparseable round record for the previous round" : "no round record for the previous round");
+  if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
+  if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
+  if (prev.equalsHead) return full("previous reviewed commit equals HEAD");
+  if (facts.deltaPaths === null) return full("delta path probe failed");
+  if (facts.priorChangeSetPaths === null) return full("previous change-set path probe failed");
+  if (facts.deltaFileStats === null) return full("delta line-stat probe failed");
+  const priorPaths = new Set(facts.priorChangeSetPaths.filter((p) => !isReviewOwnedPath(p, facts)));
+  const outside = facts.deltaPaths.find((p) => !isReviewOwnedPath(p, facts) && !priorPaths.has(p));
+  if (outside) return full(`${outside} is outside the previous round's change set`);
+  const lines = facts.deltaFileStats.filter((stat) => !isReviewOwnedPath(stat.path, facts)).reduce((sum, stat) => sum + stat.added + stat.deleted, 0);
+  if (lines > CODE_REVIEW_DELTA_LINE_THRESHOLD) {
+    return full(`delta line count ${lines} exceeds ${CODE_REVIEW_DELTA_LINE_THRESHOLD}`);
+  }
+  return { scope: "delta", base: prev.reviewedSha, reason: "delta" };
+}
+var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
+function compareTaskSize(a, b) {
+  return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
+}
+var SINGLE_PASS_BUDGET_BY_SIZE = {
+  XS: "5.00",
+  S: "5.00",
+  M: "10.00",
+  L: "10.00",
+  XL: "20.00"
+};
+var CODE_REVIEW_BUDGET_BY_SIZE = {
+  XS: "5.00",
+  S: "10.00",
+  M: "15.00",
+  L: "20.00",
+  XL: "40.00"
+};
+var BUDGET_BY_PHASE_AND_SIZE = {
+  spec_review: SINGLE_PASS_BUDGET_BY_SIZE,
+  implement: { XS: "10.00", S: "15.00", M: "25.00", L: "40.00", XL: "60.00" },
+  spec: SINGLE_PASS_BUDGET_BY_SIZE,
+  plan: SINGLE_PASS_BUDGET_BY_SIZE,
+  code_review: CODE_REVIEW_BUDGET_BY_SIZE,
+  qa: SINGLE_PASS_BUDGET_BY_SIZE
+};
+function maxSize(tasks) {
+  let max = "XS";
+  for (const t of tasks) {
+    const size = t.task_size ?? "M";
+    if (SIZE_ORDER.indexOf(size) > SIZE_ORDER.indexOf(max)) max = size;
+  }
+  return max;
+}
+function anyDelicate(tasks) {
+  return tasks.some((t) => t.delicate ?? false);
+}
+function resolveBudget(phase, effectiveSize, claudeBudget) {
+  return claudeBudget ?? BUDGET_BY_PHASE_AND_SIZE[phase][effectiveSize];
+}
+function detectTier(tasks) {
+  return tasks.some((t) => (t.task_size ?? "M") !== "XS" || (t.delicate ?? false)) ? "full" : "fast";
+}
+function isPlanCombined(task) {
+  return task.task_size === "XS" && !(task.delicate ?? false);
+}
+function getNominalSize(tasks) {
+  return maxSize(tasks);
+}
+function getEffectiveSize(tasks) {
+  if (anyDelicate(tasks)) return "XL";
+  return maxSize(tasks);
+}
+function defaultMaxReviewLoops(nominalSize) {
+  return nominalSize === "XS" || nominalSize === "S" || nominalSize === "M" ? 3 : 5;
+}
+function codexMatrix(config3) {
+  return {
+    spec_review: {
+      XS: { model: config3.codexModelMini, effort: "medium" },
+      S: { model: config3.codexModelMini, effort: "high" },
+      M: { model: config3.codexModelMini, effort: "high" },
+      L: { model: config3.codexModelMini, effort: "high" },
+      XL: { model: config3.codexModelFull, effort: "high" }
+    },
+    implement: {
+      XS: { model: config3.codexModelMini, effort: config3.codexImplementEffort?.XS ?? "medium" },
+      S: { model: config3.codexModelMini, effort: config3.codexImplementEffort?.S ?? "high" },
+      M: { model: config3.codexModelMini, effort: config3.codexImplementEffort?.M ?? "high" },
+      L: { model: config3.codexModelMini, effort: config3.codexImplementEffort?.L ?? "xhigh" },
+      XL: { model: config3.codexModelFull, effort: config3.codexImplementEffort?.XL ?? "high" }
+    },
+    code_review: {
+      XS: { model: config3.codexModelMini, effort: "high" },
+      S: { model: config3.codexModelMini, effort: "high" },
+      M: { model: config3.codexModelMini, effort: "high" },
+      L: { model: config3.codexModelFull, effort: "high" },
+      XL: { model: config3.codexModelFull, effort: "high" }
+    }
+  };
+}
+var QA_DEFAULT_MODEL = "claude-haiku-5-5";
+var CLAUDE_CELLS = {
+  spec_review: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "strong", effort: "medium" },
+    L: { tier: "strong", effort: "medium" },
+    XL: { tier: "strong", effort: "high" }
+  },
+  implement: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "strong", effort: "medium" },
+    L: { tier: "strong", effort: "medium" },
+    XL: { tier: "strong", effort: "high" }
+  },
+  spec: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "strong", effort: "medium" },
+    L: { tier: "strong", effort: "medium" },
+    XL: { tier: "strong", effort: "high" }
+  },
+  plan: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "strong", effort: "medium" },
+    L: { tier: "strong", effort: "medium" },
+    XL: { tier: "strong", effort: "high" }
+  },
+  code_review: {
+    XS: { tier: "light", effort: "medium" },
+    S: { tier: "light", effort: "medium" },
+    M: { tier: "strong", effort: "medium" },
+    L: { tier: "strong", effort: "medium" },
+    XL: { tier: "strong", effort: "high" }
+  },
+  qa: {
+    XS: { tier: "qa", effort: "medium" },
+    S: { tier: "qa", effort: "medium" },
+    M: { tier: "qa", effort: "medium" },
+    L: { tier: "qa", effort: "medium" },
+    XL: { tier: "qa", effort: "medium" }
+  }
+};
+function claudePinFor(phase, size, config3) {
+  switch (phase) {
+    case "spec_review":
+      return config3.claudeModelSpecReview ?? null;
+    case "implement":
+      return config3.claudeModelImplement ?? null;
+    case "spec":
+      return config3.claudeModelSpec;
+    case "plan":
+      return config3.claudeModelPlan;
+    case "qa":
+      return config3.claudeModelQa;
+    case "code_review":
+      return size === "XL" ? config3.claudeModelReviewLarge : config3.claudeModelReview;
+  }
+}
+function resolveClaudeModel(phase, size, config3) {
+  const pin = claudePinFor(phase, size, config3);
+  if (pin !== null) return pin;
+  const tier = CLAUDE_CELLS[phase][size].tier;
+  if (tier === "qa") return config3.claudeModelLegacy ?? QA_DEFAULT_MODEL;
+  const tierModel = tier === "light" ? config3.claudeModelLight : config3.claudeModelStrong;
+  if (tierModel !== null) return tierModel;
+  if (config3.claudeModelLegacy !== null) return config3.claudeModelLegacy;
+  return tier === "light" ? "sonnet" : "opus";
+}
+function claudeMatrix(config3) {
+  const cell = (phase, size) => ({
+    model: resolveClaudeModel(phase, size, config3),
+    effort: CLAUDE_CELLS[phase][size].effort
+  });
+  const row = (phase) => ({
+    XS: cell(phase, "XS"),
+    S: cell(phase, "S"),
+    M: cell(phase, "M"),
+    L: cell(phase, "L"),
+    XL: cell(phase, "XL")
+  });
+  return {
+    spec_review: row("spec_review"),
+    implement: row("implement"),
+    spec: row("spec"),
+    plan: row("plan"),
+    code_review: row("code_review"),
+    qa: row("qa")
+  };
+}
+function getPipelinePolicy(tasks, config3) {
+  const tier = detectTier(tasks);
+  const nominalSize = getNominalSize(tasks);
+  const effectiveSize = getEffectiveSize(tasks);
+  const matrix = codexMatrix(config3);
+  const claudeMat = claudeMatrix(config3);
+  const maxReviewLoops = config3.maxReviewLoops ?? defaultMaxReviewLoops(nominalSize);
+  return {
+    tier,
+    nominalSize,
+    effectiveSize,
+    planCombined: tier === "fast",
+    maxReviewLoops,
+    codex: (phase) => matrix[phase][effectiveSize],
+    claude: (phase) => ({
+      ...claudeMat[phase][effectiveSize],
+      budget: resolveBudget(phase, effectiveSize, config3.claudeBudget)
+    })
+  };
+}
+var AGENT_ROLES = ["author", "spec_reviewer", "implementer", "reviewer", "cold_reviewer", "qa"];
+var MIXED_ROLE_ASSIGNMENT = {
+  author: "claude",
+  spec_reviewer: "codex",
+  implementer: "codex",
+  reviewer: "claude",
+  cold_reviewer: "codex",
+  qa: "claude"
+};
+var PHASE_PRIMARY_ROLE = {
+  spec: "author",
+  spec_review: "spec_reviewer",
+  plan: "author",
+  implement: "implementer",
+  code_review: "reviewer",
+  qa: "qa",
+  human_review: null
+};
+var PHASE_SESSION_SLOT = {
+  spec: "author",
+  spec_review: "spec_reviewer",
+  plan: null,
+  implement: "implementer",
+  code_review: "reviewer",
+  qa: null,
+  human_review: null
+};
+function roleBackendId(role, assignment) {
+  return assignment[role];
+}
+function phasePrimaryRole(phase) {
+  return PHASE_PRIMARY_ROLE[phase];
+}
+function phaseSessionSlot(phase) {
+  return PHASE_SESSION_SLOT[phase];
+}
+function requiredAgentBackends(assignment) {
+  return [...new Set(AGENT_ROLES.map((role) => roleBackendId(role, assignment)))];
+}
+var CLAUDE_ROLE_ASSIGNMENT = {
+  author: "claude",
+  spec_reviewer: "claude",
+  implementer: "claude",
+  reviewer: "claude",
+  cold_reviewer: "claude",
+  qa: "claude"
+};
+function parseProvider(value) {
+  if (value === "mixed" || value === "claude") return value;
+  throw new Error(`Invalid provider '${String(value)}'. Accepted values: mixed, claude.${value === "codex" ? " Codex-only mode is not supported yet." : ""}`);
+}
+function roleAssignmentFor(provider) {
+  return provider === "claude" ? CLAUDE_ROLE_ASSIGNMENT : MIXED_ROLE_ASSIGNMENT;
+}
+function providerRunsColdLens(provider) {
+  return provider === "mixed";
+}
+
 // src/orchestrator/cli.ts
 import fs from "fs";
 
@@ -492,8 +770,8 @@ var LEGACY_FALLBACK_ENV_VARS = [
   { old: "CODEX_MODEL_DELICATE", replacement: "CODEX_MODEL_FULL (still honored as fallback)" }
 ];
 var LEGACY_IGNORED_ENV_VARS = [
-  { old: "CODEX_EFFORT_DEFAULT", reason: "reasoning effort is now driven by task size \u2014 no equivalent knob" },
-  { old: "CODEX_EFFORT_DELICATE", reason: "reasoning effort is now driven by task size \u2014 no equivalent knob" }
+  { old: "CODEX_EFFORT_DEFAULT", reason: "ignored; configure implement effort per size with codex.implement_effort in .canon/config.json" },
+  { old: "CODEX_EFFORT_DELICATE", reason: "ignored; configure implement effort per size with codex.implement_effort in .canon/config.json" }
 ];
 function warnLegacyEnvVars() {
   for (const { old, replacement } of LEGACY_FALLBACK_ENV_VARS) {
@@ -660,283 +938,6 @@ function isHeartbeatStale(record, now = Date.now()) {
 import fs5 from "fs";
 import { spawnSync as spawnSync2 } from "child_process";
 import path4 from "path";
-
-// src/lib/pipeline-policy.ts
-var CODE_REVIEW_DELTA_LINE_THRESHOLD = 400;
-function isReviewOwnedPath(filePath, facts) {
-  return facts.taskIds.some((id) => filePath === `tasks/${id}` || filePath.startsWith(`tasks/${id}/`)) || facts.telemetryFiles.includes(filePath);
-}
-function resolveCodeReviewScope(facts) {
-  const full = (reason) => ({ scope: "full", base: facts.baseBranch, reason });
-  if (facts.isRound1) return full("Round 1 (initial review)");
-  if (facts.effectiveSize === "XL" || facts.delicate) return full(facts.delicate ? "delicate" : "XL task size");
-  const prev = facts.prevRecord;
-  if (prev === null) return full(facts.previousRecordsDisagree ? "bundle members disagree on the previous reviewed commit" : facts.previousRecordConflict ? "round records for the previous round disagree on the reviewed commit" : facts.previousArchiveMalformed ? "unparseable round record for the previous round" : "no round record for the previous round");
-  if (!prev.exists) return full(`previous reviewed commit ${prev.reviewedSha} does not resolve`);
-  if (!prev.isAncestor) return full(`previous reviewed commit ${prev.reviewedSha} is not an ancestor of HEAD`);
-  if (prev.equalsHead) return full("previous reviewed commit equals HEAD");
-  if (facts.deltaPaths === null) return full("delta path probe failed");
-  if (facts.priorChangeSetPaths === null) return full("previous change-set path probe failed");
-  if (facts.deltaFileStats === null) return full("delta line-stat probe failed");
-  const priorPaths = new Set(facts.priorChangeSetPaths.filter((p) => !isReviewOwnedPath(p, facts)));
-  const outside = facts.deltaPaths.find((p) => !isReviewOwnedPath(p, facts) && !priorPaths.has(p));
-  if (outside) return full(`${outside} is outside the previous round's change set`);
-  const lines = facts.deltaFileStats.filter((stat) => !isReviewOwnedPath(stat.path, facts)).reduce((sum, stat) => sum + stat.added + stat.deleted, 0);
-  if (lines > CODE_REVIEW_DELTA_LINE_THRESHOLD) {
-    return full(`delta line count ${lines} exceeds ${CODE_REVIEW_DELTA_LINE_THRESHOLD}`);
-  }
-  return { scope: "delta", base: prev.reviewedSha, reason: "delta" };
-}
-var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
-function compareTaskSize(a, b) {
-  return SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b);
-}
-var SINGLE_PASS_BUDGET_BY_SIZE = {
-  XS: "5.00",
-  S: "5.00",
-  M: "10.00",
-  L: "10.00",
-  XL: "20.00"
-};
-var CODE_REVIEW_BUDGET_BY_SIZE = {
-  XS: "5.00",
-  S: "10.00",
-  M: "15.00",
-  L: "20.00",
-  XL: "40.00"
-};
-var BUDGET_BY_PHASE_AND_SIZE = {
-  spec_review: SINGLE_PASS_BUDGET_BY_SIZE,
-  implement: { XS: "10.00", S: "15.00", M: "25.00", L: "40.00", XL: "60.00" },
-  spec: SINGLE_PASS_BUDGET_BY_SIZE,
-  plan: SINGLE_PASS_BUDGET_BY_SIZE,
-  code_review: CODE_REVIEW_BUDGET_BY_SIZE,
-  qa: SINGLE_PASS_BUDGET_BY_SIZE
-};
-function maxSize(tasks) {
-  let max = "XS";
-  for (const t of tasks) {
-    const size = t.task_size ?? "M";
-    if (SIZE_ORDER.indexOf(size) > SIZE_ORDER.indexOf(max)) max = size;
-  }
-  return max;
-}
-function anyDelicate(tasks) {
-  return tasks.some((t) => t.delicate ?? false);
-}
-function resolveBudget(phase, effectiveSize, claudeBudget) {
-  return claudeBudget ?? BUDGET_BY_PHASE_AND_SIZE[phase][effectiveSize];
-}
-function detectTier(tasks) {
-  return tasks.some((t) => (t.task_size ?? "M") !== "XS" || (t.delicate ?? false)) ? "full" : "fast";
-}
-function isPlanCombined(task) {
-  return task.task_size === "XS" && !(task.delicate ?? false);
-}
-function getNominalSize(tasks) {
-  return maxSize(tasks);
-}
-function getEffectiveSize(tasks) {
-  if (anyDelicate(tasks)) return "XL";
-  return maxSize(tasks);
-}
-function defaultMaxReviewLoops(nominalSize) {
-  return nominalSize === "XS" || nominalSize === "S" || nominalSize === "M" ? 3 : 5;
-}
-function codexMatrix(config3) {
-  return {
-    spec_review: {
-      XS: { model: config3.codexModelMini, effort: "medium" },
-      S: { model: config3.codexModelMini, effort: "high" },
-      M: { model: config3.codexModelMini, effort: "high" },
-      L: { model: config3.codexModelMini, effort: "high" },
-      XL: { model: config3.codexModelFull, effort: "high" }
-    },
-    implement: {
-      XS: { model: config3.codexModelMini, effort: "xhigh" },
-      S: { model: config3.codexModelMini, effort: "xhigh" },
-      M: { model: config3.codexModelMini, effort: "max" },
-      L: { model: config3.codexModelMini, effort: "max" },
-      XL: { model: config3.codexModelFull, effort: "high" }
-    },
-    code_review: {
-      XS: { model: config3.codexModelMini, effort: "high" },
-      S: { model: config3.codexModelMini, effort: "high" },
-      M: { model: config3.codexModelMini, effort: "high" },
-      L: { model: config3.codexModelFull, effort: "high" },
-      XL: { model: config3.codexModelFull, effort: "high" }
-    }
-  };
-}
-var QA_DEFAULT_MODEL = "claude-haiku-5-5";
-var CLAUDE_CELLS = {
-  spec_review: {
-    XS: { tier: "light", effort: "medium" },
-    S: { tier: "light", effort: "medium" },
-    M: { tier: "strong", effort: "medium" },
-    L: { tier: "strong", effort: "medium" },
-    XL: { tier: "strong", effort: "high" }
-  },
-  implement: {
-    XS: { tier: "light", effort: "medium" },
-    S: { tier: "light", effort: "medium" },
-    M: { tier: "strong", effort: "medium" },
-    L: { tier: "strong", effort: "medium" },
-    XL: { tier: "strong", effort: "high" }
-  },
-  spec: {
-    XS: { tier: "light", effort: "medium" },
-    S: { tier: "light", effort: "medium" },
-    M: { tier: "strong", effort: "medium" },
-    L: { tier: "strong", effort: "medium" },
-    XL: { tier: "strong", effort: "high" }
-  },
-  plan: {
-    XS: { tier: "light", effort: "medium" },
-    S: { tier: "light", effort: "medium" },
-    M: { tier: "strong", effort: "medium" },
-    L: { tier: "strong", effort: "medium" },
-    XL: { tier: "strong", effort: "high" }
-  },
-  code_review: {
-    XS: { tier: "light", effort: "medium" },
-    S: { tier: "light", effort: "medium" },
-    M: { tier: "strong", effort: "medium" },
-    L: { tier: "strong", effort: "medium" },
-    XL: { tier: "strong", effort: "high" }
-  },
-  qa: {
-    XS: { tier: "qa", effort: "medium" },
-    S: { tier: "qa", effort: "medium" },
-    M: { tier: "qa", effort: "medium" },
-    L: { tier: "qa", effort: "medium" },
-    XL: { tier: "qa", effort: "medium" }
-  }
-};
-function claudePinFor(phase, size, config3) {
-  switch (phase) {
-    case "spec_review":
-      return config3.claudeModelSpecReview ?? null;
-    case "implement":
-      return config3.claudeModelImplement ?? null;
-    case "spec":
-      return config3.claudeModelSpec;
-    case "plan":
-      return config3.claudeModelPlan;
-    case "qa":
-      return config3.claudeModelQa;
-    case "code_review":
-      return size === "XL" ? config3.claudeModelReviewLarge : config3.claudeModelReview;
-  }
-}
-function resolveClaudeModel(phase, size, config3) {
-  const pin = claudePinFor(phase, size, config3);
-  if (pin !== null) return pin;
-  const tier = CLAUDE_CELLS[phase][size].tier;
-  if (tier === "qa") return config3.claudeModelLegacy ?? QA_DEFAULT_MODEL;
-  const tierModel = tier === "light" ? config3.claudeModelLight : config3.claudeModelStrong;
-  if (tierModel !== null) return tierModel;
-  if (config3.claudeModelLegacy !== null) return config3.claudeModelLegacy;
-  return tier === "light" ? "sonnet" : "opus";
-}
-function claudeMatrix(config3) {
-  const cell = (phase, size) => ({
-    model: resolveClaudeModel(phase, size, config3),
-    effort: CLAUDE_CELLS[phase][size].effort
-  });
-  const row = (phase) => ({
-    XS: cell(phase, "XS"),
-    S: cell(phase, "S"),
-    M: cell(phase, "M"),
-    L: cell(phase, "L"),
-    XL: cell(phase, "XL")
-  });
-  return {
-    spec_review: row("spec_review"),
-    implement: row("implement"),
-    spec: row("spec"),
-    plan: row("plan"),
-    code_review: row("code_review"),
-    qa: row("qa")
-  };
-}
-function getPipelinePolicy(tasks, config3) {
-  const tier = detectTier(tasks);
-  const nominalSize = getNominalSize(tasks);
-  const effectiveSize = getEffectiveSize(tasks);
-  const matrix = codexMatrix(config3);
-  const claudeMat = claudeMatrix(config3);
-  const maxReviewLoops = config3.maxReviewLoops ?? defaultMaxReviewLoops(nominalSize);
-  return {
-    tier,
-    nominalSize,
-    effectiveSize,
-    planCombined: tier === "fast",
-    maxReviewLoops,
-    codex: (phase) => matrix[phase][effectiveSize],
-    claude: (phase) => ({
-      ...claudeMat[phase][effectiveSize],
-      budget: resolveBudget(phase, effectiveSize, config3.claudeBudget)
-    })
-  };
-}
-var AGENT_ROLES = ["author", "spec_reviewer", "implementer", "reviewer", "cold_reviewer", "qa"];
-var MIXED_ROLE_ASSIGNMENT = {
-  author: "claude",
-  spec_reviewer: "codex",
-  implementer: "codex",
-  reviewer: "claude",
-  cold_reviewer: "codex",
-  qa: "claude"
-};
-var PHASE_PRIMARY_ROLE = {
-  spec: "author",
-  spec_review: "spec_reviewer",
-  plan: "author",
-  implement: "implementer",
-  code_review: "reviewer",
-  qa: "qa",
-  human_review: null
-};
-var PHASE_SESSION_SLOT = {
-  spec: "author",
-  spec_review: "spec_reviewer",
-  plan: null,
-  implement: "implementer",
-  code_review: "reviewer",
-  qa: null,
-  human_review: null
-};
-function roleBackendId(role, assignment) {
-  return assignment[role];
-}
-function phasePrimaryRole(phase) {
-  return PHASE_PRIMARY_ROLE[phase];
-}
-function phaseSessionSlot(phase) {
-  return PHASE_SESSION_SLOT[phase];
-}
-function requiredAgentBackends(assignment) {
-  return [...new Set(AGENT_ROLES.map((role) => roleBackendId(role, assignment)))];
-}
-var CLAUDE_ROLE_ASSIGNMENT = {
-  author: "claude",
-  spec_reviewer: "claude",
-  implementer: "claude",
-  reviewer: "claude",
-  cold_reviewer: "claude",
-  qa: "claude"
-};
-function parseProvider(value) {
-  if (value === "mixed" || value === "claude") return value;
-  throw new Error(`Invalid provider '${String(value)}'. Accepted values: mixed, claude.${value === "codex" ? " Codex-only mode is not supported yet." : ""}`);
-}
-function roleAssignmentFor(provider) {
-  return provider === "claude" ? CLAUDE_ROLE_ASSIGNMENT : MIXED_ROLE_ASSIGNMENT;
-}
-function providerRunsColdLens(provider) {
-  return provider === "mixed";
-}
 
 // src/orchestrator/types.ts
 var PHASE_ORDER = ["spec", "spec_review", "plan", "implement", "code_review", "qa", "human_review"];
@@ -2275,7 +2276,7 @@ function parseDocsFreshnessConfig(raw) {
     return invalid(`not valid JSON (${error instanceof Error ? error.message : String(error)}).`);
   }
   if (!isObject(value)) return invalid("the top level must be a JSON object.");
-  const unknownKeys = Object.keys(value).filter((key) => !["docs_freshness", "ship"].includes(key));
+  const unknownKeys = Object.keys(value).filter((key) => !["docs_freshness", "ship", "codex"].includes(key));
   let shipMergeMethod = "squash";
   if (Object.hasOwn(value, "ship")) {
     const ship = value.ship;
@@ -2339,6 +2340,56 @@ function requireDocsFreshnessConfig(root) {
 }
 function formatUnknownKeysWarning(keys) {
   return `${DOCS_FRESHNESS_CONFIG_PATH}: unknown key(s) ignored: ${keys.join(", ")}. Check for a misspelled field (for example docs_freshness).`;
+}
+function invalidCodex(problem) {
+  return { ok: false, message: `${DOCS_FRESHNESS_CONFIG_PATH} in the main checkout has an invalid "codex" section: ${problem} Fix that key in the main checkout's .canon/config.json, then re-run.` };
+}
+function unreadableCodex(error, problem) {
+  return { ok: false, message: `${DOCS_FRESHNESS_CONFIG_PATH} in the main checkout ${problem}, so its "codex" section cannot be read (${error instanceof Error ? error.message : String(error)}). Fix the JSON or file access, then re-run.` };
+}
+function parseCodexSection(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch (error) {
+    return unreadableCodex(error, "is not valid JSON");
+  }
+  if (!isObject(value)) return invalidCodex(`the top level must be a JSON object; received ${JSON.stringify(value)}.`);
+  const section = { models: {}, implementEffort: {} };
+  const unknownKeys = [];
+  if (!Object.hasOwn(value, "codex")) return { ok: true, source: "file", section, unknownKeys };
+  const codex = value.codex;
+  if (!isObject(codex)) return invalidCodex(`"codex" must be an object; received ${JSON.stringify(codex)}.`);
+  unknownKeys.push(...Object.keys(codex).filter((key) => !["models", "implement_effort"].includes(key)).map((key) => `codex.${key}`));
+  if (Object.hasOwn(codex, "models")) {
+    const models = codex.models;
+    if (!isObject(models)) return invalidCodex(`"codex.models" must be an object; received ${JSON.stringify(models)}.`);
+    unknownKeys.push(...Object.keys(models).filter((key) => !["mini", "full"].includes(key)).map((key) => `codex.models.${key}`));
+    for (const key of ["mini", "full"]) {
+      if (!Object.hasOwn(models, key)) continue;
+      const model = models[key];
+      if (typeof model !== "string" || !model.trim()) return invalidCodex(`"codex.models.${key}" must be a non-empty string; received ${JSON.stringify(model)}.`);
+      section.models[key] = model;
+    }
+  }
+  if (Object.hasOwn(codex, "implement_effort")) {
+    const efforts = codex.implement_effort;
+    if (!isObject(efforts)) return invalidCodex(`"codex.implement_effort" must be an object; received ${JSON.stringify(efforts)}.`);
+    for (const [key, effort] of Object.entries(efforts)) {
+      if (!SIZE_ORDER.includes(key)) return invalidCodex(`"codex.implement_effort.${key}" has value ${JSON.stringify(effort)}; allowed size keys: ${SIZE_ORDER.join("|")}.`);
+      if (typeof effort !== "string" || !VALID_CODEX_EFFORTS.includes(effort)) return invalidCodex(`"codex.implement_effort.${key}" has invalid value ${JSON.stringify(effort)}; allowed efforts: ${VALID_CODEX_EFFORTS.join("|")}.`);
+      section.implementEffort[key] = effort;
+    }
+  }
+  return { ok: true, source: "file", section, unknownKeys };
+}
+function loadCodexSection(root) {
+  try {
+    return parseCodexSection(fs8.readFileSync(path7.join(root, DOCS_FRESHNESS_CONFIG_PATH), "utf8"));
+  } catch (error) {
+    if (isObject(error) && error.code === "ENOENT") return { ok: true, source: "defaults", section: { models: {}, implementEffort: {} }, unknownKeys: [] };
+    return unreadableCodex(error, "could not be read");
+  }
 }
 function tokenizeSegment(segment) {
   const chars = [...segment];
@@ -2444,8 +2495,8 @@ var config2 = {
   claudeModelLight: process.env.CLAUDE_MODEL_LIGHT || null,
   claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
   claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
-  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
-  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6.2-sol",
+  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT,
+  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE,
   maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   claudeBudget: process.env.CLAUDE_BUDGET ?? null
 };
@@ -2461,8 +2512,8 @@ function policyConfig() {
     claudeModelLight: config2.claudeModelLight,
     claudeModelStrong: config2.claudeModelStrong,
     claudeModelLegacy: config2.claudeModelLegacy,
-    codexModelMini: config2.codexModelMini,
-    codexModelFull: config2.codexModelFull,
+    codexModelMini: config2.codexModelMini ?? "gpt-6-luna",
+    codexModelFull: config2.codexModelFull ?? "gpt-6.2-sol",
     maxReviewLoops: config2.maxReviewLoops,
     claudeBudget: config2.claudeBudget
   };
@@ -2473,8 +2524,24 @@ function toPolicyInputs(tasks) {
 function getClaudeConfig(phase, tasks) {
   return getPipelinePolicy(toPolicyInputs(tasks), policyConfig()).claude(phase);
 }
-function getCodexConfig(phase, tasks) {
-  return getPipelinePolicy(toPolicyInputs(tasks), policyConfig()).codex(phase);
+var warnedCodexKeys = false;
+function requireCodexSection(root = REPO_ROOT) {
+  const loaded = loadCodexSection(root);
+  if (!loaded.ok) die(loaded.message);
+  if (loaded.unknownKeys.length && !warnedCodexKeys) {
+    warn(formatUnknownKeysWarning(loaded.unknownKeys));
+    warnedCodexKeys = true;
+  }
+  return loaded.section;
+}
+function getCodexConfig(phase, tasks, root = REPO_ROOT) {
+  const section = requireCodexSection(root);
+  return getPipelinePolicy(toPolicyInputs(tasks), {
+    ...policyConfig(),
+    codexModelMini: config2.codexModelMini ?? section.models.mini ?? "gpt-6-luna",
+    codexModelFull: config2.codexModelFull ?? section.models.full ?? "gpt-6.2-sol",
+    codexImplementEffort: section.implementEffort
+  }).codex(phase);
 }
 function getNominalSize2(tasks) {
   return getPipelinePolicy(toPolicyInputs(tasks), policyConfig()).nominalSize;
@@ -2523,9 +2590,10 @@ var METRICS_SKELETON = [
   "> Auto-logged by canon's orchestrator. One row per agent invocation.",
   "> Tokens: per-invocation total (input + cache + output). Parsed from the agent's structured output \u2014 `claude -p --output-format stream-json` for Claude, `codex exec --json` for Codex. Interactive-mode invocations are not tracked.",
   "> Sub-agent rows: a Claude session that spawns sub-agents also logs one row per top-level sub-agent, Agent `claude:<agent type>`. Their Tokens are that sub-agent's own cumulative usage and are separate from (not included in) the session row.",
+  "> Effort: the resolved effort passed to the agent (or a rejected value); `-` when no effort is passed, including Claude sub-agents. Older rows may have no Effort cell.",
   "",
-  "| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |",
-  "|---|---|---|---|---|---|---|---|---|",
+  "| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status | Effort |",
+  "|---|---|---|---|---|---|---|---|---|---|",
   ""
 ].join("\n");
 function getMetricsFile(taskLabel, activeCwd) {
@@ -2551,7 +2619,7 @@ function recordMetric(entry) {
     const tok = entry.tokens != null ? String(entry.tokens) : "-";
     fs9.appendFileSync(
       metricsFile,
-      `| ${(/* @__PURE__ */ new Date()).toISOString()} | ${entry.taskId} | ${entry.phase} | ${safeCell(entry.agent)} | ${safeCell(entry.model)} | ${entry.iteration ?? "-"} | ${dur} | ${tok} | ${entry.status} |
+      `| ${(/* @__PURE__ */ new Date()).toISOString()} | ${entry.taskId} | ${entry.phase} | ${safeCell(entry.agent)} | ${safeCell(entry.model)} | ${entry.iteration ?? "-"} | ${dur} | ${tok} | ${entry.status} | ${safeCell(entry.effort)} |
 `
     );
   } catch (error) {
@@ -2972,7 +3040,7 @@ ${renderedPrompt}`;
     status = "failed";
     throw err;
   } finally {
-    if (metricsContext) recordMetric({ ...metricsContext, agent: "claude", model, durationMs: Date.now() - startMs, status, tokens });
+    if (metricsContext) recordMetric({ ...metricsContext, agent: "claude", model, effort, durationMs: Date.now() - startMs, status, tokens });
     if (metricsContext) {
       try {
         for (const result of subagentResults) {
@@ -2981,6 +3049,7 @@ ${renderedPrompt}`;
             ...metricsContext,
             agent: `claude:${result.agentType}`,
             model: result.resolvedModel ?? model,
+            effort: "-",
             durationMs: result.durationMs,
             status: result.ok ? "ok" : "failed",
             tokens: file ? sumTranscriptTokens(file) : void 0
@@ -3033,10 +3102,9 @@ ${request.prompt}` : request.prompt;
 };
 
 // src/orchestrator/agents/codex.ts
-var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 function invalidCodexEffortMessage(effort) {
   if (VALID_CODEX_EFFORTS.includes(effort)) return null;
-  return `Invalid Codex reasoning effort "${effort}" \u2014 canon resolved this value for the current phase/size and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ${VALID_CODEX_EFFORTS.join("|")}. Effort is not configurable \u2014 canon resolves it from a fixed phase/size matrix, so this is a bug in canon rather than in your setup. Editing model_reasoning_effort in ~/.codex/config.toml will not help: the per-invocation override supersedes it. Please report this along with the task size and phase.`;
+  return `Invalid Codex reasoning effort "${effort}" \u2014 canon resolved this value for the current phase/size and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ${VALID_CODEX_EFFORTS.join("|")}. This is a bug in canon rather than in your setup: config values are validated before resolution. Editing model_reasoning_effort in ~/.codex/config.toml will not help: the per-invocation override supersedes it. Please report this along with the task size and phase.`;
 }
 async function runCodex(prompt, interactive, resumeId, model, effort, metricsContext, cwd = REPO_ROOT, wrapForResume = true) {
   const invalidEffort = invalidCodexEffortMessage(effort);
@@ -3131,7 +3199,7 @@ ${renderedPrompt}`;
     status = "failed";
     throw err;
   } finally {
-    if (metricsContext) recordMetric({ ...metricsContext, agent: "codex", model, durationMs: Date.now() - startMs, status, tokens });
+    if (metricsContext) recordMetric({ ...metricsContext, agent: "codex", model, effort, durationMs: Date.now() - startMs, status, tokens });
   }
 }
 async function runColdCodexReview(baseBranch, model, effort, activeCwd, metricsContext, options = {}) {
@@ -3143,12 +3211,14 @@ async function runColdCodexReview(baseBranch, model, effort, activeCwd, metricsC
         ...metricsContext,
         agent: "codex",
         model,
+        effort,
         durationMs: Date.now() - startMs,
         status: "failed"
       });
     }
     die(invalidEffort);
   }
+  info(`Model: ${model} | Effort: ${effort}`);
   const command = options.codexBinary ?? "codex";
   const args = ["exec", "review", "--json", "-c", `model_reasoning_effort=${effort}`, "--base", baseBranch, "-m", model];
   const displayChunks = [];
@@ -3196,6 +3266,7 @@ async function runColdCodexReview(baseBranch, model, effort, activeCwd, metricsC
         ...metricsContext,
         agent: "codex",
         model,
+        effort,
         durationMs: Date.now() - startMs,
         status: success ? "ok" : "failed",
         tokens: sawUsage ? tokenTotal : void 0
@@ -12089,6 +12160,7 @@ async function main() {
   const skipAgentDeps = cliArgs.ship || cliArgs.dryRun;
   checkDeps(cliArgs.taskIds, skipAgentDeps);
   const configRoot = cliArgs.ship || cliArgs.taskIds.length === 0 || isOrphanedWorktreeState(cliArgs.taskIds[0]) ? REPO_ROOT2 : getActiveCwd(cliArgs.taskIds, { tolerateMissingWorktree: true });
+  if (!cliArgs.ship || cliArgs.dryRun) requireCodexSection();
   const docsConfig = loadDocsFreshnessConfig(configRoot);
   if (!docsConfig.ok) die2(docsConfig.message);
   if (docsConfig.ok && docsConfig.unknownKeys.length > 0) warn2(formatUnknownKeysWarning(docsConfig.unknownKeys));

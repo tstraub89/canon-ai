@@ -27,6 +27,7 @@ import {
 import {
     checkActiveOrchestrators,
     checkDocsFreshness,
+    checkCodexConfig,
     checkNodeVersion,
     SUPPORTED_NODE_MAJORS,
     checkCodexMdDeprecated,
@@ -3062,8 +3063,8 @@ void test('mergeHeaderOnly: refreshes canon header, preserves project rows byte-
         '> NEW intro from updated canon template.',
         '> Tokens reframed for the next version.',
         '',
-        '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
-        '|---|---|---|---|---|---|---|---|---|',
+        '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status | Effort |',
+        '|---|---|---|---|---|---|---|---|---|---|',
     ].join('\n');
 
     const projectRowsTail = '\n| 2026-05-01T10:00:00Z | foo | implement | codex | gpt-5.4-mini | 1 | 22s | 5234 | ok |\n| 2026-05-01T10:01:00Z | foo | code_review | claude | sonnet | 1 | 18s | 4112 | ok |\n';
@@ -3078,6 +3079,7 @@ void test('mergeHeaderOnly: refreshes canon header, preserves project rows byte-
 
     const merged = mergeHeaderOnly(template, project);
     assert.ok(merged);
+    assert.match(merged, /Status \| Effort \|/);
     assert.ok(merged.includes('NEW intro from updated canon template.'), 'new header content present');
     assert.ok(!merged.includes('OLD intro before the refresh.'), 'old header content removed');
     assert.ok(merged.endsWith(projectRowsTail), 'project rows preserved byte-for-byte (tail unchanged)');
@@ -3164,8 +3166,8 @@ void test('runUpgrade: header-only sync refreshes telemetry header + preserves r
                 '',
                 '> NEW header from this canon release.',
                 '',
-                '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |',
-                '|---|---|---|---|---|---|---|---|---|',
+                '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status | Effort |',
+                '|---|---|---|---|---|---|---|---|---|---|',
             ].join('\n');
             fs.writeFileSync(tmplPath, newHeader);
 
@@ -3194,6 +3196,7 @@ void test('runUpgrade: header-only sync refreshes telemetry header + preserves r
             assert.ok(upgraded.includes(rel), 'telemetry file should be upgraded');
             const written = fs.readFileSync(projectPath, 'utf8');
             assert.ok(written.includes('NEW header from this canon release.'), 'new header landed');
+            assert.match(written, /Status \| Effort \|/);
             assert.ok(!written.includes('OLD header.'), 'old header replaced');
             assert.ok(written.endsWith(adopterRows), 'adopter rows preserved verbatim');
         });
@@ -4463,5 +4466,26 @@ void test('doctor and init resolve provider dependencies without Codex and repor
         assert.match(invalidInRepo.stderr, /Accepted values: mixed, claude/);
         assert.doesNotMatch(invalidInRepo.stderr, /at .*\.js:/);
         assert.equal(fs.existsSync(path.join(dir, 'tasks/invalid-provider')), false);
+    });
+});
+
+
+void test('doctor reports invalid Codex policy separately from docs freshness', () => {
+    withTempDir(root => {
+        fs.mkdirSync(path.join(root, '.canon'));
+        for (const codex of [false, { models: null }, { implement_effort: [] }, { models: { mini: '' } }, { models: { full: 4 } }, { implement_effort: { M: 'ultra' } }, { implement_effort: { XXL: 'high' } }]) {
+            fs.writeFileSync(path.join(root, '.canon/config.json'), JSON.stringify({ docs_freshness: { protected: [] }, codex }));
+            const check = checkCodexConfig(root);
+            assert.equal(check.label, 'Codex config');
+            assert.equal(check.status, 'fail');
+            assert.match(check.detail ?? '', /codex/);
+            assert.doesNotMatch(check.detail ?? '', /delete/);
+            assert.equal(checkDocsFreshness(root).status, 'pass');
+        }
+        fs.writeFileSync(path.join(root, '.canon/config.json'), '{"codex":{"reasoning":"high"}}');
+        assert.equal(checkCodexConfig(root).status, 'warn');
+        assert.match(checkCodexConfig(root).detail ?? '', /unknown key.*codex.reasoning/);
+        fs.writeFileSync(path.join(root, '.canon/config.json'), '{"codex":{"models":{"mini":"cfg-mini"}}}');
+        assert.equal(checkCodexConfig(root).status, 'pass');
     });
 });

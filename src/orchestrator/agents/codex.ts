@@ -1,3 +1,5 @@
+import { VALID_CODEX_EFFORTS } from '../../lib/pipeline-policy.js';
+export { VALID_CODEX_EFFORTS } from '../../lib/pipeline-policy.js';
 import type { AgentBackend } from './backend.js';
 import { getCodexConfig } from '../policy.js';
 import { AgentSessionError } from './errors.js';
@@ -15,15 +17,14 @@ export type ColdCodexReviewResult = {
     durationMs: number;
 };
 
-export const VALID_CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export function invalidCodexEffortMessage(effort: string): string | null {
     if ((VALID_CODEX_EFFORTS as readonly string[]).includes(effort)) return null;
     return (
         `Invalid Codex reasoning effort "${effort}" — canon resolved this value for the current phase/size ` +
         `and passes it via \`-c model_reasoning_effort=${effort}\`, but the Codex CLI only accepts: ` +
-        `${VALID_CODEX_EFFORTS.join('|')}. Effort is not configurable — canon resolves it from a fixed ` +
-        `phase/size matrix, so this is a bug in canon rather than in your setup. Editing ` +
+        `${VALID_CODEX_EFFORTS.join('|')}. This is a bug in canon rather than in your setup: config ` +
+        `values are validated before resolution. Editing ` +
         `model_reasoning_effort in ~/.codex/config.toml will not help: the per-invocation override ` +
         `supersedes it. Please report this along with the task size and phase.`
     );
@@ -143,7 +144,7 @@ export async function runCodex(
         status = 'failed';
         throw err;
     } finally {
-        if (metricsContext) recordMetric({ ...metricsContext, agent: 'codex', model, durationMs: Date.now() - startMs, status, tokens });
+        if (metricsContext) recordMetric({ ...metricsContext, agent: 'codex', model, effort, durationMs: Date.now() - startMs, status, tokens });
     }
 }
 
@@ -163,6 +164,7 @@ export async function runColdCodexReview(
                 ...metricsContext,
                 agent: 'codex',
                 model,
+                effort,
                 durationMs: Date.now() - startMs,
                 status: 'failed',
             });
@@ -170,6 +172,7 @@ export async function runColdCodexReview(
         die(invalidEffort);
     }
 
+    info(`Model: ${model} | Effort: ${effort}`);
     const command = options.codexBinary ?? 'codex';
     const args = ['exec', 'review', '--json', '-c', `model_reasoning_effort=${effort}`, '--base', baseBranch, '-m', model];
     const displayChunks: string[] = [];
@@ -235,6 +238,7 @@ export async function runColdCodexReview(
                 ...metricsContext,
                 agent: 'codex',
                 model,
+                effort,
                 durationMs: Date.now() - startMs,
                 status: success ? 'ok' : 'failed',
                 tokens: sawUsage ? tokenTotal : undefined,

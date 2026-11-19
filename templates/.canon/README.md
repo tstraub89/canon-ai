@@ -45,6 +45,10 @@ field configures QA's protected docs, path mappings, and flag-only docs; see
 optional `ship.merge_method` field selects `squash`, `rebase`, or `merge` for
 `--ship` (default `squash`). Before changing local state, `--ship` checks the
 configured method against the repository's allowed methods when an open PR exists.
+The optional `codex` section sets `models.mini`/`models.full` and per-size
+`implement_effort`; only the main checkout's copy is read, at startup and each
+Codex resolution. Plain `--ship` skips it. See "Codex settings" in
+`docs/pipeline-orchestrator.md` for precedence and validation.
 
 ```json
 {
@@ -53,6 +57,7 @@ configured method against the repository's allowed methods when an open PR exist
     "paths": { "api/**": ["docs/api-contract.md"], "**": ["docs/ROADMAP.md"] },
     "flag_only": ["AGENTS.md"]
   },
-  "ship": { "merge_method": "rebase" }
+  "ship": { "merge_method": "rebase" },
+  "codex": { "implement_effort": { "S": "medium" } }
 }
 ```

@@ -68,7 +68,7 @@ for (const [name, role, phase, resumeId, wrapForResume] of ${JSON.stringify(pari
     assert.deepEqual(actual, { binary: claude ? 'claude' : 'codex', argv: expected, cwd: fs.realpathSync(cwd) }, name);
     assert.equal(cfg.model, claude ? phase === 'qa' ? 'claude-haiku-5-5' : 'opus' : 'gpt-6-luna', name);
     if (claude) assert.equal(cfg.budget, phase === 'code_review' ? '20.00' : '10.00', name);
-    assert.equal(cfg.effort, claude ? 'medium' : phase === 'implement' ? 'max' : 'high', name);
+    assert.equal(cfg.effort, claude ? 'medium' : phase === 'implement' ? 'xhigh' : 'high', name);
 }
 `], { cwd: process.cwd(), env, encoding: 'utf8' });
         assert.equal(result.status, 0, result.stdout + result.stderr);

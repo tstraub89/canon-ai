@@ -1,6 +1,6 @@
 import { requiredAgentBackends, roleAssignmentFor, resolveProviderSetting, PROVIDER_SETTING_NAME, type Provider } from '../../orchestrator/policy.js';
 import { PROVIDERS } from '../../lib/pipeline-policy.js';
-import { loadDocsFreshnessConfig, resolveDocsFreshness, matchesDocsGlob, formatUnknownKeysWarning } from '../../orchestrator/docs-freshness.js';
+import { loadCodexSection, loadDocsFreshnessConfig, resolveDocsFreshness, matchesDocsGlob, formatUnknownKeysWarning } from '../../orchestrator/docs-freshness.js';
 import { execSync, spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'fs';
 import { homedir } from 'os';
@@ -839,6 +839,15 @@ export function checkDocsFreshness(cwd: string): Check {
     return { label, status: warnings.length ? 'warn' : 'pass', detail: [detail, ...warnings].join('; ') };
 }
 
+export function checkCodexConfig(root: string): Check {
+    const label = 'Codex config';
+    const loaded = loadCodexSection(root);
+    if (!loaded.ok) return { label, status: 'fail', detail: loaded.message };
+    return { label, status: loaded.unknownKeys.length ? 'warn' : 'pass', detail: loaded.unknownKeys.length
+        ? formatUnknownKeysWarning(loaded.unknownKeys)
+        : loaded.source === 'defaults' ? 'canon defaults (no config file)' : "main checkout's .canon/config.json codex section is valid" };
+}
+
 function agentBackendsEveryProviderNeeds(): Set<string> {
     const perProvider = PROVIDERS.map(p => new Set<string>(requiredAgentBackends(roleAssignmentFor(p))));
     return new Set([...perProvider[0]].filter(backend => perProvider.every(set => set.has(backend))));
@@ -883,6 +892,7 @@ export function doctorCmd(args: string[]): void {
         checkLocalSettingsGitignored(cwd),
         checkRuntimeFilesGitignored(cwd),
         checkDocsFreshness(cwd),
+        checkCodexConfig(cwd),
     ];
 
     // Active-orchestrator section is conditional — only shows when at least

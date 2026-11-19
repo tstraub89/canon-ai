@@ -45,8 +45,8 @@ export const LEGACY_FALLBACK_ENV_VARS: Array<{ old: string; replacement: string 
 ];
 
 export const LEGACY_IGNORED_ENV_VARS: Array<{ old: string; reason: string }> = [
-    { old: 'CODEX_EFFORT_DEFAULT', reason: 'reasoning effort is now driven by task size — no equivalent knob' },
-    { old: 'CODEX_EFFORT_DELICATE', reason: 'reasoning effort is now driven by task size — no equivalent knob' },
+    { old: 'CODEX_EFFORT_DEFAULT', reason: 'ignored; configure implement effort per size with codex.implement_effort in .canon/config.json' },
+    { old: 'CODEX_EFFORT_DELICATE', reason: 'ignored; configure implement effort per size with codex.implement_effort in .canon/config.json' },
 ];
 
 export function warnLegacyEnvVars(): void {

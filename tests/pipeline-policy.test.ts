@@ -2,6 +2,8 @@ import { MIXED_ROLE_ASSIGNMENT } from '../src/lib/pipeline-policy.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
+import { runNodeInline, withTempDir } from './run-task-safety-helpers.js';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import {
@@ -241,10 +243,10 @@ const CODEX_MATRIX: CodexRow[] = [
     { phase: 'spec_review', size: 'L',  expected: { model: 'mini', effort: 'high' } },
     { phase: 'spec_review', size: 'XL', expected: { model: 'full', effort: 'high' } },
     // implement
-    { phase: 'implement',   size: 'XS', expected: { model: 'mini', effort: 'xhigh' } },
-    { phase: 'implement',   size: 'S',  expected: { model: 'mini', effort: 'xhigh' } },
-    { phase: 'implement',   size: 'M',  expected: { model: 'mini', effort: 'max' } },
-    { phase: 'implement',   size: 'L',  expected: { model: 'mini', effort: 'max' } },
+    { phase: 'implement',   size: 'XS', expected: { model: 'mini', effort: 'medium' } },
+    { phase: 'implement',   size: 'S',  expected: { model: 'mini', effort: 'high' } },
+    { phase: 'implement',   size: 'M',  expected: { model: 'mini', effort: 'high' } },
+    { phase: 'implement',   size: 'L',  expected: { model: 'mini', effort: 'xhigh' } },
     { phase: 'implement',   size: 'XL', expected: { model: 'full', effort: 'high' } },
     // code_review (cold-Codex review lens)
     { phase: 'code_review', size: 'XS', expected: { model: 'mini', effort: 'high' } },
@@ -643,5 +645,59 @@ for (const phase of ['spec_review', 'implement'] as const) {
                 assert.deepEqual(cfg, { model: expected, effort: 'medium', budget: '7.77' });
             }
         }
+    });
+}
+
+void test('implement effort overrides use exact size cells, partial defaults and bundle sizing', () => {
+    const codexImplementEffort = { XS: 'low', S: 'minimal', M: 'none', L: 'medium', XL: 'xhigh' } as const;
+    for (const [size, effort] of [['XS', 'low'], ['S', 'minimal'], ['M', 'none'], ['L', 'medium'], ['XL', 'xhigh']] as const) {
+        assert.equal(getPipelinePolicy([s(size)], { ...TEST_CONFIG, codexImplementEffort }).codex('implement').effort, effort);
+    }
+    for (const [size, effort] of [['XS', 'medium'], ['S', 'high'], ['M', 'low'], ['L', 'xhigh'], ['XL', 'high']] as const) {
+        assert.equal(getPipelinePolicy([s(size)], { ...TEST_CONFIG, codexImplementEffort: { M: 'low' } }).codex('implement').effort, effort);
+    }
+    assert.equal(getPipelinePolicy([s('S', true)], { ...TEST_CONFIG, codexImplementEffort }).codex('implement').effort, 'xhigh');
+    assert.equal(getPipelinePolicy([s('XS'), s('L')], { ...TEST_CONFIG, codexImplementEffort }).codex('implement').effort, 'medium');
+    assert.equal(getPipelinePolicy([s('L'), s('S', true)], { ...TEST_CONFIG, codexImplementEffort }).codex('implement').effort, 'xhigh');
+});
+
+void test('implement tuning leaves every other Codex and Claude effort cell unchanged', () => {
+    const tuned = { ...TEST_CONFIG, codexImplementEffort: { XS: 'low', S: 'low', M: 'low', L: 'low', XL: 'low' } as const };
+    for (const size of ['XS', 'S', 'M', 'L', 'XL'] as const) {
+        const policy = getPipelinePolicy([s(size)], tuned);
+        assert.equal(policy.codex('spec_review').effort, size === 'XS' ? 'medium' : 'high');
+        assert.equal(policy.codex('code_review').effort, 'high');
+        for (const phase of ['spec', 'spec_review', 'plan', 'implement', 'code_review', 'qa'] as const) {
+            assert.deepEqual(policy.claude(phase), getPipelinePolicy([s(size)], TEST_CONFIG).claude(phase));
+        }
+    }
+});
+
+for (const tier of ['mini', 'full'] as const) {
+    void test(`Codex ${tier} model precedence: env > deprecated > config > built-in`, () => {
+        withTempDir('codex-precedence-', root => {
+            fs.mkdirSync(path.join(root, '.canon'));
+            const file = path.join(root, '.canon/config.json');
+            const variable = tier === 'mini' ? 'CODEX_MODEL_MINI' : 'CODEX_MODEL_FULL';
+            const legacy = tier === 'mini' ? 'CODEX_MODEL_DEFAULT' : 'CODEX_MODEL_DELICATE';
+            const fallback = tier === 'mini' ? 'gpt-6-luna' : 'gpt-6.2-sol';
+            for (const [envSet, legacySet, configSet, expected] of [
+                [true, false, false, `env-${tier}`],
+                [false, true, false, `legacy-${tier}`],
+                [false, false, true, `cfg-${tier}`],
+                [false, false, false, fallback],
+                [true, true, true, `env-${tier}`],
+                [false, true, true, `legacy-${tier}`],
+            ] as const) {
+                fs.writeFileSync(file, JSON.stringify(configSet ? { codex: { models: { mini: 'cfg-mini', full: 'cfg-full' } } } : {}));
+                const result = runNodeInline(`
+                    import { getCodexConfig } from ${JSON.stringify(pathToFileURL(path.resolve('src/orchestrator/policy.ts')).href)};
+                    console.log(JSON.stringify(getCodexConfig('implement', [{ status: { task_size: '${tier === 'mini' ? 'M' : 'XL'}' } }], ${JSON.stringify(root)})));
+                `, { ...process.env, CODEX_MODEL_MINI: undefined, CODEX_MODEL_DEFAULT: undefined, CODEX_MODEL_FULL: undefined, CODEX_MODEL_DELICATE: undefined,
+                    [variable]: envSet ? `env-${tier}` : undefined, [legacy]: legacySet ? `legacy-${tier}` : undefined });
+                assert.equal(result.status, 0, result.stderr);
+                assert.deepEqual(JSON.parse(result.stdout), { model: expected, effort: 'high' });
+            }
+        });
     });
 }

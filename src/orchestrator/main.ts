@@ -4252,6 +4252,7 @@ export async function main(): Promise<void> {
     checkDeps(cliArgs.taskIds, skipAgentDeps);
     const configRoot = cliArgs.ship || cliArgs.taskIds.length === 0 || splitState.isOrphanedWorktreeState(cliArgs.taskIds[0])
         ? REPO_ROOT : splitWorktree.getActiveCwd(cliArgs.taskIds, { tolerateMissingWorktree: true });
+    if (!cliArgs.ship || cliArgs.dryRun) splitPolicy.requireCodexSection();
     const docsConfig = loadDocsFreshnessConfig(configRoot);
     if (!docsConfig.ok) die(docsConfig.message);
     if (docsConfig.ok && docsConfig.unknownKeys.length > 0) warn(formatUnknownKeysWarning(docsConfig.unknownKeys));

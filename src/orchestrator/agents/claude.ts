@@ -294,12 +294,12 @@ export async function runClaude(
         status = 'failed';
         throw err;
     } finally {
-        if (metricsContext) recordMetric({ ...metricsContext, agent: 'claude', model, durationMs: Date.now() - startMs, status, tokens });
+        if (metricsContext) recordMetric({ ...metricsContext, agent: 'claude', model, effort, durationMs: Date.now() - startMs, status, tokens });
         if (metricsContext) {
             try {
                 for (const result of subagentResults) {
                     const file = result.toolUseId ? notificationFiles.get(result.toolUseId) : undefined;
-                    recordMetric({ ...metricsContext, agent: `claude:${result.agentType}`, model: result.resolvedModel ?? model,
+                    recordMetric({ ...metricsContext, agent: `claude:${result.agentType}`, model: result.resolvedModel ?? model, effort: '-',
                         durationMs: result.durationMs, status: result.ok ? 'ok' : 'failed', tokens: file ? sumTranscriptTokens(file) : undefined });
                 }
             } catch (error) {

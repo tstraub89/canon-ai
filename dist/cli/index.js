@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 // src/lib/pipeline-policy.ts
+var VALID_CODEX_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 var SIZE_ORDER = ["XS", "S", "M", "L", "XL"];
 function isPlanCombined(task) {
   return task.task_size === "XS" && !(task.delicate ?? false);
@@ -284,29 +285,6 @@ var config = {
   projectName: resolveProjectName(),
   maxContextBytes: Number.parseInt(process.env.MAX_CONTEXT_BYTES ?? String(64 * 1024), 10)
 };
-
-// src/orchestrator/policy.ts
-var config2 = {
-  claudeModelSpecReview: process.env.CLAUDE_MODEL_SPEC_REVIEW ?? null,
-  claudeModelImplement: process.env.CLAUDE_MODEL_IMPLEMENT ?? null,
-  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? null,
-  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? null,
-  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? null,
-  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? null,
-  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? null,
-  claudeModelLight: process.env.CLAUDE_MODEL_LIGHT || null,
-  claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
-  claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
-  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? "gpt-6-luna",
-  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? "gpt-6.2-sol",
-  maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
-  claudeBudget: process.env.CLAUDE_BUDGET ?? null
-};
-var PROVIDER_SETTING_NAME = "CANON_PROVIDER";
-function resolveProviderSetting() {
-  const value = process.env[PROVIDER_SETTING_NAME];
-  return value === void 0 || value === "" ? "mixed" : parseProvider(value);
-}
 
 // src/orchestrator/docs-freshness.ts
 import fs8 from "fs";
@@ -752,7 +730,7 @@ function parseDocsFreshnessConfig(raw) {
     return invalid(`not valid JSON (${error instanceof Error ? error.message : String(error)}).`);
   }
   if (!isObject(value)) return invalid("the top level must be a JSON object.");
-  const unknownKeys = Object.keys(value).filter((key) => !["docs_freshness", "ship"].includes(key));
+  const unknownKeys = Object.keys(value).filter((key) => !["docs_freshness", "ship", "codex"].includes(key));
   let shipMergeMethod = "squash";
   if (Object.hasOwn(value, "ship")) {
     const ship = value.ship;
@@ -811,6 +789,56 @@ function loadDocsFreshnessConfig(root) {
 }
 function formatUnknownKeysWarning(keys) {
   return `${DOCS_FRESHNESS_CONFIG_PATH}: unknown key(s) ignored: ${keys.join(", ")}. Check for a misspelled field (for example docs_freshness).`;
+}
+function invalidCodex(problem) {
+  return { ok: false, message: `${DOCS_FRESHNESS_CONFIG_PATH} in the main checkout has an invalid "codex" section: ${problem} Fix that key in the main checkout's .canon/config.json, then re-run.` };
+}
+function unreadableCodex(error, problem) {
+  return { ok: false, message: `${DOCS_FRESHNESS_CONFIG_PATH} in the main checkout ${problem}, so its "codex" section cannot be read (${error instanceof Error ? error.message : String(error)}). Fix the JSON or file access, then re-run.` };
+}
+function parseCodexSection(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch (error) {
+    return unreadableCodex(error, "is not valid JSON");
+  }
+  if (!isObject(value)) return invalidCodex(`the top level must be a JSON object; received ${JSON.stringify(value)}.`);
+  const section = { models: {}, implementEffort: {} };
+  const unknownKeys = [];
+  if (!Object.hasOwn(value, "codex")) return { ok: true, source: "file", section, unknownKeys };
+  const codex = value.codex;
+  if (!isObject(codex)) return invalidCodex(`"codex" must be an object; received ${JSON.stringify(codex)}.`);
+  unknownKeys.push(...Object.keys(codex).filter((key) => !["models", "implement_effort"].includes(key)).map((key) => `codex.${key}`));
+  if (Object.hasOwn(codex, "models")) {
+    const models = codex.models;
+    if (!isObject(models)) return invalidCodex(`"codex.models" must be an object; received ${JSON.stringify(models)}.`);
+    unknownKeys.push(...Object.keys(models).filter((key) => !["mini", "full"].includes(key)).map((key) => `codex.models.${key}`));
+    for (const key of ["mini", "full"]) {
+      if (!Object.hasOwn(models, key)) continue;
+      const model = models[key];
+      if (typeof model !== "string" || !model.trim()) return invalidCodex(`"codex.models.${key}" must be a non-empty string; received ${JSON.stringify(model)}.`);
+      section.models[key] = model;
+    }
+  }
+  if (Object.hasOwn(codex, "implement_effort")) {
+    const efforts = codex.implement_effort;
+    if (!isObject(efforts)) return invalidCodex(`"codex.implement_effort" must be an object; received ${JSON.stringify(efforts)}.`);
+    for (const [key, effort] of Object.entries(efforts)) {
+      if (!SIZE_ORDER.includes(key)) return invalidCodex(`"codex.implement_effort.${key}" has value ${JSON.stringify(effort)}; allowed size keys: ${SIZE_ORDER.join("|")}.`);
+      if (typeof effort !== "string" || !VALID_CODEX_EFFORTS.includes(effort)) return invalidCodex(`"codex.implement_effort.${key}" has invalid value ${JSON.stringify(effort)}; allowed efforts: ${VALID_CODEX_EFFORTS.join("|")}.`);
+      section.implementEffort[key] = effort;
+    }
+  }
+  return { ok: true, source: "file", section, unknownKeys };
+}
+function loadCodexSection(root) {
+  try {
+    return parseCodexSection(fs8.readFileSync(path7.join(root, DOCS_FRESHNESS_CONFIG_PATH), "utf8"));
+  } catch (error) {
+    if (isObject(error) && error.code === "ENOENT") return { ok: true, source: "defaults", section: { models: {}, implementEffort: {} }, unknownKeys: [] };
+    return unreadableCodex(error, "could not be read");
+  }
 }
 function tokenizeSegment(segment) {
   const chars = [...segment];
@@ -895,6 +923,29 @@ function resolveDocsFreshness(config3, diff) {
     promptFlagged: [...prompt].filter((doc) => flagOnly.includes(doc)),
     unevaluatedMappedDocs: diff === null ? mapped.filter((doc) => !protectedDocs.includes(doc)) : []
   };
+}
+
+// src/orchestrator/policy.ts
+var config2 = {
+  claudeModelSpecReview: process.env.CLAUDE_MODEL_SPEC_REVIEW ?? null,
+  claudeModelImplement: process.env.CLAUDE_MODEL_IMPLEMENT ?? null,
+  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? null,
+  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? null,
+  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? null,
+  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? null,
+  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? null,
+  claudeModelLight: process.env.CLAUDE_MODEL_LIGHT || null,
+  claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
+  claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
+  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT,
+  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE,
+  maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
+  claudeBudget: process.env.CLAUDE_BUDGET ?? null
+};
+var PROVIDER_SETTING_NAME = "CANON_PROVIDER";
+function resolveProviderSetting() {
+  const value = process.env[PROVIDER_SETTING_NAME];
+  return value === void 0 || value === "" ? "mixed" : parseProvider(value);
 }
 
 // src/cli/commands/doctor.ts
@@ -2390,6 +2441,12 @@ function checkDocsFreshness(cwd) {
   const detail = `${source}: ${sets.protected.length} protected, ${globs.length} mappings, ${sets.flagOnly.length} flag-only`;
   return { label, status: warnings.length ? "warn" : "pass", detail: [detail, ...warnings].join("; ") };
 }
+function checkCodexConfig(root) {
+  const label = "Codex config";
+  const loaded = loadCodexSection(root);
+  if (!loaded.ok) return { label, status: "fail", detail: loaded.message };
+  return { label, status: loaded.unknownKeys.length ? "warn" : "pass", detail: loaded.unknownKeys.length ? formatUnknownKeysWarning(loaded.unknownKeys) : loaded.source === "defaults" ? "canon defaults (no config file)" : "main checkout's .canon/config.json codex section is valid" };
+}
 function agentBackendsEveryProviderNeeds() {
   const perProvider = PROVIDERS.map((p) => new Set(requiredAgentBackends(roleAssignmentFor(p))));
   return new Set([...perProvider[0]].filter((backend) => perProvider.every((set) => set.has(backend))));
@@ -2431,7 +2488,8 @@ function doctorCmd(args2) {
     checkGuardHook(cwd),
     checkLocalSettingsGitignored(cwd),
     checkRuntimeFilesGitignored(cwd),
-    checkDocsFreshness(cwd)
+    checkDocsFreshness(cwd),
+    checkCodexConfig(cwd)
   ];
   const orchestratorChecks = checkActiveOrchestrators(cwd);
   console.log("\ncanon doctor\n");

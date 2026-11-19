@@ -37,7 +37,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | State I/O and session storage | `src/orchestrator/state.ts` | `status.json`, backend-tagged session writes/clears and use-time compatibility, derived status, task/worktree path helpers; exports `validateStatus`, `readStatusFromPath`, and the `--reroute` admission predicate `isRerouteAdmitted` |
 | Shared run-context resolver | `src/orchestrator/run-context.ts` | Orphan-tolerant task-dir lookup, EPERM-tolerant PID probe, `gatherRunContext()` — consumed by `watch`, `doctor`, `stop`; injectable seams for tests |
 | Git plumbing and porcelain parsing | `src/orchestrator/git.ts` | Branch helpers, commits, porcelain parsers |
-| Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator (also the `ship.merge_method` setting), pure set resolver, dot-aware glob matcher |
+| Docs-freshness config | `src/orchestrator/docs-freshness.ts` | Project config loader/validator (also `ship.merge_method` and the main-checkout `codex` section), pure set resolver, dot-aware glob matcher |
 | Worktree management | `src/orchestrator/worktree.ts` | Worktree lifecycle, cleanup/detect helpers, `findExistingWorktreeForBranch`, and pipeline file registries |
 | Validation gates and diff checks | `src/orchestrator/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
 | `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |
@@ -71,7 +71,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Type definitions | `src/orchestrator/types.ts` | `Phase`, `PhaseStatus`, `Verdict`, `PHASE_ORDER`, `StatusJson`, `CliArgs` |
 | Environment constants | `src/orchestrator/env.ts` | `REPO_ROOT` from `src/lib/project-root.ts`, `WORKTREES_ROOT`, shared environment helpers, and legacy warnings |
 | Init dependency checks | `src/cli/deps.ts` | Computes required binaries at check time from the provider setting or explicit provider |
-| Policy config wrappers | `src/orchestrator/policy.ts` | Sole provider-setting resolver; validates task/bundle pins; Claude/Codex model and size getters wrapping `src/lib/pipeline-policy.ts` |
+| Policy config wrappers | `src/orchestrator/policy.ts` | Sole provider-setting resolver; validates task/bundle pins; merges env > main-checkout Codex config > defaults on the Codex path; model and size getters wrapping `src/lib/pipeline-policy.ts` |
 | Task context extractors | `src/orchestrator/context.ts` | `extractAffectedFiles()`, `extractAcSummary()`, `extractValidationChecks()` — feeds prompt builders |
 | Blast-radius map | `src/orchestrator/blast-radius.ts` | `buildBlastRadiusBlock()` — referrers of Affected Files and spec-named identifiers for implement prompts (git grep, fail-open) |
 | Relevant pitfalls and lessons | `src/orchestrator/pitfalls.ts` | `buildRelevantPitfalls()` — selects matching pitfalls, Trigger Table sections, and lessons for implement prompts; a Known Pitfalls section with no `###` entries is included whole (minus blockquotes and index tables) regardless of Affected Files; output capped at `PITFALLS_BYTE_CAP` (24 KiB) |
@@ -86,7 +86,7 @@ Supporting modules consumed by `src/orchestrator/main.ts` and the phase handlers
 | Prompt startup constants | `src/orchestrator/prompts/helpers.ts` | Startup and headless strings, `implementationStartup(provider)`, `PHASE_ARTIFACT_COMPLETION`, `toResumePrompt()`, `makePromptArgSafe()` (NUL-byte escaping for prompt args) |
 | Agent stream handler | `src/orchestrator/agents/stream.ts` | Child process stdout/stderr muxer with stall detection and graceful kill; shared by `claude.ts` and `codex.ts` |
 | Scaffold destination safety | `src/lib/scaffold-paths.ts` | Rejects symlinks in init/upgrade destination paths before writes, including dangling links and parent directories |
-| Telemetry writer | `src/orchestrator/metrics.ts` | Per-task metrics fragment |
+| Telemetry writer | `src/orchestrator/metrics.ts` | Per-task metrics fragment (duration, tokens, effort) |
 | Telemetry fold on ship | `src/orchestrator/telemetry-fold.ts` | Folds fragments into `docs/pipeline-invocations.md`, `docs/task-quality-log.md` and `docs/lessons-learned.md` |
 | Review archive | `src/orchestrator/review-archive.ts` | Archives prior `review.md` and cold-Codex runs before re-scaffold |
 | Review loop cap | `src/orchestrator/review-loop.ts` | Loop-count result (`evaluateSpecReviewLoop`, `evaluateCodeReviewLoop`) used by `autoBlockPhase()` |
@@ -129,7 +129,7 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | Pipeline mechanics reference | `docs/pipeline-orchestrator.md` | Flags, env vars, model matrix, reroute, auto-block |
 | Distilled lessons across tasks | `docs/lessons-learned.md` | QA writes task lessons fragments; `--ship` folds them here |
 | Pipeline health log | `docs/task-quality-log.md` | Task quality fragments folded on `--ship`: spec outcomes, dropped ACs, validation gaps |
-| Per-invocation telemetry | `docs/pipeline-invocations.md` | Task metrics fragments from `src/orchestrator/metrics.ts`, folded on `--ship` (duration + tokens) |
+| Per-invocation telemetry | `docs/pipeline-invocations.md` | Task metrics fragments from `src/orchestrator/metrics.ts`, folded on `--ship` (duration, tokens, effort) |
 
 ## Tests
 

@@ -14,7 +14,9 @@ import {
 } from '../lib/pipeline-policy.js';
 
 import type { StatusJson, TaskContext } from './types.js';
-import { parseMaxReviewLoops } from './env.js';
+import { parseMaxReviewLoops, REPO_ROOT } from './env.js';
+import { loadCodexSection, formatUnknownKeysWarning, type CodexSectionConfig } from './docs-freshness.js';
+import { die, warn } from './cli.js';
 
 const config = {
     claudeModelSpecReview: process.env.CLAUDE_MODEL_SPEC_REVIEW ?? null,
@@ -27,8 +29,8 @@ const config = {
     claudeModelLight: process.env.CLAUDE_MODEL_LIGHT || null,
     claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
     claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
-    codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT ?? 'gpt-6-luna',
-    codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE ?? 'gpt-6.2-sol',
+    codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT,
+    codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE,
     maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
     claudeBudget: process.env.CLAUDE_BUDGET ?? null,
 };
@@ -45,8 +47,8 @@ export function policyConfig(): PolicyConfig {
         claudeModelLight: config.claudeModelLight,
         claudeModelStrong: config.claudeModelStrong,
         claudeModelLegacy: config.claudeModelLegacy,
-        codexModelMini: config.codexModelMini,
-        codexModelFull: config.codexModelFull,
+        codexModelMini: config.codexModelMini ?? 'gpt-6-luna',
+        codexModelFull: config.codexModelFull ?? 'gpt-6.2-sol',
         maxReviewLoops: config.maxReviewLoops,
         claudeBudget: config.claudeBudget,
     };
@@ -60,8 +62,24 @@ export function getClaudeConfig(phase: ClaudePhase, tasks: readonly TaskContext[
     return getPipelinePolicy(toPolicyInputs(tasks), policyConfig()).claude(phase);
 }
 
-export function getCodexConfig(phase: CodexPhase, tasks: readonly TaskContext[]): CodexModelConfig {
-    return getPipelinePolicy(toPolicyInputs(tasks), policyConfig()).codex(phase);
+let warnedCodexKeys = false;
+export function requireCodexSection(root = REPO_ROOT): CodexSectionConfig {
+    const loaded = loadCodexSection(root);
+    if (!loaded.ok) die(loaded.message);
+    if (loaded.unknownKeys.length && !warnedCodexKeys) {
+        warn(formatUnknownKeysWarning(loaded.unknownKeys));
+        warnedCodexKeys = true;
+    }
+    return loaded.section;
+}
+export function getCodexConfig(phase: CodexPhase, tasks: readonly TaskContext[], root = REPO_ROOT): CodexModelConfig {
+    const section = requireCodexSection(root);
+    return getPipelinePolicy(toPolicyInputs(tasks), {
+        ...policyConfig(),
+        codexModelMini: config.codexModelMini ?? section.models.mini ?? 'gpt-6-luna',
+        codexModelFull: config.codexModelFull ?? section.models.full ?? 'gpt-6.2-sol',
+        codexImplementEffort: section.implementEffort,
+    }).codex(phase);
 }
 
 export function getNominalSize(tasks: readonly TaskContext[]): TaskSize {

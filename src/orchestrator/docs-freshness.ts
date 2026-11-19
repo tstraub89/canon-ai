@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { VALID_CODEX_EFFORTS, SIZE_ORDER, type TaskSize, type CodexEffort } from '../lib/pipeline-policy.js';
 import { die } from './cli.js';
 import { PIPELINE_TELEMETRY_FILES } from './worktree.js';
 
@@ -55,7 +56,7 @@ export function parseDocsFreshnessConfig(raw: string): DocsFreshnessLoad {
     try { value = JSON.parse(raw); }
     catch (error) { return invalid(`not valid JSON (${error instanceof Error ? error.message : String(error)}).`); }
     if (!isObject(value)) return invalid('the top level must be a JSON object.');
-    const unknownKeys = Object.keys(value).filter(key => !['docs_freshness', 'ship'].includes(key));
+    const unknownKeys = Object.keys(value).filter(key => !['docs_freshness', 'ship', 'codex'].includes(key));
     let shipMergeMethod: ShipMergeMethod = 'squash';
     if (Object.hasOwn(value, 'ship')) {
         const ship = value.ship;
@@ -119,6 +120,62 @@ export function requireDocsFreshnessConfig(root: string): DocsFreshnessConfig | 
 }
 export function formatUnknownKeysWarning(keys: readonly string[]): string {
     return `${DOCS_FRESHNESS_CONFIG_PATH}: unknown key(s) ignored: ${keys.join(', ')}. Check for a misspelled field (for example docs_freshness).`;
+}
+
+// Codex operator policy is deliberately independent of active-checkout config loads.
+export interface CodexSectionConfig {
+    models: { mini?: string; full?: string };
+    implementEffort: Partial<Record<TaskSize, CodexEffort>>;
+}
+export type CodexSectionLoad =
+    | { ok: true; source: 'defaults' | 'file'; section: CodexSectionConfig; unknownKeys: string[] }
+    | { ok: false; message: string };
+
+function invalidCodex(problem: string): CodexSectionLoad {
+    return { ok: false, message: `${DOCS_FRESHNESS_CONFIG_PATH} in the main checkout has an invalid "codex" section: ${problem} Fix that key in the main checkout's .canon/config.json, then re-run.` };
+}
+function unreadableCodex(error: unknown, problem: string): CodexSectionLoad {
+    return { ok: false, message: `${DOCS_FRESHNESS_CONFIG_PATH} in the main checkout ${problem}, so its "codex" section cannot be read (${error instanceof Error ? error.message : String(error)}). Fix the JSON or file access, then re-run.` };
+}
+export function parseCodexSection(raw: string): CodexSectionLoad {
+    let value: unknown;
+    try { value = JSON.parse(raw); }
+    catch (error) { return unreadableCodex(error, 'is not valid JSON'); }
+    if (!isObject(value)) return invalidCodex(`the top level must be a JSON object; received ${JSON.stringify(value)}.`);
+    const section: CodexSectionConfig = { models: {}, implementEffort: {} };
+    const unknownKeys: string[] = [];
+    if (!Object.hasOwn(value, 'codex')) return { ok: true, source: 'file', section, unknownKeys };
+    const codex = value.codex;
+    if (!isObject(codex)) return invalidCodex(`"codex" must be an object; received ${JSON.stringify(codex)}.`);
+    unknownKeys.push(...Object.keys(codex).filter(key => !['models', 'implement_effort'].includes(key)).map(key => `codex.${key}`));
+    if (Object.hasOwn(codex, 'models')) {
+        const models = codex.models;
+        if (!isObject(models)) return invalidCodex(`"codex.models" must be an object; received ${JSON.stringify(models)}.`);
+        unknownKeys.push(...Object.keys(models).filter(key => !['mini', 'full'].includes(key)).map(key => `codex.models.${key}`));
+        for (const key of ['mini', 'full'] as const) {
+            if (!Object.hasOwn(models, key)) continue;
+            const model = models[key];
+            if (typeof model !== 'string' || !model.trim()) return invalidCodex(`"codex.models.${key}" must be a non-empty string; received ${JSON.stringify(model)}.`);
+            section.models[key] = model;
+        }
+    }
+    if (Object.hasOwn(codex, 'implement_effort')) {
+        const efforts = codex.implement_effort;
+        if (!isObject(efforts)) return invalidCodex(`"codex.implement_effort" must be an object; received ${JSON.stringify(efforts)}.`);
+        for (const [key, effort] of Object.entries(efforts)) {
+            if (!(SIZE_ORDER as readonly string[]).includes(key)) return invalidCodex(`"codex.implement_effort.${key}" has value ${JSON.stringify(effort)}; allowed size keys: ${SIZE_ORDER.join('|')}.`);
+            if (typeof effort !== 'string' || !(VALID_CODEX_EFFORTS as readonly string[]).includes(effort)) return invalidCodex(`"codex.implement_effort.${key}" has invalid value ${JSON.stringify(effort)}; allowed efforts: ${VALID_CODEX_EFFORTS.join('|')}.`);
+            section.implementEffort[key as TaskSize] = effort as CodexEffort;
+        }
+    }
+    return { ok: true, source: 'file', section, unknownKeys };
+}
+export function loadCodexSection(root: string): CodexSectionLoad {
+    try { return parseCodexSection(fs.readFileSync(path.join(root, DOCS_FRESHNESS_CONFIG_PATH), 'utf8')); }
+    catch (error) {
+        if (isObject(error) && error.code === 'ENOENT') return { ok: true, source: 'defaults', section: { models: {}, implementEffort: {} }, unknownKeys: [] };
+        return unreadableCodex(error, 'could not be read');
+    }
 }
 
 type GlobToken = string | readonly (readonly string[])[];

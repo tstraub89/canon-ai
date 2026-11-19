@@ -765,7 +765,7 @@ void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {
         const telemetryFile = path.join(dir, 'pipeline-invocations.md');
         const result = runNodeInline([
             "import { recordMetric } from './src/orchestrator/metrics.ts';",
-            "recordMetric({ taskId: 'metrics-override', phase: 'implement', agent: 'codex', model: 'gpt-5.4-mini', durationMs: 0, status: 'ok', tokens: null, iteration: 0 });",
+            "recordMetric({ taskId: 'metrics-override', phase: 'implement', agent: 'codex', model: 'gpt-5.4-mini', effort: 'high', durationMs: 0, status: 'ok', tokens: null, iteration: 0 });",
         ].join('\n'), {
             ...process.env,
             CANON_METRICS_FILE_OVERRIDE: telemetryFile,
@@ -775,6 +775,7 @@ void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {
         assert.equal(fs.existsSync(telemetryFile), true);
         const contents = fs.readFileSync(telemetryFile, 'utf8');
         assert.match(contents, /metrics-override/);
+        assert.match(contents, /\| ok \| high \|\n/);
     });
 });
 

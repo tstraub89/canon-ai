@@ -3,9 +3,10 @@
 > Auto-logged by canon's orchestrator. One row per agent invocation.
 > Tokens: per-invocation total (input + cache + output). Parsed from the agent's structured output — `claude -p --output-format stream-json` for Claude, `codex exec --json` for Codex. Interactive-mode invocations are not tracked.
 > Sub-agent rows: a Claude session that spawns sub-agents also logs one row per top-level sub-agent, Agent `claude:<agent type>`. Their Tokens are that sub-agent's own cumulative usage and are separate from (not included in) the session row.
+> Effort: the resolved effort passed to the agent (or a rejected value); `-` when no effort is passed, including Claude sub-agents. Older rows may have no Effort cell.
 
-| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |
-|---|---|---|---|---|---|---|---|---|
+| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status | Effort |
+|---|---|---|---|---|---|---|---|---|---|
 | 2026-05-07T20:45:34.763Z | handoff-verifier | spec_review | codex | gpt-5.4-mini | 0 | 72.8s | 537901 | ok |
 | 2026-05-07T20:47:46.561Z | handoff-verifier | spec | claude | opus | - | 131.7s | 588989 | ok |
 | 2026-05-07T20:49:08.187Z | handoff-verifier | spec_review | codex | gpt-5.4-mini | 1 | 81.5s | 1322902 | ok |

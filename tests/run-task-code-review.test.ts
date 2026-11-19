@@ -248,9 +248,9 @@ function assertInvalidEffortMessage(message: string): void {
     // this, because canon's `-c model_reasoning_effort=` supersedes it.
     assert.match(message, /per-invocation override supersedes it/);
     assert.match(message, /~\/\.codex\/config\.toml/);
-    // Effort comes only from canon's fixed phase/size matrix — no env var or
-    // adopter config feeds it — so the message must not send the reader to a
-    // canon-ai source path they don't have when installed from npm.
+    // Config values are validated before resolution; a bad spawn value is a canon bug.
+    assert.match(message, /bug in canon/);
+    assert.doesNotMatch(message, /not configurable/);
     assert.doesNotMatch(message, /\bsrc\//);
 }
 
@@ -924,7 +924,9 @@ void test('runCodeReviewPhase retains the capped-loop review-entry backstop', { 
     });
 });
 
-void test('runColdCodexReview captures agent_message findings and uses codex review args', async () => {
+void test('runColdCodexReview captures agent_message findings and uses codex review args', async (t) => {
+    const logs: string[] = [];
+    t.mock.method(console, 'log', (...args: unknown[]) => { logs.push(args.map(String).join(' ')); });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-codex-review-'));
     try {
         const argsFile = path.join(dir, 'args.txt');
@@ -940,6 +942,7 @@ void test('runColdCodexReview captures agent_message findings and uses codex rev
 
         assert.equal(result.success, true);
         assert.equal(result.findings, '[P2] src/foo.ts:10 - null deref\n\nsecond paragraph');
+        assert.ok(logs.some(line => line.endsWith('Model: gpt-mini | Effort: high')), logs.join('\n'));
         assert.ok(result.durationMs >= 0);
         assert.deepEqual(fs.readFileSync(argsFile, 'utf8').split('\n'), [
             'exec',
@@ -1234,6 +1237,7 @@ void test('runColdCodexReview records one successful metric row with usage and r
                 phase: 'code_review',
                 agent: 'claude',
                 model: 'sonnet',
+                effort: 'medium',
                 iteration: 2,
                 durationMs: 1,
                 status: 'ok',
@@ -1257,6 +1261,9 @@ void test('runColdCodexReview records one successful metric row with usage and r
             assert.match(codexRows[0]?.[6] ?? '', /^\d+\.\d+s$/);
             assert.equal(codexRows[0]?.[7], '7');
             assert.equal(codexRows[0]?.[8], 'ok');
+            assert.equal(codexRows[0]?.length, 10);
+            assert.equal(codexRows[0]?.[9], 'high');
+            assert.equal(claudeRows[0]?.[9], 'medium');
         });
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -1285,6 +1292,8 @@ void test('runColdCodexReview records one failed metric row for an incomplete st
             const rows = readMetricRows(metricsFile);
             assert.equal(rows.length, 1);
             assert.equal(rows[0]?.[8], 'failed');
+            assert.equal(rows[0]?.length, 10);
+            assert.equal(rows[0]?.[9], 'high');
             assert.equal(rows.filter(row => row[8] === 'ok').length, 0);
         });
     } finally {
@@ -1313,6 +1322,8 @@ void test('runColdCodexReview records one failed metric row for invalid effort w
             const rows = readMetricRows(metricsFile);
             assert.equal(rows.length, 1);
             assert.equal(rows[0]?.[8], 'failed');
+            assert.equal(rows[0]?.length, 10);
+            assert.equal(rows[0]?.[9], 'ultra');
             assert.equal(rows.filter(row => row[8] === 'ok').length, 0);
         });
     } finally {

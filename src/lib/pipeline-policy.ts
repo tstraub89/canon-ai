@@ -4,8 +4,11 @@
 // table-driven in isolation, and so drift between the several size/tier
 // checks has one place to live.
 //
-// This file has no side effects: it reads only what is passed in. Env-var
+// This file has no side effects: it reads only what is passed in. Env-var and config
 // resolution lives in orchestrator/policy.ts; legacy warnings live in orchestrator/env.ts.
+
+export const VALID_CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type CodexEffort = (typeof VALID_CODEX_EFFORTS)[number];
 
 export type TaskSize = 'XS' | 'S' | 'M' | 'L' | 'XL';
 export const CODE_REVIEW_DELTA_LINE_THRESHOLD = 400;
@@ -83,7 +86,7 @@ export type PolicyInput = {
     delicate?: boolean;
 };
 
-// Config values the policy consumes. The orchestrator passes raw env values;
+// Config values the policy consumes. The orchestrator passes env and config values;
 // this pure policy resolves model precedence per cell.
 export type PolicyConfig = {
     claudeModelSpecReview?: string | null;
@@ -98,6 +101,9 @@ export type PolicyConfig = {
     claudeModelLegacy: string | null;
     codexModelMini: string;
     codexModelFull: string;
+    // Per-size implement overrides from the main checkout's codex.implement_effort;
+    // validated by the orchestrator. XL also governs delicate tasks.
+    codexImplementEffort?: Partial<Record<TaskSize, CodexEffort>>;
     // null → use size-aware default (3 for XS/S/M, 5 for L/XL). A number here
     // (from MAX_REVIEW_LOOPS env var) applies uniformly across all sizes.
     maxReviewLoops: number | null;
@@ -223,11 +229,11 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
     //                S raised from medium 2026-10: a replay of approved specs
     //                with known gaps caught more at high than medium with no
     //                extra false blocks on clean specs (see decisions.md).
-    //   implement:   mini at xhigh for XS/S and max for M/L; XL/delicate uses
-    //                the full model at high. The full model is already the
-    //                stronger choice for delicate work, and its xhigh effort
-    //                costs about 1.5–2× high; re-evaluating its effort curve
-    //                remains a separate follow-up.
+    //   implement:   XS medium, S/M high, L xhigh; XL/delicate stays full/high.
+    //                The 2026-11 re-measurement found XS/S time roughly doubled
+    //                without measured return; M/L defaults are judgment calls.
+    //                PolicyConfig.codexImplementEffort overrides each size;
+    //                XL governs delicate tasks. See docs/decisions.md.
     //   code_review: the mandatory cold-Codex lens uses high effort at every
     //                size: mini at XS/S/M, full at L and XL/delicate (2026-11).
     //                A full-model replay recovered P1s missed by mini on a
@@ -246,11 +252,11 @@ function codexMatrix(config: PolicyConfig): Record<CodexPhase, Record<TaskSize, 
             XL: { model: config.codexModelFull, effort: 'high' },
         },
         implement: {
-            XS: { model: config.codexModelMini, effort: 'xhigh' },
-            S:  { model: config.codexModelMini, effort: 'xhigh' },
-            M:  { model: config.codexModelMini, effort: 'max' },
-            L:  { model: config.codexModelMini, effort: 'max' },
-            XL: { model: config.codexModelFull, effort: 'high' },
+            XS: { model: config.codexModelMini, effort: config.codexImplementEffort?.XS ?? 'medium' },
+            S:  { model: config.codexModelMini, effort: config.codexImplementEffort?.S ?? 'high' },
+            M:  { model: config.codexModelMini, effort: config.codexImplementEffort?.M ?? 'high' },
+            L:  { model: config.codexModelMini, effort: config.codexImplementEffort?.L ?? 'xhigh' },
+            XL: { model: config.codexModelFull, effort: config.codexImplementEffort?.XL ?? 'high' },
         },
         code_review: {
             XS: { model: config.codexModelMini, effort: 'high' },

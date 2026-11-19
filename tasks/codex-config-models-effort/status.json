@@ -1,18 +1,18 @@
 {
   "id": "codex-config-models-effort",
   "title": "Codex models and implement effort in .canon/config.json",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-19",
   "updated": "2026-11-19",
-  "branch": "",
+  "branch": "task/codex-config-models-effort",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "27bae350f091b87a4fab95111b95b00f784836be",
+    "orchestrator_commit": "eb9a2d4a80b03ae502c2db0cf71f0231afac496a",
     "canon_version": "3.21.0",
     "codex_cli": "codex-cli 0.170.0",
-    "claude_code": "2.1.327 (Claude Code)"
+    "claude_code": "2.1.328 (Claude Code)"
   },
   "task_size": "M",
   "delicate": true,
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 1,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -63,10 +64,20 @@
       "agent": "human"
     }
   },
-  "escalations": [],
+  "escalations": [
+    {
+      "date": "2026-11-19",
+      "phase": "code_review",
+      "iteration_count": 2,
+      "reason": "cold-Codex review could not be obtained for task(s) codex-config-models-effort (no findings output / spawn error / stall / signal). Re-run when Codex is available — the code_review phase has not advanced.. Fix the cause (auth, credits/quota, network), then re-run `canon run codex-config-models-effort`.",
+      "cause": "cold-Codex review could not be obtained for task(s) codex-config-models-effort (no findings output / spawn error / stall / signal). Re-run when Codex is available — the code_review phase has not advanced."
+    }
+  ],
   "sessions": {
     "spec_reviewer": "01a1f24a-9cc2-7270-aecb-4e48d0873d94",
-    "author": "57955a51-ccb1-4803-9d94-f8b6b373aaef"
+    "author": "57955a51-ccb1-4803-9d94-f8b6b373aaef",
+    "implementer": "01a1f26b-79ef-7743-afb7-7451ec29920c",
+    "reviewer": "e7534364-aafc-4b01-9bb7-c9cc1bd38d28"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
@@ -74,6 +85,8 @@
   "provider": "mixed",
   "session_backends": {
     "spec_reviewer": "codex",
-    "author": "claude"
+    "author": "claude",
+    "implementer": "codex",
+    "reviewer": "claude"
   }
 }

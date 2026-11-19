@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { DEFAULT_PROTECTED_DOCS, loadDocsFreshnessConfig, matchesDocsGlob, parseDocsFreshnessConfig, resolveDocsFreshness, type DocsFreshnessConfig } from '../src/orchestrator/docs-freshness.js';
+import { parseCodexSection, loadCodexSection, DEFAULT_PROTECTED_DOCS, loadDocsFreshnessConfig, matchesDocsGlob, parseDocsFreshnessConfig, resolveDocsFreshness, type DocsFreshnessConfig } from '../src/orchestrator/docs-freshness.js';
 
 void test('defaults and replacement protected sets', () => {
     const defaults = resolveDocsFreshness(null, []);
@@ -198,4 +198,71 @@ void test('consecutive globstars stay bounded on a deep nonmatching path', () =>
     assert.equal(result.error, undefined, result.error?.message);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), '[false,true]');
+});
+
+void test('Codex section accepts optional and partial maps independently of shared config', () => {
+    for (const codex of [{}, { models: {} }, { implement_effort: {} }, { models: { mini: 'cfg-mini' }, implement_effort: { L: 'max' } }]) {
+        const raw = JSON.stringify({ codex, claude: { models: 'ignored' }, ship: 'irrelevant to Codex' });
+        const loaded = parseCodexSection(raw);
+        assert.ok(loaded.ok);
+        assert.deepEqual(loaded.unknownKeys, []);
+    }
+    const partial = parseCodexSection('{"codex":{"models":{"full":"cfg-full"},"implement_effort":{"XS":"none","M":"high"}}}');
+    assert.ok(partial.ok);
+    assert.deepEqual(partial.section, { models: { full: 'cfg-full' }, implementEffort: { XS: 'none', M: 'high' } });
+    const shared = parseDocsFreshnessConfig('{"codex":{"models":false,"implement_effort":{"XXL":"ultra"}},"claude":{}}');
+    assert.ok(shared.ok);
+    assert.deepEqual(shared.unknownKeys, ['claude']);
+});
+
+for (const [codex, key, value, allowed] of [
+    [null, 'codex', 'null', 'object'],
+    [[], 'codex', '[]', 'object'],
+    ['bad', 'codex', '"bad"', 'object'],
+    [{ models: [] }, 'codex.models', '[]', 'object'],
+    [{ implement_effort: false }, 'codex.implement_effort', 'false', 'object'],
+    [{ models: { mini: '' } }, 'codex.models.mini', '""', 'non-empty string'],
+    [{ models: { mini: '  ' } }, 'codex.models.mini', '"  "', 'non-empty string'],
+    [{ models: { full: 7 } }, 'codex.models.full', '7', 'non-empty string'],
+    [{ implement_effort: { M: 'ultra' } }, 'codex.implement_effort.M', '"ultra"', 'none|minimal|low|medium|high|xhigh|max'],
+    [{ implement_effort: { M: null } }, 'codex.implement_effort.M', 'null', 'none|minimal|low|medium|high|xhigh|max'],
+    [{ implement_effort: { M: '' } }, 'codex.implement_effort.M', '""', 'none|minimal|low|medium|high|xhigh|max'],
+    [{ implement_effort: { XXL: 'high' } }, 'codex.implement_effort.XXL', '"high"', 'XS|S|M|L|XL'],
+    [{ implement_effort: { s: 'low' } }, 'codex.implement_effort.s', '"low"', 'XS|S|M|L|XL'],
+] as const) {
+    void test(`Codex section rejects ${JSON.stringify(codex)} with key, value and allowed shape`, () => {
+        const loaded = parseCodexSection(JSON.stringify({ codex }));
+        assert.equal(loaded.ok, false);
+        if (loaded.ok) return;
+        for (const text of [key, value, allowed]) assert.ok(loaded.message.includes(text), loaded.message);
+        assert.doesNotMatch(loaded.message, /delete/);
+        assert.match(loaded.message, /main checkout/);
+    });
+}
+void test('Codex section collects only its own unknown keys and supports every effort', () => {
+    const unknown = parseCodexSection('{"other":{},"codex":{"reasoning":true,"models":{"large":"x"}}}');
+    assert.ok(unknown.ok);
+    assert.deepEqual(unknown.unknownKeys, ['codex.reasoning', 'codex.models.large']);
+    for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
+        assert.ok(parseCodexSection(JSON.stringify({ codex: { implement_effort: { M: effort } } })).ok);
+    }
+    for (const raw of ['{', 'null', '[]']) {
+        const loaded = parseCodexSection(raw);
+        assert.equal(loaded.ok, false);
+        if (!loaded.ok) assert.match(loaded.message, /main checkout/);
+    }
+});
+void test('Codex section loader distinguishes absent, present and unreadable files', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-section-'));
+    try {
+        assert.deepEqual(loadCodexSection(root), { ok: true, source: 'defaults', section: { models: {}, implementEffort: {} }, unknownKeys: [] });
+        fs.mkdirSync(path.join(root, '.canon'));
+        fs.writeFileSync(path.join(root, '.canon/config.json'), '{}');
+        assert.deepEqual(loadCodexSection(root), { ok: true, source: 'file', section: { models: {}, implementEffort: {} }, unknownKeys: [] });
+        fs.writeFileSync(path.join(root, '.canon/config.json'), '{');
+        assert.equal(loadCodexSection(root).ok, false);
+        fs.unlinkSync(path.join(root, '.canon/config.json'));
+        fs.mkdirSync(path.join(root, '.canon/config.json'));
+        assert.equal(loadCodexSection(root).ok, false);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
