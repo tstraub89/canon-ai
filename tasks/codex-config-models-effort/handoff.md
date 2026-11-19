@@ -198,3 +198,52 @@ All required checks were rerun on Node v24.21.0; no checks skipped.
 
 - No new blockers. Round 1 accepted the prior combined ship/dry-run interpretation; the combination now has explicit regression coverage.
 - No new ambiguity, dependency, git-state or production change. Staging, committing and pushing remain the orchestrator's responsibility.
+
+## Iteration 3 — addressing review round 2
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `docs/decisions.md` | Added a superseded note to the historical M/L implement-equivalence clause, pointing to the new Codex-config decision and naming the current M high / L xhigh defaults. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Qualified Project-level resources guidance: docs-freshness/ship config edits belong in the active worktree; Codex settings use only the main checkout, and plain ship skips that read. Regenerated the managed mirror. |
+| `tasks/codex-config-models-effort/notes.md`, `tasks/codex-config-models-effort/handoff.md` | Recorded the relational-contract sweep lesson and this revision's evidence. |
+
+### Findings addressed
+
+- **Correctness bug 1, historical matrix restatement: addressed.** The implement-equivalence clause in the spec-review M decision now has an explicit superseded note referencing “Codex models and implement effort in .canon/config.json (2026-11)”. The unchanged spec-review equivalence remains historical text; the note explains that implement defaults differ and can be configured.
+- **Correctness bug 1, config-root instruction: addressed.** Project-level resources now matches the existing qualified wording in `docs/architecture.md`: docs-freshness/ship settings and managed docs use the active checkout, while Codex settings use main and ignore the worktree copy. Plain ship's Codex exemption is explicit.
+- Optional Round 2 nits remain deferred as requested for this tightening round. No runtime, test, dependency or default changes were made.
+
+### AC deltas
+
+| AC | Status | Evidence |
+|---|---|---|
+| AC-13 | Met — additional restatements corrected | Historical M/L implement equality is explicitly superseded; generic config-edit instructions now carry the Codex main-checkout exception in the root reference and its synchronized mirror. |
+| All other ACs | Met — unchanged | No source or behavioral-test delta from the implementation accepted by Round 2's AC re-check. Full validation reran successfully. |
+
+### Self-Check
+
+The Restatement sweep row below supersedes earlier versions and covers the whole branch. Test integrity and Sibling parity evidence from Iteration 2 remains unchanged; this round added no tests or runtime guards.
+
+| Check | Evidence |
+|---|---|
+| Restatement sweep | The whole-branch sweep covers implement defaults, config/model precedence, main-versus-active checkout reads, ship exemption, effort telemetry, retired effort variables and errors. Prior sweeps searched not configurable, no equivalent knob, release-only rollback, fixed phase matrix, old implement cells, CODEX_EFFORT, malformed main JSON, main/active checkout and combined ship/dry-run, and inspected every source/test recordMetric caller including the inline JavaScript caller. Round 2 identified two missed relational/global restatements. This round searched “identical to L on both”, “Make config or managed-doc edits”, “Make docs-freshness/ship config”, and related implement-equivalence/config-worktree expressions across tracked docs, templates, skills and root guidance, excluding task artifacts, historical invocation rows, changelog and generated bundles. The historical equality hit now has its superseded note; every generic config-edit instruction found in `docs/architecture.md`, `docs/pipeline-orchestrator.md` and the managed mirror qualifies docs-freshness/ship and explicitly states the Codex exception. Compared M high / L xhigh to `src/lib/pipeline-policy.ts`, the startup predicate and active configRoot in `src/orchestrator/main.ts`, and the already-qualified architecture paragraph. Existing fixed spec-review/cold-lens/Claude statements and superseded historical decisions remain valid. No additional out-of-scope contract edit was needed. The prior telemetry caller and historical-row checks remain unchanged. |
+
+### Re-run validation
+
+All spec-required checks reran on Node v24.21.0; none were skipped.
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run build` | Pass | Fresh build; dist remains identical to pre-revision HEAD. |
+| `npm run type-check` | Pass | No source or test changes. |
+| `npm run lint` | Pass | Type-aware lint with warnings denied. |
+| `npm test` | Pass | 2,248 tests: 2,247 passed, zero failed, one skipped; 84.7 seconds. |
+| `npm run docs-refs-check` | Pass | All refs OK; rerun after appending this handoff. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| Scope, cumulative coverage and diff checks | Pass | Ran git diff main...HEAD --name-only and confirmed every committed path remains covered by the union of Changes tables. This revision changes only authorized docs and this task's artifacts; the managed reference and mirror are byte-equal, source/tests/dist have no revision delta, and git diff --check is clean. |
+
+### Blockers
+
+- None. No new ambiguity or scope gap. All blocking Round 2 findings addressed; optional nits deferred.
