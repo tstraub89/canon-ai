@@ -19,7 +19,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | What | Where |
 |---|---|
 | Workflow source of truth | per-phase prompts (`src/orchestrator/prompts/`) + `docs/pipeline-orchestrator.md` |
-| Claude (architect/reviewer) guide | `CLAUDE.md` — auto-loaded by Claude Code; shared overview lives in `AGENTS.md` |
+| Claude Code entry file | `CLAUDE.md` - imports `AGENTS.md`; adds conversational-operator norms |
 | Project pitch + adoption guide | `README.md` |
 | Per-task state machine | `.canon/templates/status.json` |
 
@@ -42,7 +42,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Validation gates and diff checks | `src/orchestrator/validation.ts` | Handoff validation, diff cross-checks, done.md salvage helpers |
 | `canon watch` command | `src/cli/commands/watch.ts` | Blocking observer for detached runs — attach-time + idle classification, `--until`, `--timeout`, `--follow` |
 | `canon stop` command | `src/cli/commands/stop.ts` | Gracefully terminates detached run; SIGTERM → SIGKILL; CASE A–D pid selection |
-| `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, task-quality-log header, and canon discovery nudge (warns when neither file exists or neither mentions canon) |
+| `canon doctor` command | `src/cli/commands/doctor.ts` | Point-in-time health check: active orchestrators, stale heartbeats, worktree state, task-quality-log header, main-checkout `.canon/config.json` `codex` section validity (`checkCodexConfig`), and canon discovery nudge (warns when neither file exists or neither mentions canon) |
 | `canon init` / `canon upgrade` | `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts` | Scaffold and refresh `CANON_OWNED` files, the `.gitignore` block and npm script entries |
 | Canon runtime `.gitignore` block | `src/lib/canon-block.ts`, `src/cli/commands/init.ts`, `src/cli/commands/upgrade.ts`, `src/cli/commands/doctor.ts` | canon manages a `# canon:start`/`# canon:end` block in `.gitignore`; `canon upgrade` refreshes it. |
 | CLI entrypoint + dispatch | `src/cli/index.ts` | `printHelp()` (command summary only; each command's usage lives with its declaration), top-level `switch` dispatch for all `canon` commands |
@@ -60,7 +60,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | Pre-flight gate before code review (validation outcomes, AC coverage, baseline Self-Check presence/fill) | `src/orchestrator/validation.ts` | |
 | Handoff Changes-table parser | `src/orchestrator/validation.ts` | Extracts comma-separated backtick-path / markdown-link tokens per cell |
 | Spec Affected Files parser | `src/orchestrator/validation.ts` | `scanSpecManifest` in `src/orchestrator/markdown-table.ts` shares fence/comment exclusion with `lintSpecManifest` and `lintSpecManifestForTasks`; lint gates spec done and plan/implement entry. `parseAffectedFilesFromSpec(taskId)` reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; feeds `buildAffectedFilesAllowlist()` for `verifyBaseDrift` (`--push`/`--pr`) and `buildAdmittedAllowlist()` for the `code_review` pre-flight (`src/orchestrator/phases/code-review.ts`) and full-send scope check |
-| Base-drift + base-divergence gates (`--push`/`--pr`/`--ship`) | `src/orchestrator/validation.ts`, `src/orchestrator/git.ts` | `verifyBaseDivergence` and `verifyBaseDrift` gate each push; at `--pr`/`--push`, `commitHumanReviewFiles` first pushes canon's scaffold commits (`probeOriginBranch`/`getLocalOnlyBaseCommits` handle a missing remote base) |
+| Base-drift + base-divergence gates (`--push`/`--pr`/`--ship`) | `src/orchestrator/validation.ts`, `src/orchestrator/git.ts`, `src/orchestrator/main.ts` (`commitHumanReviewFiles`) | `verifyBaseDivergence` and `verifyBaseDrift` gate each push; at `--pr`/`--push`, `commitHumanReviewFiles` first pushes canon's scaffold commits (`probeOriginBranch`/`getLocalOnlyBaseCommits` handle a missing remote base) |
 
 ## Internal Orchestrator Modules
 
@@ -141,6 +141,8 @@ These must stay current — the pipeline reads the protected `docs/*` corpus at 
 | Shared run-context resolver tests | `tests/run-context.test.ts` | Orphaned-worktree, PID fallback (CASE C/D), launch-window, EPERM |
 | `canon watch` command tests | `tests/watch.test.ts` | Attach/idle branches, grace re-read, launch-window wait, `--until`, `--timeout`, read-failure, summary-line format |
 | Docs refs validator | `scripts/docs-refs-check.mjs` | Markdown reference gate; run via `npm run docs-refs-check` |
+| Docs refs validator tests | `tests/docs-refs-check.test.ts` | |
+| Codex config tests | `tests/run-task-codex-config.test.ts` | `codex` section parsing, precedence, main-checkout-only reads |
 | Round-1 review metrics | `scripts/review-metrics.mjs` | canon-ai-local: counts first-round `code_review` findings per archived task by category and failure kind; flags are listed in the file header |
 | Docs refs config | `scripts/docs-refs-config.mjs` | Adopter-owned tuning surface loaded by `scripts/docs-refs-check.mjs`; canon-ai-dev re-adds `templates/` here so its own gate still scans templates. |
 | Canon-managed template sync | `tests/sync-canon-templates.test.ts` | Sync direction, delimiter preservation, CLI check, hook regression |
@@ -183,7 +185,6 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | Claude Code guard hook | `.claude/hooks/canon-guard.mjs` | PreToolUse deny for `status.json` writes, piped `canon run` / `canon watch` and run-log polling, and every `gh pr merge` of a task PR (any strategy); registration snippet `RECOMMENDED_GUARD_HOOKS` in `src/cli/commands/doctor.ts` |
 | Codex sandbox baseline | `src/orchestrator/agents/codex.ts` | `--sandbox workspace-write` passed on fresh exec |
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
-| Worktree dirs allowed for agent CWD | `.claude/settings.json` `additionalDirectories` | none needed — task worktrees live in-repo under `.canon/worktrees/`, inside the session cwd |
 | Git ignores | `.gitignore` | |
 | Contributor git-hooks setup | `scripts/install-git-hooks.mjs` | One-time `npm run hooks` wrapper for contributors; skips gracefully when no `.git/` is present |
 | Build dist/ path normalizer | `scripts/normalize-dist-paths.mjs` | Post-build step that normalizes worktree symlink path comments in `dist/` |
@@ -209,7 +210,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 > `src/lib/pipeline-policy.ts` (the matrix) → `tests/pipeline-policy.test.ts` → `docs/pipeline-orchestrator.md` (model/effort matrix + tier/sizing tables)
 
 **Change model selection**:
-> `src/lib/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`) → env var docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`
+> `src/lib/pipeline-policy.ts` (`claudeMatrix`, `codexMatrix`; implement-effort overrides via `codexImplementEffort`) → `src/orchestrator/policy.ts` (env wiring, built-in Codex model defaults, `getCodexConfig()` precedence) → `src/orchestrator/docs-freshness.ts` (`loadCodexSection()` for the `.canon/config.json` `codex` section) → env var and config docs in `docs/pipeline-orchestrator.md` → `tests/pipeline-policy.test.ts`, `tests/run-task-codex-config.test.ts`
 
 **Add a new review verdict**:
 > `src/orchestrator/types.ts` (`Verdict` union) → `src/task/index.ts` (`VALID_VERDICTS` + `assertValidVerdict()` — `VALID_VERDICTS` is a second hand-maintained list of the same values (`_VERDICT_VALUES` in `src/orchestrator/types.ts`); `task phase` usage renders the verdict list) → `src/orchestrator/validation.ts` (`extractCheckedVerdict()` regex) — all three. TypeScript compiles cleanly with only the first; `canon task phase … <new_verdict>` then fails at runtime with "unknown verdict".
@@ -227,7 +228,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 
 | What | Where | Notes |
 |---|---|---|
-| Operator role summary | `AGENTS.md` | Ambient operator context; reusable rules are delivered JIT via skills/prompts |
-| Claude operator guide | `CLAUDE.md` | Ambient Claude context; phase rules are delivered JIT via skills/prompts |
+| Shared project overview | `AGENTS.md` | Auto-loaded by Claude and Codex; reusable rules are delivered JIT via skills/prompts |
+| Claude Code entry file | `CLAUDE.md` | Imports AGENTS.md; operator norms |
 | Agent permissions | `.claude/settings.json` | Allowlisted commands |
 | Task artifacts | `tasks/` | Per-task specs, plans, reviews |

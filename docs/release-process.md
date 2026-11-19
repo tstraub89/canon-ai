@@ -31,7 +31,7 @@ canon run <id>
 
 As each task ships (`--ship` squash-merges it to `main`), add its bullet to the **`## [Unreleased]`** block in `CHANGELOG.md` with `/canon-changelog <task-id>` — **single-task append, which works from any branch including `main`** (the skill's `| Any | single task ID |` mode). Do it while the task is fresh, before its `tasks/<id>/done.md` is archived. The in-flight block stays **version-less** (`## [Unreleased]`, Keep-a-Changelog form) — the version isn't decided until you cut, so don't pin it early.
 
-> The skill's *empty-sweep* in-progress-append auto-detection is scoped to a release/working branch, not the default branch — so during accumulation on `main` use the per-task `/canon-changelog <task-id>` form above (single-task append, supported on any branch). Finalization happens later on the short-lived release branch (see "Cutting a release"), where the skill's finalize mode applies normally. Closing the default-branch empty-sweep gap is a backlogged `canon-changelog` refinement.
+> The skill's *empty-sweep* in-progress-append auto-detection is scoped to a release/working branch, not the default branch — so during accumulation on `main` use the per-task `/canon-changelog <task-id>` form above (single-task append, supported on any branch). Finalization happens later on the short-lived release branch (see "Cutting a release"), where the skill's finalize mode applies normally. Closing that gap is not currently tracked.
 
 The version in `package.json` / `.canon/version` / `canon --version` reflects the **last published** release during accumulation. It is bumped at cut time (next section), not while accumulating.
 
@@ -78,6 +78,8 @@ gh pr create --base main --head release-vX.Y.Z --title "Release vX.Y.Z: <short t
 **Wait for both**: (a) CI green on the PR (the `checks` job and all six `test` jobs across Node 24.x and 26.x, three shards each, which the `main` ruleset requires; `npm audit --omit=dev` can fail a release PR on a new advisory with no code change), (b) Codex's post-PR review. CI green alone is not sufficient — the 1.1.3 picocolors bug was caught by Codex's PR review, not CI. Then **squash-merge** (repo settings enforce squash-only; the short-lived branch is deleted on merge). A release commit is operator-authored, so `gh pr merge --squash --delete-branch` is fine here.
 
 **Auto-release fires** on the push to `main`: it tags + publishes `vX.Y.Z` from the version-bump commit. No manual `git tag` / `gh release create`, and no "reset" step — the short-lived branch is gone and the next release branches fresh from `main`.
+
+**Record provenance.** Once the release is published, run `canon update` in the checkout (it installs the latest final release and rewrites `.canon/provenance.json`), then commit that file on `main` as `chore: record canon X.Y.Z provenance` and push.
 
 ## Auto-release workflow
 

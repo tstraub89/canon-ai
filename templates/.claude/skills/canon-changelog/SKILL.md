@@ -1,7 +1,7 @@
 ---
 name: canon-changelog
-description: Use when the human asks to draft release notes, update CHANGELOG.md, or add entries for shipped tasks — phrases like "draft the changelog", "write release notes", "add a bullet for <task>", "finalize the release", "we're shipping vX.Y", or explicit `/canon-changelog` invocation. Auto-detects fresh release vs. in-progress unreleased block vs. finalization mode from branch + CHANGELOG state. Requires CHANGELOG.md to be present; treats docs/decisions.md §"Versioning and release policy" as an optional policy layer when present.
-argument-hint: "[optional: version override e.g. 1.5.0, or single task ID to add one bullet]"
+description: Use when the human asks to draft release notes, update CHANGELOG.md, or add entries for shipped tasks — phrases like "draft the changelog", "write release notes", "add a bullet for <task>", "finalize the release", "we're shipping vX.Y", or explicit `/canon-changelog` invocation. Auto-detects fresh release vs. in-progress unreleased block vs. finalization mode from branch + CHANGELOG state. Creates CHANGELOG.md on confirmation when absent; treats docs/decisions.md §"Versioning and release policy" as an optional policy layer when present.
+argument-hint: "[optional: finalize | version override e.g. 1.5.0 | single task ID]"
 allowed-tools: Read Glob Grep Write Edit Bash(git log *) Bash(git diff *) Bash(git status *) Bash(git branch *) Bash(git rev-parse *) Bash(git add *) Bash(git commit *)
 effort: medium
 ---
@@ -168,7 +168,7 @@ Wait for approval. The user may adjust wording or version. Incorporate edits, th
 
 **In-progress append mode** (release branch):
 1. Append bullets under the matching category heading from the project's existing CHANGELOG (derived in Mode detection). Create a new category heading only if the file already uses that category type.
-2. Do NOT touch the project's version files — when the version is bumped (at branch creation, at finalize, or not at all) depends on your project's versioning policy; defer to your `decisions.md §Versioning and Release Policy` or your release doc.
+2. Do NOT touch the project's version files — when the version is bumped (at branch creation, at finalize, or not at all) depends on your project's versioning policy; defer to your `docs/decisions.md` §"Versioning and release policy" or your release doc.
 
 **Single-task append**: same as the relevant branch mode, but for one bullet only.
 

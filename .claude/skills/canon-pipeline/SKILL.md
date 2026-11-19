@@ -12,7 +12,7 @@ This skill drives `canon run`. It encodes:
 - pre-flight checks before invoking the pipeline
 - snag-recovery flows (auto-block reset, phase mismatch, post-merge sync)
 
-For orchestrator internals — pipeline tiers, the model/effort matrices, env-var defaults, worktree mechanics, session-resumption, auto-commit guardrails — read `docs/pipeline-orchestrator.md` on demand.
+For orchestrator internals — pipeline tiers, the model/effort matrices, env-var defaults, worktree mechanics, session-resumption, auto-commit guardrails — read `docs/pipeline-orchestrator.md` on demand. Per-repository Codex models and implement effort live in the `codex` section of the repository's canon config, and `canon run <id> --dry-run` prints each primary phase's model and effort without spawning an agent (it omits the mixed-mode cold Codex review lens, which resolves separately).
 
 ## Command reference
 
@@ -47,7 +47,7 @@ canon run <task-id>
 
 Add `--step --expect <phase>` if you want one phase at a time with a guard. Add `MAX_REVIEW_LOOPS=N` when the default loop cap is too low for a complex spec.
 
-In Claude Code `canon run` detaches after about a second and prints a PID and log path. Run `canon watch <task-id>` (do not pipe it, do not tail the log) to wait for the run to settle. It prints one summary line and exits 0 on a healthy stop, 3 on an auto-block, 4 on death, 5 on timeout. `canon stop <task-id>` terminates a detached run. `--step`, `--pr` and `--ship` run in the foreground and need no watch.
+In Claude Code `canon run` detaches after about a second and prints a PID and log path. Run `canon watch <task-id>` (do not pipe it, do not tail the log) to wait for the run to settle. It prints one summary line and exits 0 on a healthy stop, 3 on an auto-block, 4 on death, 5 on timeout. `canon stop <task-id>` terminates a detached run. `--step`, `--pr` and `--ship` run in the foreground and need no watch. Use `--timeout 5m` (exit 5 means re-invoke) when your shell tool caps command duration; exit 2 covers several cases, so read the summary's `reason` field: `launch_window_timeout` means the orchestrator may still be starting (re-run `canon watch`), while nothing-to-watch or unreadable state means check `canon task status <id>`.
 
 **What happens after `canon run` (full-tier, no `--full-send`):** the pipeline runs the spec reviewer *first*, then **halts at the human spec gate after the spec reviewer approves the spec** (before `plan`). In mixed mode Codex is the spec reviewer; in `claude` mode that role runs on Claude Code. `human_spec_gate` is a single-use latch that fires *after* `spec_review`, never before it — so seeing the run go straight into `spec_review` with the gate still `true` is correct, not a skipped gate. Review `spec.md` + `spec-review.md`, including the `Author` rows in the spec's *Judgment Calls* section (calls the human has not explicitly made, including any the spec reviewer's revisions added), then re-run `canon run <id>` to pass the gate into `plan`. **Under `--full-send` there is no halt:** the gate is pre-cleared, so the pipeline flows `spec_review → plan → … → draft PR` uninterrupted (on a `delicate` task `--full-send` also needs `--force`). (Fast-tier without full-send: the gate sits at `spec_review` entry and is usually pre-cleared during plan-writing. Full mechanics: `docs/pipeline-orchestrator.md` §"Spec gate is a single-use latch".)
 
@@ -79,6 +79,8 @@ canon run <task-id> --pr
 
 Pushes the task branch (first pushing canon's own unpushed scaffold commits on `base_branch`, or creating it on origin if missing when every local-only commit is canon-safe or already published) and opens a draft PR via `gh pr create` targeting `base_branch` from `status.json`. After it runs, read `tasks/<id>/handoff.md` and verify the auto-generated PR body matches actual scope — rewrite via `gh pr edit <num> --body-file ...` if code-review iterations expanded scope beyond the initial handoff.
 
+`--pr` aborts if merging `origin/<base>` conflicts or the branch changes files outside the spec's `### Affected Files` table (after QA, QA-managed docs, telemetry and the tasks' own artifacts are also allowed). Resolve a merge conflict in the branch; for an intentional out-of-scope change, fix the table or amend the spec. Don't reach for `--force`. `--push` pushes without opening a PR.
+
 ### 4. Ship an approved task
 
 After the PR is marked ready and approved — do **not** merge it manually:
@@ -108,7 +110,7 @@ Canon's `--pr` / `--ship` / `base_branch` mechanics are **model-neutral**. The `
 
 **Hybrid repos are first-class**: a project with one surface on versioned release branches and another shipping straight to the main line can use different `base_branch` values per task with no global setting. Canon supports all shapes because the per-task `base_branch` is the only release-model knob the orchestrator reads.
 
-**Authority pointer**: For every recipe below, your project's own `decisions.md §Versioning and Release Policy` (and/or your project's release doc) is the source of truth for version numbers, changelog policy, branch strategy, and tag conventions. Canon provides mechanics; your project's policy provides decisions.
+**Authority pointer**: For every recipe below, your project's own `docs/decisions.md` §"Versioning and release policy" (and/or your project's release doc) is the source of truth for version numbers, changelog policy, branch strategy, and tag conventions. Canon provides mechanics; your project's policy provides decisions.
 
 **Always check working tree state before branch operations.** If `git status --porcelain` is non-empty, surface it and ask before proceeding. Never blow away uncommitted work.
 
@@ -163,13 +165,15 @@ Tasks land on the default branch; no version numbers, no CHANGELOG, no tags.
 1. Write the new requirements into `spec.md` as an Amendment section — **required**, not optional (unless this is a spec_gap-entry reroute, where only the `spec_gap` tasks need one; approved siblings ride along): the reroute pre-flight gate aborts unless the heading `## Amendment` (round 1) or `## Amendment Round N` (round 2+) exists. A note elsewhere doesn't count. Edit the worktree copy if a worktree exists.
 2. Reroute re-enters at the tier's review altitude:
    ```bash
-   canon run <task-id> --reroute
+   canon run <task-id> --reroute        # detaches and runs the whole rerouted pipeline; follow with canon watch <task-id>
+   # One phase at a time instead, in a single invocation:
    # Full tier (S/M/L/XL/delicate) re-enters at spec_review — amendment gets reviewed, plan refreshed:
-   canon run <task-id> --step --expect spec_review
+   canon run <task-id> --reroute --step --expect spec_review
    # Fast tier (XS, non-delicate) re-enters directly at implement:
-   canon run <task-id> --step --expect implement
+   canon run <task-id> --reroute --step --expect implement
    ```
-3. If the amendment review blocks with `changes_requested`, revise the Amendment section and re-run plain `canon run <task-id>` — **not** `--reroute` (that would start a new reroute round).
+3. On a full-tier reroute an armed `human_spec_gate` halts after the amendment's `spec_review`; re-arm or clear it with `canon task set <id> human_spec_gate true|false` before rerouting. A delicate task refuses `false`: let the gate halt, review the amendment, and resume with `canon run <id>` (`docs/pipeline-orchestrator.md` §"Spec gate is a single-use latch").
+4. If the amendment review blocks with `changes_requested`, revise the Amendment section and re-run plain `canon run <task-id>` — **not** `--reroute` (that would start a new reroute round).
 
 ---
 

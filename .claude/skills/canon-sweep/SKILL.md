@@ -1,7 +1,7 @@
 ---
 name: canon-sweep
 description: Use when the human asks to sweep, triage, or prune `docs/lessons-learned.md` — phrases like "sweep the lessons buffer", "let's do a lessons sweep", "promote or prune lessons learned", or explicit `/canon-sweep` invocation. Human-invoked only. A QA "buffer exceeds ~15 entries" note in a task's `done.md` or a just-closed release milestone are reasons to *suggest* a sweep to the human, never to start one. The skill proposes a verdict and the exact promoted text per entry and writes nothing until the human confirms. Not for appending new lessons (the QA phase does that) or for editing task notes.
-allowed-tools: Read Glob Grep Edit Write Bash(git log *) Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git show *) Bash(git worktree list) Bash(canon task list)
+allowed-tools: Read AskUserQuestion Glob Grep Edit Write Bash(git log *) Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git show *) Bash(git worktree list) Bash(canon task list)
 effort: medium
 ---
 

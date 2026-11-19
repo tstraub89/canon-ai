@@ -8,6 +8,8 @@ Patterns from real production use for when the pipeline gets stuck. Use them as 
 - Code review halted on `spec_gap`
 - Code review stopped without a verdict (reviewer-set `blocked`)
 - Findings keep clustering in the same mechanism (try a size bump before another loop)
+- `canon watch` exit 4 (orchestrator died)
+- Affected Files pre-flight block (exit 2)
 - Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 - `--ship` refuses: wrong phase
 - Local branch diverged from origin after a squash or rebase merge
@@ -81,11 +83,19 @@ Most multi-round tasks are healthy — each round closes findings scattered acro
 
 Watch for a different shape instead: two or more consecutive rounds keep producing new findings clustered in the same file or mechanism, rather than scattered across the diff. That's a plausible sign the model assigned to this task has hit a capability ceiling on this specific piece of code, not that the task simply has more work in it than expected.
 
-When that happens, before spending another expensive review round at the same tier: let the smaller, cheaper model keep trying at low sizes, but bring in the big guns once a mechanism keeps generating findings at it. Bump `task_size` up a step and resume, using the normal `canon task set` / `canon run` mechanics. A one-step bump often raises effort or budget rather than swapping the underlying model — only reaching the top tier guarantees that (in mixed mode, an M→L bump does swap the cold-Codex review lens to the full model) — and it interacts with the loop cap, `delicate`, `--full-send`, and bundle membership in ways worth checking in `docs/pipeline-orchestrator.md` rather than assuming.
+When that happens, before spending another expensive review round at the same tier: let the smaller, cheaper model keep trying at low sizes, but bring in the big guns once a mechanism keeps generating findings at it. To raise only Codex implement effort, set `codex.implement_effort.<size>` in the main checkout's canon config (not an in-flight worktree's copy) instead of bumping `task_size`; it applies on the next Codex implement call, not to spec review or the cold review lens. Bump `task_size` up a step and resume, using the normal `canon task set` / `canon run` mechanics. A one-step bump often raises effort or budget rather than swapping the underlying model — only reaching the top tier guarantees that (in mixed mode, an M→L bump does swap the cold-Codex review lens to the full model) — and it interacts with the loop cap, `delicate`, `--full-send`, and bundle membership in ways worth checking in `docs/pipeline-orchestrator.md` rather than assuming.
 
 **If the task is already auto-blocked, the bump alone may not clear it** — the cap only widens on some steps, so if the count is still at or past the new cap, raise `MAX_REVIEW_LOOPS` above it in the same run too, same as a plain cap-raise above. And if the task is already at the top tier and still clustering, that's a stronger signal worth treating as a probable spec or architecture problem rather than a capability one.
 
 This is a cheap experiment, not a fix known to work — there's no controlled comparison proving a stronger model converges faster on a recurring finding specifically. Try it, and don't be surprised either way.
+
+## `canon watch` exit 4 (orchestrator died)
+
+Exit 4 also covers a run that exited nonzero on purpose (for example an Affected Files pre-flight failure). Read the summary's `reason` and the run log first, fix any persistent failure, then re-run `canon run <id>`; it resumes the phase.
+
+## Affected Files pre-flight block (exit 2)
+
+Edit the `### Affected Files` table in the active checkout's `spec.md` (the worktree copy if one exists), then re-run `canon run <id>`. No phase reset. `--force` only bypasses the pre-flight, not the spec-done gate.
 
 ## Phase mismatch — pipeline routes to `spec` when you expected `spec_review`
 

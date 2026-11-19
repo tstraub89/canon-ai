@@ -27,9 +27,9 @@ Anything that would change if you migrated to a different framework belongs here
 - **External CLIs the orchestrator drives**: `claude` (Anthropic CLI), `codex` (OpenAI Codex CLI, mixed mode), `git`, `gh`
 - **Persistence**: filesystem only — `status.json` files and markdown artifacts under `tasks/<id>/`
 - **State machine**: `status.json` per task, with phases as nodes (see `.canon/templates/status.json`)
-- **Concurrency model**: one pipeline at a time per repo. Multi-task runs use `bundle mode` (multiple task IDs to one orchestrator invocation), not parallel orchestrators.
+- **Concurrency model**: one live orchestrator per task (`guardConcurrentRun()` checks the task's pid file and heartbeat). Tasks that must share a review loop run in `bundle mode` (multiple task IDs to one orchestrator invocation).
 - **Isolation**: optional git worktree per task (status flag `worktree: true`) — keeps the supervising orchestrator's checkout shielded from in-flight implementation edits.
-- **CI**: GitHub Actions via `.github/workflows/ci.yml`. Triggers on push to `main` and on pull requests. The `checks` job runs on Node 24.x; three test shards run on each of Node 24.x and 26.x (six test jobs total). `checks` runs `npm ci`, a lockfile regenerate-and-diff check, a CHANGELOG date check (PRs to `main` only), `npm audit --omit=dev`, `npm run lint`, `npm run type-check`, `npm run sync-templates:check`, `npm run docs-refs-check`, `npm run build`, the shell-completion tests (after installing `zsh fish tcsh` via apt), a committed-`dist/` freshness check and the git-install smoke test; the six test jobs each run a shard of the remaining `npm test` files.
+- **CI**: GitHub Actions (`.github/workflows/ci.yml`, plus `docs-refs-check.yml` and `auto-release.yml`); see `## CI` below.
 
 ## High-Level Architecture
 
@@ -95,7 +95,7 @@ All state is files. There is no in-memory shared state between phases — every 
 
 ### Telemetry
 
-Task runs write telemetry fragments under their task directories: `metrics.md` records every agent invocation (duration, tokens, effort), `quality-log.md` holds the qa → done upsert derived from `status.json` and QA's five judgment cells in `done.md`, and `lessons.md` holds QA's distilled notes. Bundle invocation rows live in the first member's metrics fragment and keep the joined task label. `--ship` folds fragments into `docs/pipeline-invocations.md`, `docs/task-quality-log.md`, and `docs/lessons-learned.md` before archiving, then removes them. Metrics remain append-only; quality rows reconcile by task id. Runtime writes warn on failure; a failed fold aborts ship before archive changes. Missing fragments support legacy tasks. `--pr` warns when branches still edit the shared logs, since those edits can conflict across parallel tasks.
+Task runs write telemetry fragments under their task directories: `metrics.md` records session-level agent records, including interactive sessions (duration, tokens when available, resolved effort or `-`; a non-interactive resume that falls back to a fresh subprocess writes one row for both attempts; rows from before the Effort column have no Effort cell), `quality-log.md` holds the qa → done upsert derived from `status.json` and QA's five judgment cells in `done.md`, and `lessons.md` holds QA's distilled notes. Bundle invocation rows live in the first member's metrics fragment and keep the joined task label. `--ship` folds fragments into `docs/pipeline-invocations.md`, `docs/task-quality-log.md`, and `docs/lessons-learned.md` before archiving, then removes them. Metrics remain append-only; quality rows reconcile by task id. Runtime writes warn on failure; a failed fold aborts ship before archive changes. Missing fragments support legacy tasks. `--pr` warns when branches still edit the shared logs, since those edits can conflict across parallel tasks.
 
 ## Boundaries & Contracts
 

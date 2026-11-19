@@ -36,9 +36,9 @@ A task belongs here if **any** of these are true:
 |---|---|
 | `spec.status = "done"` AND `spec_review.status = "pending"` AND `human_spec_gate = true` (fast tier, or not yet run) | Spec is ready for review |
 | `spec_review.status = "done"` AND `plan.status = "pending"` (full tier halted at the spec gate; `human_spec_gate` reads `false` because the halt consumed it) | Spec reviewed, waiting on you: read `spec.md` and `spec-review.md` including the `Author` Judgment Calls rows, then re-run `canon run <id>` |
-| `qa.status = "done"` AND `human_review.status = "pending"` | QA is done — ready to open a PR |
-| `escalations[]` is non-empty | Loop cap hit or blocked — needs a call |
-| Any phase has `status = "blocked"` | Something is stuck |
+| `qa.status = "done"`, `human_review.status = "pending"`, no `.pr-number` file in the task dir | QA done, probably no PR yet; confirm on GitHub that none was opened by hand, then run `canon run <id> --pr` |
+| Same state WITH `.pr-number` | Draft PR probably open; the file is only a lookup hint and keeps its number after the PR closes or merges, so confirm the PR is still open on GitHub, then wait for approval, mark ready and `canon run <id> --ship` |
+| Any phase has `status = "blocked"` | Something is stuck (read the newest `escalations[]` entry for the reason; older entries are history) |
 
 For each entry, be specific about what to do:
 
@@ -63,7 +63,7 @@ Tasks where any phase has `status = "in_progress"` and no action is needed yet.
 **Flag warning signs inline:**
 - `code_review.iterations_current_loop ≥ 2`: "Review looping — N rounds this cycle. Default cap is 3 for XS/S/M, 5 for L/XL."
 - `spec_review.iterations_current_loop ≥ 2`: "Spec review looping — worth watching."
-- `auto_block_count > 0`: "Previously auto-blocked [N] times — escalation history in tasks/<id>/status.json."
+- `phases.<phase>.auto_block_count > 0`: "Previously auto-blocked [N] times — escalation history in tasks/<id>/status.json."
 - If a task has been `in_progress` for the same phase across multiple `/canon-status` checks (infer from iteration counts and last-updated), note it: "Phase hasn't advanced — may be stalled."
 
 If `code_review.verdict = "changes_requested"` and `implement.status = "in_progress"`, note: "Implementer iterating (round N)."
@@ -72,13 +72,11 @@ If `code_review.verdict = "changes_requested"` and `implement.status = "in_progr
 
 ### 🟢 Done this branch
 
-Tasks where `human_review.status = "done"`.
+Tasks where `human_review.status = "done"`, which a finished `--full-send` tail sets (or an operator running `canon task phase <id> human_review done`): with an open draft PR, next is review, mark ready, `canon run <id> --ship`; with no PR, next is `canon run <id> --pr`.
 
 ```
-**task-id** — Title  [→ open PR if not yet pushed]
+**task-id** — Title
 ```
-
-If any done task doesn't have a PR open yet, say so explicitly: "No PR yet — run `canon run <id> --pr` to push and open the draft."
 
 ---
 

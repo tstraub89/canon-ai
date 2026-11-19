@@ -2,7 +2,7 @@
 name: canon-init
 description: Use right after running `canon init` on a fresh repo, or when canon's scaffold docs (`docs/product-context.md`, `docs/architecture.md`, `docs/codebase-map.md`, `docs/decisions.md`, `docs/patterns.md`) still contain `TODO[canon]` markers, `<placeholder>` text or "TBD" stubs. Triggers on "fill in the canon docs", "set up canon for this project", "go from scaffold to real content", or explicit `/canon-init` invocation. Run once per project lifecycle.
 argument-hint: ""
-allowed-tools: Read Glob Grep Write Edit Agent Bash(git add *) Bash(git status *)
+allowed-tools: Read Glob Grep Write Edit Agent Bash(git add *) Bash(git status *) Bash(canon doctor*)
 effort: high
 ---
 
@@ -17,7 +17,7 @@ Follow these phases in order. Do not skip or combine phases.
 
 ## Phase 0 — Check for existing canon files
 
-Before doing anything else, check whether `AGENTS.md` or `CLAUDE.md` exists in the project root. If either is present, note it — they are adopter-owned; canon does not insert, merge, or read managed content into them. Note any team conventions, terminology, or pitfalls you find from the codebase and docs — you'll need them in Phase 4.
+Before doing anything else, check whether `AGENTS.md` or `CLAUDE.md` exists in the project root. If either is present, note it — they are adopter-owned; canon does not insert, merge, or read managed content into them. `canon doctor` may warn that no agent file mentions canon; that is the adopter's call, canon does not write those files. Note any team conventions, terminology, or pitfalls you find from the codebase and docs — you'll need them in Phase 4.
 
 ---
 

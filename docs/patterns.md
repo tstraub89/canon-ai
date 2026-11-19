@@ -18,7 +18,7 @@ This is the project's hard-won implementation knowledge. It has two main section
 | Area touched | Section in this file | Key files |
 |---|---|---|
 | Adding/changing a pipeline phase | Phase Addition Discipline | `src/orchestrator/types.ts`, `src/orchestrator/main.ts`, `src/lib/pipeline-policy.ts`, `src/task/index.ts`, `.canon/templates/status.json` |
-| Modifying `pipeline-policy.ts` | Pure Policy + Test Discipline | `src/lib/pipeline-policy.ts`, `tests/pipeline-policy.test.ts` |
+| Modifying `pipeline-policy.ts` | Pure Policy + Test Discipline | `src/lib/pipeline-policy.ts`, `src/orchestrator/policy.ts`, `src/orchestrator/docs-freshness.ts`, `tests/pipeline-policy.test.ts`, `tests/run-task-codex-config.test.ts` |
 | Modifying `status.json` shape | State Schema Discipline | `.canon/templates/status.json`, `src/orchestrator/types.ts` (`StatusJson`), parsers in `src/orchestrator/state.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts`, `src/task/index.ts` (`assertValidPhase()`) |
 | Adding/modifying a validation gate | Validation Gate Discipline | `src/orchestrator/validation.ts`, `src/orchestrator/git.ts`, `src/orchestrator/main.ts`, `src/orchestrator/phases/code-review.ts`, `tests/run-task-validation.test.ts` |
 | Lint / TS suppression / `any` | Lint & Type Safety Policy | `src/orchestrator/prompts/templates/implement.md` |
@@ -26,21 +26,24 @@ This is the project's hard-won implementation knowledge. It has two main section
 | Parsing git output, staging paths, or shelling out to npm | Git and npm behavior that specs get wrong | `src/orchestrator/git.ts`, `src/lib/project-root.ts`, `src/cli/commands/update.ts` |
 | Editing operator-facing text (help, errors, banners, prompt lines) | Operator-facing text is often rendered by independently-authored duplicates | `src/cli/index.ts`, `src/orchestrator/cli.ts`, `src/orchestrator/prompts/index.ts`, `src/orchestrator/prompts/templates/` |
 | Adding or changing tests | Slow Test Discipline | `tests/run-task-*.test.ts`, `tests/*-helpers.ts` |
+| Reading or writing task files, setting a subprocess cwd, or writing a test that reads a task-edited file | Worktree runs: read files and set subprocess cwd from the active checkout, not REPO_ROOT | `src/orchestrator/state.ts`, `src/orchestrator/worktree.ts`, `src/lib/project-root.ts` |
+| Editing a canon-managed file (`CANON_OWNED` / `DELIMITED`) | Declare `templates/` mirrors of canon-managed edits in BOTH the spec Affected Files and the handoff Changes table | `src/lib/canon-owned.ts`, `scripts/sync-canon-templates.mjs` |
+| Changing auto-commit, QA-end commit, or anything that discards worktree state | Never use blanket `git stash` / `git clean` inside a pipeline phase | `src/orchestrator/main.ts`, `src/orchestrator/worktree.ts` |
 
 ## Patterns
 
 ### Pure Policy + Test Discipline
 
-**Files**: `src/lib/pipeline-policy.ts`, `tests/pipeline-policy.test.ts`
+**Files**: `src/lib/pipeline-policy.ts`, `src/orchestrator/policy.ts`, `src/orchestrator/docs-freshness.ts`, `tests/pipeline-policy.test.ts`, `tests/run-task-codex-config.test.ts`
 
 **When to apply**: Any change that touches tier detection, sizing, model/effort matrices, or loop-cap defaults.
 
 **The pattern**:
-- `pipeline-policy.ts` is **side-effect-free**. No I/O, no env reads, no filesystem. Inputs are passed; outputs are returned. `src/orchestrator/policy.ts` reads policy env values and, on the Codex path only, the main checkout's `.canon/config.json` `codex` section, and passes both as `PolicyConfig`; the pure policy resolves Claude model precedence per cell. `src/orchestrator/env.ts` retains shared environment helpers and legacy warnings.
+- `pipeline-policy.ts` is **side-effect-free**. No I/O, no env reads, no filesystem. Inputs are passed; outputs are returned. `src/orchestrator/policy.ts` reads policy env values and the main checkout's `.canon/config.json` `codex` section (validated at startup by every run except plain `--ship`, applied only by Codex resolution), and passes both as `PolicyConfig`; the pure policy resolves Claude model precedence per cell. `src/orchestrator/env.ts` retains shared environment helpers and legacy warnings.
 - Decisions are **table-driven**. Matrices keyed off `TaskSize` × `Phase`. Adding a new branch means adding a table cell, not chaining `if`s.
 - **Every routing decision has a corresponding test row** in `pipeline-policy.test.ts`. A change to `pipeline-policy.ts` without a corresponding test update is a Stage 1 review failure — the table-driven structure exists *so* tests can cover every cell, and skipping the test means coverage drift.
-- **Pin expected values as literals.** A test that reads its expected model or effort from the config it checks moves with the bug and cannot fail on a wrong cell. Write each expectation as a literal beside its cell, and use distinct override values per tier (`mini-x`, `full-x`) so a fallback to the wrong tier shows as a wrong literal. If the matrix reads env vars at module load, run the test in a spawned process that sets them first.
-- **Moving a cell between tiers changes what each env var reaches.** Before changing a cell's tier or fallback chain, list every env-var combination that reaches it today and what each one resolves to after the change, and put that list in the spec. An adopter who pinned the old tier's variable otherwise silently gets a different model.
+- **Pin expected values as literals.** A test that reads its expected model or effort from the config it checks moves with the bug and cannot fail on a wrong cell. Write each expectation as a literal beside its cell, and use distinct override values per tier (`mini-x`, `full-x`) so a fallback to the wrong model tier shows as a wrong literal. If the matrix reads env vars at module load, run the test in a spawned process that sets them first.
+- **Moving a cell between model tiers (mini/full, or Claude light/strong) changes what each env var reaches.** Before changing a cell's tier or fallback chain, list every env-var combination that reaches it today and what each one resolves to after the change, and put that list in the spec. An adopter who pinned the old tier's variable otherwise silently gets a different model.
 
 **Anti-pattern**: writing routing logic directly in `src/orchestrator/main.ts` (`if (size === 'XL' || delicate) ...`). Routing drift was the original motivation for extracting this module — don't reintroduce it.
 

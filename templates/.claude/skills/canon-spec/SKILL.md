@@ -213,4 +213,4 @@ canon run --full-send [--force] TASK-ID
 - `/canon-spec-review` — adversarial pre-pipeline review of the spec. Strongly recommended after authoring any spec with logic to vet, before approving it and invoking the pipeline.
 - `/canon-pipeline` — drive the pipeline after spec approval.
 - `/canon-status` — check what other canon tasks are in flight before committing to scope.
-- `docs/pipeline-orchestrator.md` — pipeline internals, sizing guide, model/effort matrix. The Validation Matrix is now inline in `.canon/templates/spec.md`.
+- `docs/pipeline-orchestrator.md` — pipeline internals, sizing guide, model/effort matrix.

@@ -94,7 +94,7 @@ The human gates between `spec_review` and `plan` — they approve the spec befor
 
 The pipeline supports two tiers:
 
-- **Fast tier** (XS tasks): spec + plan in one Claude session; skip the `spec_review` phase, and the human gate replaces it.
+- **Fast tier** (XS tasks that are not `delicate`): spec + plan in one Claude session; skip the `spec_review` phase, and the human gate replaces it.
 - **Full tier** (S / M / L / XL / delicate tasks): every phase runs separately, and the spec reviewer checks specs before they reach the human.
 
 `delicate: true` promotes any task to full tier and upgrades the model and effort for spec, plan, and code review, plus moves spec review, implementation, and the mixed-mode cold-Codex review lens to their XL cells (in mixed mode, the full Codex model); QA stays on its regular cells. Set it with `canon task set <task-id> delicate true`. Use it for sensitive surfaces — auth, payments, persistent storage, anything where a regression has unbounded blast radius.
@@ -117,7 +117,7 @@ Multiple task IDs in one invocation activates **bundle mode** — `canon run id1
 - **git**
 - **Claude Code (≥ 2.1.72)** — `npm install -g @anthropic-ai/claude-code`
 - **Codex CLI** (required for the default `mixed` provider and for `/canon-inline-review` under either provider; `CANON_PROVIDER=claude` pipeline runs don't need it, and Claude Code's `/code-review` covers inline review without it) — `npm install -g @openai/codex`
-- **gh** (needed for `--pr`, `--push` and `--ship`; not for plain `canon run`) — `brew install gh && gh auth login`
+- **gh** (needed for `--pr` and `--ship`; not for `--push` or plain `canon run`) — `brew install gh && gh auth login`
 
 ### Install
 
@@ -307,7 +307,7 @@ Pipeline sessions are headless, so nobody is at the keyboard to answer a permiss
 - **In mixed mode, fresh headless Codex runs use `--sandbox workspace-write`.** Codex's OS-level sandbox confines those runs' writes to the directory canon launches them in, plus temporary directories such as `/tmp` and `$TMPDIR`: the task worktree once one exists, otherwise the main checkout (a task's first spec review runs before its worktree is created, and `worktree: false` tasks never get one). Network is off unless your Codex config enables it. The flag is not passed on session resumes, on the `codex exec review` code-review lens, or in interactive Codex sessions, which follow your own Codex sandbox settings.
 - **Worktrees separate branch state by convention, not by enforcement.** Each task, or each bundle when you pass several task ids together, gets its own worktree and branch, and the pipeline's dirty-tree gates inspect the active worktree at phase boundaries. But Claude sessions are also given the main checkout via `--add-dir` and run with permissions skipped, so nothing stops a session from writing there, and an unrelated file dropped into the main checkout is not something those gates look for; tasks with `worktree: false` run in the main checkout outright. Validation commands run with your normal privileges.
 - **Budget caps bound cost, not access.** Each headless Claude phase runs with `--max-budget-usd`; hitting the cap stops the session. It does not narrow what the session may do beforehand, and interactive sessions (`--interactive`) run uncapped.
-- **Your code goes to the model providers.** Each agent phase sends prompts and repository context to the provider running it. In mixed mode that is Anthropic for Claude phases and OpenAI for Codex phases, with mixed-mode `code_review` using both. In `claude` mode prompts and repository context go only to Anthropic; the exception is `/canon-inline-review`, which, if you use it, sends the diff to OpenAI. These sessions use the relevant CLIs under whatever data terms your accounts have. Treat a `canon run` like any other agent session in that respect.
+- **Your code goes to the model vendors.** Each agent phase sends prompts and repository context to the provider running it. In mixed mode that is Anthropic for Claude phases and OpenAI for Codex phases, with mixed-mode `code_review` using both. In `claude` mode prompts and repository context go only to Anthropic; the exception is `/canon-inline-review`, which, if you use it, sends the diff to OpenAI. These sessions use the relevant CLIs under whatever data terms your accounts have. Treat a `canon run` like any other agent session in that respect.
 - **Git side effects need a flag.** The pipeline never pushes, opens PRs, merges, or publishes on its own. `--pr` pushes the task branch and opens a draft PR, stopping at `human_review`. `--ship` merges that PR with the configured method (squash by default; see `ship.merge_method`); it checks the task's phase, not whether anyone approved, so PR approval is your prerequisite (or your branch protection's), not something canon enforces. `--full-send` skips the human spec gate and opens the draft PR on clean QA, still stopping before merge. `--pr`, `--push` and full-send first push canon's own unpushed scaffold and telemetry commits on the base, creating it on origin if missing when every local-only commit is canon-safe or already published. Other unpushed base commits block unless `--allow-divergent-base` is set; that escape does not apply to a missing remote base. On a `delicate` task, `--full-send` refuses without `--force`.
 
 #### Optional: Claude Code sandbox
@@ -336,7 +336,8 @@ Run canon on repositories where you would be comfortable running your test suite
 | `canon init` | Install canon into the current repo. Refuses symlinks at destination files or parent directories; replace them with regular files/directories first. |
 | `canon doctor` | Verify environment and canon setup — Node (24.x or 26.x; warns on other majors >= 24), git, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage, guard-hook registration, the `.canon/config.json` docs-freshness and Codex config sections, and that any local settings file is gitignored. |
 | `canon completion <shell>` | Print a completion script for bash, zsh, fish, or tcsh; see Shell completion. |
-| `canon task new <id> "Title"` | Scaffold a new task from templates |
+| `canon task new <id> "Title" [--base <branch>]` | Scaffold a new task from templates |
+| `canon task status <id>` | Show full `status.json` detail for a task. |
 | `canon task list` | Show all tasks and their pipeline phase |
 | `canon task phase <id> <phase> <status>` | Advance a task phase manually |
 | `canon task accept <id...> <phase> [--reason "<text>"] [--force]` | Accept a manually-committed `implement` phase outside the pipeline (e.g. after a manual recovery commit), or sanction a `spec_review` / `code_review` verdict with an audit reason (`--reason` is required for those two). `--force` bypasses the missing-verdict and dirty-tree guards. |
@@ -350,6 +351,9 @@ Run canon on repositories where you would be comfortable running your test suite
 | `canon run <id> --reroute` | Reset a task once implementation has begun: current phase `code_review`, `qa`, or `human_review` (any status or verdict), or `implement` when implement is in progress or blocked, code review is blocked, or code review already ran in the current loop (a review round or a pre-flight rejection). In a bundle, a sibling at implement pending with no current-loop activity is admitted alongside a task that qualifies when both belong to the same non-empty task branch. Requires the next amendment section (`## Amendment`, then `## Amendment Round N`) appended to `spec.md` first; full-tier re-enters at `spec_review`, fast-tier at `implement`. |
 | `canon run <id> --full-send` | Skip the spec gate and auto-open a draft PR after clean QA |
 | `canon run <id> --ship` | After PR approval: merge with the configured method (squash by default; see `ship.merge_method`), delete branch, tear down worktree, archive the task, pull base branch, and list done.md follow-ups left to write or decide. Don't merge the PR manually first. |
+| `canon run <id> --interactive` (`-I`) | Open interactive agent sessions instead of non-interactive ones (mixed-mode `code_review` still runs the cold Codex lens headlessly first). |
+| `canon run <id> --force` | Bypass operator-confirmation gates after you have verified the situation; the full list is in `docs/pipeline-orchestrator.md`. |
+| `canon run <id> --allow-divergent-base` | At `--push`, `--pr`, and `--ship`, bypass only the commit-divergence block when local `<base>` has commits not yet on `origin/<base>`. |
 | `canon run <id> --dry-run` | Print each planned phase and exit without spawning any agent |
 | `canon watch <id> [--until <phase>] [--timeout <dur>] [--follow]` | Block on a detached run until it settles, then print one summary line (exit 0 healthy stop, 3 auto-block, 4 death, 5 timeout). |
 | `canon stop <id>` | Stop a detached canon run (SIGTERM → SIGKILL after 10s). Waits up to 30s — override via `CANON_STOP_WAIT_MS` — for the orchestrator's first heartbeat to verify the PID before signaling. |
@@ -448,7 +452,7 @@ Use the optional `codex` section in `.canon/config.json`:
 }
 ```
 
-All keys are optional. Models use env → deprecated env fallback → config → built-in default: `CODEX_MODEL_MINI` → `CODEX_MODEL_DEFAULT` → `codex.models.mini` → `gpt-6-luna`, and `CODEX_MODEL_FULL` → `CODEX_MODEL_DELICATE` → `codex.models.full` → `gpt-6.2-sol`. Model tiers reach all their phases. Implement effort uses the configured size cell or its default; `XL` also governs delicate tasks. Allowed efforts are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The retired `CODEX_EFFORT_*` env vars stay ignored. Spec-review, cold-lens and Claude effort are unchanged.
+All keys are optional. Models use env → deprecated env fallback → config → built-in default: `CODEX_MODEL_MINI` → `CODEX_MODEL_DEFAULT` → `codex.models.mini` → `gpt-6-luna`, and `CODEX_MODEL_FULL` → `CODEX_MODEL_DELICATE` → `codex.models.full` → `gpt-6.2-sol`. Model tiers (`mini` and `full`) reach all their phases. Implement effort uses the configured size cell or its default; `XL` also governs delicate tasks. Allowed efforts are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The retired `CODEX_EFFORT_*` env vars stay ignored. Spec-review, cold-lens and Claude effort are unchanged.
 
 Only the main checkout's file is read, committed or not, at startup and each Codex resolution. Main-checkout edits reach the next invocation of an in-flight task. Worktree copies are neither validated nor applied; a non-worktree task's own edits do apply. Invalid values stop startup (including dry-run) or the next Codex lookup after an edit; unknown keys warn once per process. Claude, size and loop-cap lookups do not read this section. Plain `--ship` skips it because it spawns no agent. Claude mode validates it at startup but does not apply it. `canon doctor` checks it separately from docs freshness.
 
@@ -460,7 +464,7 @@ Canon is two products:
 
 ### Layer 1: The Scaffold
 
-The portable structure: orchestration scripts, task templates, the agent rules (delivered just-in-time through the per-phase prompt templates and `/canon-*` skills), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.), config files for both CLIs. `AGENTS.md` / `CLAUDE.md` are adopter-owned — canon does not ship or modify them, and they come from the built-in `/init` flow rather than `/canon-init`.
+The portable structure: orchestration scripts, task templates, the agent rules (delivered just-in-time through the per-phase prompt templates and `/canon-*` skills), knowledge corpus templates (`docs/patterns.md`, `docs/decisions.md`, etc.). `AGENTS.md` / `CLAUDE.md` are adopter-owned — canon does not ship or modify them, and they come from the built-in `/init` flow rather than `/canon-init`.
 
 Drop this into any repo and you have:
 
