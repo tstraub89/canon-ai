@@ -23,7 +23,7 @@ function fixture(fn: (root: string) => void): void {
 }
 
 function entry(root: string, taskId = 'example-task', phase: MetricEntry['phase'] = 'spec'): MetricEntry {
-    return { taskId, activeCwd: root, phase, agent: 'codex', model: 'test-model', durationMs: 1234, tokens: 42, status: 'ok' };
+    return { taskId, activeCwd: root, phase, agent: 'codex', model: 'test-model', effort: 'high', durationMs: 1234, tokens: 42, status: 'ok' };
 }
 
 void test('metrics use per-task fragments, preserve shared docs, and retain bundle labels', () => fixture(root => {
@@ -35,6 +35,9 @@ void test('metrics use per-task fragments, preserve shared docs, and retain bund
     assert.equal(fs.readFileSync(shared, 'utf8'), METRICS_SKELETON);
     const single = fs.readFileSync(path.join(root, 'tasks/example-task/metrics.md'), 'utf8');
     assert.ok(single.startsWith(METRICS_SKELETON));
+    const cells = single.split('\n').find(line => line.startsWith('| 20'))!.split('|').slice(1, -1).map(cell => cell.trim());
+    assert.equal(cells.length, 10);
+    assert.equal(cells[9], 'high');
     assert.match(single, /\| example-task \| spec \| codex \| test-model \| - \| 1\.2s \| 42 \| ok \|/);
     assert.match(fs.readFileSync(path.join(root, 'tasks/a/metrics.md'), 'utf8'), /\| a\+b \|/);
     assert.ok(!fs.existsSync(path.join(root, 'tasks/b')));
@@ -64,11 +67,13 @@ void test('metrics skeleton notes match adopter header and Agent cells escape de
     const template = fs.readFileSync(path.join(process.cwd(), 'templates/docs/pipeline-invocations.md'), 'utf8');
     const notes = (value: string) => value.split('\n').filter(line => line.startsWith('>'));
     assert.deepEqual(notes(METRICS_SKELETON), notes(template));
+    assert.deepEqual(template.split('\n').filter(line => line.startsWith('|')), METRICS_SKELETON.split('\n').filter(line => line.startsWith('|')));
+    assert.match(METRICS_SKELETON, /Status \| Effort \|/);
     process.env.CANON_METRICS_FILE_OVERRIDE = path.join(root, 'metrics.md');
     recordMetric({ ...entry(root), agent: 'claude:a|b\nc' });
     const row = fs.readFileSync(path.join(root, 'metrics.md'), 'utf8').split('\n').find(line => line.startsWith('| 20'));
     assert.ok(row);
-    assert.equal(row.split(/(?<!\\)\|/).length - 2, 9);
+    assert.equal(row.split(/(?<!\\)\|/).length - 2, 10);
 }));
 
 void test('early phases leave all shared telemetry clean in a real main checkout', () => fixture(root => {

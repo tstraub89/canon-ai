@@ -226,25 +226,46 @@ This is a default — your project can adopt a stricter or looser bar in `docs/d
 
 This matrix applies to Codex-held roles in mixed mode. In `claude` mode spec review and implementation use the Claude matrix below.
 
-Codex model and effort come from a fixed phase × size matrix:
+Codex model tiers and default effort come from this phase × size matrix:
 
 | Phase | XS | S | M | L | XL / delicate |
 |---|---|---|---|---|---|
 | `spec_review` | — (skipped) | mini / high | mini / high | mini / high | full / high |
-| `implement`   | mini / xhigh | mini / xhigh | mini / max | mini / max | full / high |
+| `implement`   | mini / medium | mini / high | mini / high | mini / xhigh | full / high |
 | `code_review` (cold lens) | mini / high | mini / high | mini / high | full / high | full / high |
 
-Codex is tuned for token efficiency — the mini model handles most phases; the full model runs XL or delicate work and the cold-Codex review lens at L. Effort comes only from this matrix; there is no Codex effort environment override. M/L implement runs use the mini model (default `gpt-6-luna`) at `max`, while XL/delicate runs use the full model (default `gpt-6.2-sol`) at `high`: delicate work already gets the stronger model, and the full model at `xhigh` costs about 1.5–2× `high`.
+Codex is tuned for token efficiency — the mini model handles most phases; the full model runs XL or delicate work and the cold-Codex review lens at L. Implement effort is configurable per size through the config's `codex.implement_effort` field; spec_review and cold-lens effort remain fixed. There is no Codex effort environment override. XL/delicate defaults to full / high.
 
 In mixed mode the mandatory cold-Codex `code_review` lens runs at `high` effort at every size: the mini model at XS, S and M, and the full model at L and XL/delicate. `CODEX_MODEL_FULL` therefore also steers the lens at L and XL/delicate, and `CODEX_MODEL_MINI` steers it at XS–M. A bundle runs one cold review at its effective size, so one L, XL, or delicate member puts the whole bundle's cold review on the full model.
 
 `spec_review` runs at `high` at every size that runs it; `xhigh` and `max` cost 3–5× `high`'s output tokens for marginal gain.
 
+### Codex settings
+
+The optional `codex` section in the adopter-owned [.canon/config.json](../.canon/config.json) sets the two model tiers and implement effort per size:
+
+```json
+{
+  "codex": {
+    "models": { "mini": "gpt-6-luna", "full": "gpt-6.2-sol" },
+    "implement_effort": { "XS": "medium", "S": "high", "M": "high", "L": "xhigh", "XL": "high" }
+  }
+}
+```
+
+Every key is optional; partial maps fall back key by key. Model precedence is `CODEX_MODEL_MINI` → deprecated `CODEX_MODEL_DEFAULT` → `codex.models.mini` → `gpt-6-luna`, and `CODEX_MODEL_FULL` → deprecated `CODEX_MODEL_DELICATE` → `codex.models.full` → `gpt-6.2-sol`. Models reach every phase using that tier, including fix-ups and the cold lens. Implement effort uses `codex.implement_effort.<size>` → the built-in cell. Allowed size keys are `XS`, `S`, `M`, `L`, `XL`; `XL` also governs delicate tasks. Bundles use their largest or delicate member's cell. Spec-review, cold-lens and Claude effort are unchanged.
+
+Only the **main checkout's** file is read, committed or not: once at startup (including `--dry-run`) and again at each Codex resolution. An edit on main reaches an in-flight task at its next Codex invocation. A task worktree's copy is neither validated nor applied. A non-worktree task edits the main checkout itself, so its own edits take effect. Docs freshness and ship settings retain their active-checkout rules.
+
+Wrong object types, empty/non-string models, invalid efforts, and unknown size keys are hard errors naming the key and value (and allowed set where applicable). Allowed efforts are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Other unknown keys under `codex` or `codex.models` warn at most once per process. A malformed edit mid-run stops the next Codex call; Claude, sizing and loop-cap lookups do not read or validate this section. `canon doctor` reports it as a separate **Codex config** check. In `claude` mode it is validated at startup but has no effect on agents. Plain `--ship` spawns no agent and does not read or validate the section; `--ship --dry-run` still validates because it resolves agent configs.
+
+Invocation telemetry has a trailing **Effort** column: resolved session effort, rejected effort when recorded before spawn, and `-` for Claude sub-agents where canon passes no effort. `canon upgrade` updates the header without rewriting old nine-cell rows; their blank Effort means unknown. New rows folded before upgrade carry a tenth cell that the old header does not yet show.
+
 ## Provider Selection
 
 `CANON_PROVIDER=mixed|claude` selects the default for new tasks, `canon init`, and `canon doctor`. Unset or empty means `mixed`; other values are refused, and Codex-only mode is not supported yet. Doctor reports the environment setting it checks, rather than inspecting providers pinned on existing tasks. Claude mode requires Claude Code and git; Codex and its project-trust check are not required.
 
-`canon task new` stamps `status.json.provider`. Existing tasks without the field stay mixed. `canon run` resolves each task's pin once at startup and uses that assignment throughout the process, regardless of later metadata edits. A bundle must have one provider; a mismatch is refused before any phase starts. `canon run --ship` (without `--dry-run`) spawns no agent and does not resolve provider pins, so an invalid pin or mismatched bundle still ships; `--dry-run`, with or without `--ship`, keeps the refusal. `canon doctor` with an invalid `CANON_PROVIDER` reports the failing provider check and skips the Codex checks (Claude Code checks still run). Mixed keeps author/reviewer/QA on Claude and spec_reviewer/implementer/cold_reviewer on Codex. Claude assigns every role to Claude.
+`canon task new` stamps `status.json.provider`. Existing tasks without the field stay mixed. `canon run` resolves each task's pin once at startup and uses that assignment throughout the process, regardless of later metadata edits. A bundle must have one provider; a mismatch is refused before any phase starts. `canon run --ship` (without `--dry-run`) spawns no agent and does not resolve provider pins, so an invalid pin or mismatched bundle still ships; `--dry-run`, with or without `--ship`, keeps the refusal. `canon doctor` with an invalid `CANON_PROVIDER` reports the failing provider check and skips the Codex dependency and trust checks (Claude Code and Codex config checks still run). Mixed keeps author/reviewer/QA on Claude and spec_reviewer/implementer/cold_reviewer on Codex. Claude assigns every role to Claude.
 
 Switch an existing task with `canon task set <id> provider claude` (or `mixed`). This clears and reports stored role/legacy session pairs whose backend differs from the new assignment, retaining compatible sessions. It takes effect on the next run and may start fresh over partial work left by the previous backend.
 
@@ -311,23 +332,19 @@ Codex model overrides:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CODEX_MODEL_MINI` | `gpt-6-luna` | Codex model for non-delicate `spec_review` and `implement` at XS–L, and the non-delicate cold-Codex review lens at XS–M. |
-| `CODEX_MODEL_FULL` | `gpt-6.2-sol` | Codex model for XL or delicate phases, and the cold-Codex review lens at L. |
+| `CODEX_MODEL_MINI` | `codex.models.mini`, else `gpt-6-luna` | Overrides config. Codex model for non-delicate `spec_review` and `implement` at XS–L, and the non-delicate cold-Codex review lens at XS–M. |
+| `CODEX_MODEL_FULL` | `codex.models.full`, else `gpt-6.2-sol` | Overrides config. Codex model for XL or delicate phases, and the cold-Codex review lens at L. |
 
-`CODEX_MODEL_DEFAULT` and `CODEX_MODEL_DELICATE` are deprecated fallbacks for `CODEX_MODEL_MINI` / `CODEX_MODEL_FULL`; canon warns when they are set. `CODEX_EFFORT_DEFAULT` / `CODEX_EFFORT_DELICATE` are ignored with a warning.
+`CODEX_MODEL_DEFAULT` and `CODEX_MODEL_DELICATE` are deprecated fallbacks for `CODEX_MODEL_MINI` / `CODEX_MODEL_FULL`; canon warns when they are set. `CODEX_EFFORT_DEFAULT` / `CODEX_EFFORT_DELICATE` are ignored with a warning; configure implement effort with `codex.implement_effort` instead.
 
-M/L implementation uses `max`, which requires a Codex CLI and mini model
-that accept that effort. This was verified only with Codex CLI 0.164.0 and
-`gpt-6-luna`. If an M/L implement call fails on `max`, upgrade the Codex CLI,
-point `CODEX_MODEL_MINI` at a model that accepts `max` (or unset it), or
-install the previous canon release. There is no effort environment override.
+No built-in cell uses `max`. If you set `max` in `codex.implement_effort`, the CLI and model must accept it. This was verified only with Codex CLI 0.164.0 and `gpt-6-luna`. On failure, upgrade the CLI, use a model that accepts it, or lower the configured effort. Canon validates the model-agnostic effort set, not model × effort compatibility.
 
 These are canon's shipped defaults at the time of release and may lag
 behind what your local `codex` CLI accepts. **Verify they resolve on your
 install before relying on the pipeline** — a stale identifier produces a
 hard failure on the first phase that needs Codex. If they don't resolve,
 set `CODEX_MODEL_MINI` and `CODEX_MODEL_FULL` explicitly to identifiers
-your CLI exposes rather than changing the orchestrator contract.
+your CLI exposes, or set the config's `codex.models` field.
 
 ## Worktree Isolation
 
@@ -382,7 +399,7 @@ At `human_review` with `--push` or `--pr`, the orchestrator auto-commits a scope
 
 - **`tasks/<id>/`** — task artifacts (spec, plan, handoff, review, done, pr-body, notes).
 - **Telemetry files** (`docs/lessons-learned.md`, `docs/task-quality-log.md`, `docs/pipeline-invocations.md`) — legacy edits remain auto-committed. New task runs write `metrics.md`, `quality-log.md`, and `lessons.md` fragments in each task directory; `--ship` folds them into the shared logs (see the `--ship` sequence under Shipping & Post-Merge Reconciliation). Runtime writes are fail-soft. Missing fragments are a no-op; fold failures abort before archive-state changes. `--pr` warns on shared-log edits because parallel tasks will conflict there. A non-interactive Claude session that spawns sub-agents also writes one `claude:<agent type>` row per top-level sub-agent; duration comes from the harness and tokens from that sub-agent's own transcript (or `-` when unavailable), separate from the session row.
-- **Admitted docs** — `(protected ∪ mapped) − flag_only`, resolved from the project's docs-freshness config (config.json in the .canon directory). The protected set defaults to architecture, codebase-map, patterns, product-context, and decisions; `protected` replaces it. All docs in `paths` values are mapped docs. Admission depends only on config, never on the diff. Affected Files admits protected, mapped, or flag-only docs explicitly assigned to the implementer. **QA-done widening** adds all admitted docs once any task's `qa.status === 'done'`. QA's prompt set is the protected set plus docs mapped from globs matching the task's rename-aware three-dot diff, excluding task artifacts and telemetry. Flag-only docs in that prompt set are reported in done.md's "Docs drift" section instead of edited. QA only corrects stale references; it does not promote lessons into permanent docs. Malformed config stops every consumer without falling back to defaults. Run-start validation precedes heartbeat, status changes, reroute, and ship actions; unknown keys warn. Every form reads the active checkout except `--ship`, which reads the main checkout.
+- **Admitted docs** — `(protected ∪ mapped) − flag_only`, resolved from the project's docs-freshness config (config.json in the .canon directory). The protected set defaults to architecture, codebase-map, patterns, product-context, and decisions; `protected` replaces it. All docs in `paths` values are mapped docs. Admission depends only on config, never on the diff. Affected Files admits protected, mapped, or flag-only docs explicitly assigned to the implementer. **QA-done widening** adds all admitted docs once any task's `qa.status === 'done'`. QA's prompt set is the protected set plus docs mapped from globs matching the task's rename-aware three-dot diff, excluding task artifacts and telemetry. Flag-only docs in that prompt set are reported in done.md's "Docs drift" section instead of edited. QA only corrects stale references; it does not promote lessons into permanent docs. Malformed JSON or invalid docs-freshness/ship settings stop every consumer without falling back to defaults. Run-start validation precedes heartbeat, status changes, reroute, and ship actions; unknown keys warn. Docs freshness and ship settings read the active checkout except `--ship`, which reads the main checkout. The `codex` section is validated separately from the main checkout at startup and each Codex resolution; plain `--ship` skips it.
 
 The `--pr` body resolution order is `CANON_PR_BODY` → populated `tasks/<id>/pr-body.md` (single task only) → repo PR template file → `--fill`. Bundles log that per-task QA bodies are not combined and fall back to the template/`--fill` path in this version.
 

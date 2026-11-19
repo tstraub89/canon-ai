@@ -174,6 +174,7 @@ export type MetricEntry = {
     phase: string;
     agent: 'claude' | 'codex' | `claude:${string}`;
     model: string;
+    effort: string;
     iteration?: number;
     durationMs: number;
     status: 'ok' | 'failed';

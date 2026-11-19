@@ -461,7 +461,7 @@ As part of the same trigger, the audit required by the "Guardrail prompts carry 
 
 _Generation: gpt-6-luna (mini) / gpt-6.1-sol (full)._
 
-**Decision**: Raise Codex mini implement effort to `xhigh` for XS/S and `max` for M/L; retain XL/delicate at full-model `high`. Change the full-model fallback to `gpt-6.1-sol`. These are canon-supplied default changes and a **minor** release item. No effort override or CLI version gate is added.
+**Decision**: Raise Codex mini implement effort to `xhigh` for XS/S and `max` for M/L; retain XL/delicate at full-model `high`. Change the full-model fallback to `gpt-6.1-sol`. These are canon-supplied default changes and a **minor** release item. No effort override or CLI version gate is added. *(Superseded by "Codex models and implement effort in .canon/config.json (2026-11)" below: effort is now configurable per size and the defaults were lowered.)*
 
 **Why**: OpenAI's GPT-6 launch chart reports Luna DeepSWE at 44.5% (`medium`, $0.052/task), 59.3% (`high`, $0.084), 61.3% (`xhigh`, $0.11), and 66.6% (`max`, $0.22). FrontierCode reports Luna `max` at 42.4%/$0.11 versus Sol `high` at 47.7%/$1.08. This vendor-published curve suggests Luna continues improving through `max`, unlike the 2026-07 entry's `high` → `xhigh` diminishing-to-negative returns evidence, which predates GPT-6; canon's longer, tool-heavy sessions still need measurement. The launch chart's GPT-5.6 Luna `max` result is 62.2%, not the 2026-09 entry's "DeepSWE 66→64%"; the figures appear to come from different sources or benchmark versions, and this entry does not reconcile them.
 
@@ -469,7 +469,7 @@ The `max` effort was probed on Codex CLI 0.164.0 with `gpt-6-luna`: both a fresh
 
 XL/delicate remains Sol at `high` because delicate work already gets the stronger model, while Sol `xhigh` costs about 1.5–2× `high`; reevaluating the full model's effort curve remains separate. Measure `code_review` rounds and `changes_requested` rates for non-delicate XS–L tasks in `docs/task-quality-log.md`, comparing rows before and after this entry's date. Exclude delicate tasks because their model also changed.
 
-**Rule**: Roll back the full model with `CODEX_MODEL_FULL=gpt-6-sol`. If a Codex CLI or mini model rejects `max`, upgrade the CLI or change/unset `CODEX_MODEL_MINI`; restore prior effort cells by installing the previous canon release because effort has no environment override. If the new effort cells increase cost or do not improve outcomes, install the previous canon release. Treat benchmark-to-canon transfer as a hypothesis to measure. *(Full-model default superseded by "Full-model default → GPT-6.2 Sol (2026-11)" below; the effort cells remain in force.)*
+**Rule**: Roll back the full model with `CODEX_MODEL_FULL=gpt-6-sol`. If a Codex CLI or mini model rejects `max`, upgrade the CLI or change/unset `CODEX_MODEL_MINI`; restore prior effort cells by installing the previous canon release because effort has no environment override. If the new effort cells increase cost or do not improve outcomes, install the previous canon release. Treat benchmark-to-canon transfer as a hypothesis to measure. *(Full-model default superseded by "Full-model default → GPT-6.2 Sol (2026-11)" below; the effort cells and restore-by-release rule are superseded by "Codex models and implement effort in .canon/config.json (2026-11)" below.)*
 
 ---
 
@@ -477,7 +477,7 @@ XL/delicate remains Sol at `high` because delicate work already gets the stronge
 
 _Generation: gpt-6-luna (mini) / gpt-6.2-sol (full)._
 
-**Decision**: Change the full-model fallback (`CODEX_MODEL_FULL`) from `gpt-6.1-sol` to `gpt-6.2-sol`, triggered by OpenAI's 2026-11 release of GPT-6.2 Astra and Sol. The mini default stays `gpt-6-luna` because the release ships no new Luna. Effort cells, routing, and the override env-var chains are unchanged. This is a canon-supplied default change and a **minor** release item.
+**Decision**: Change the full-model fallback (`CODEX_MODEL_FULL`) from `gpt-6.1-sol` to `gpt-6.2-sol`, triggered by OpenAI's 2026-11 release of GPT-6.2 Astra and Sol. The mini default stays `gpt-6-luna` because the release ships no new Luna. Effort cells, routing, and the override env-var chains are unchanged. *(Effort cells and the model precedence chain superseded by "Codex models and implement effort in .canon/config.json (2026-11)" below.)* This is a canon-supplied default change and a **minor** release item.
 
 **Why**: OpenAI positions GPT-6.2 Sol as the direct successor to GPT-6.1 Sol at the same API price ($2 input, $0.10 cached input, $10 output per 1M tokens), reporting better results with fewer output tokens. Its launch post reports GPT-6.2 Sol within 0.5 points of GPT-6.2 Astra on FrontierCode 2.0 at about one-fifth the cost (both at `max`). GPT-6.2 Astra was rejected for the same reason as GPT-6 Astra: at $8/$40 per 1M tokens its cost does not fit canon's token-discipline thesis. `gpt-6.2-sol` at `max` was probed on Codex CLI 0.170.0 with a fresh `codex exec`, which completed; canon's full-model cells run at `high`. Treat the vendor benchmarks as a hypothesis for canon's longer, tool-heavy sessions.
 
@@ -667,3 +667,25 @@ Replaying canon-ai PR #120 (delicate M) at its PR-open head with the same cold-l
 **Why**: The spec, handoff, plan, and review keep the task's full history across reroutes, so a fresh rewrite is complete, and patching the old text would leave stale claims behind. Carrying waivers forward is unsafe: the `human_review` gate accepts any `Acknowledged:` line as a waiver for every `human_pending` check, so an old waiver would silently pass checks the reroute added. Losing a waiver fails safe, because the gate blocks and lists the pending checks. QA also cannot reliably tell which done.md text a human added, and its own earlier Open Questions are usually raised again from the same sources.
 
 **Rule**: Do not add carry-forward or Edit-in-place instructions for `done.md` to the QA prompt. If a lost waiver becomes a real problem, first change the gate so each waiver matches the check it names, and only then consider carrying waivers forward.
+
+
+---
+
+## Codex models and implement effort in .canon/config.json (2026-11)
+
+**Decision**: Add optional `codex.models.mini`, `codex.models.full`, and `codex.implement_effort.{XS,S,M,L,XL}` to the adopter-owned `.canon/config.json`. Partial maps fall back key by key. Lower implement defaults to XS medium, S high, M high, L xhigh; XL/delicate stays full/high. This is a **minor** release change. Other Codex and Claude effort cells are unchanged.
+
+Model precedence is `CODEX_MODEL_MINI` → deprecated `CODEX_MODEL_DEFAULT` → config mini → `gpt-6-luna`, and `CODEX_MODEL_FULL` → deprecated `CODEX_MODEL_DELICATE` → config full → `gpt-6.2-sol`. Implement effort uses config size → built-in cell, with XL governing delicate tasks. Retired effort env vars stay ignored. Only the main checkout's file is read, committed or not, at startup and each Codex resolution. Worktree copies are neither validated nor applied. Non-worktree tasks can change their own settings. Plain `--ship` skips Codex reading and validation because it spawns no agent. Claude mode validates at startup without applying the settings; other policy lookups never read this section.
+
+**Why**: A 2026-11-18 re-measurement across canon-ai and one adopter compared non-delicate tasks whose implement runs all used `gpt-6-luna`, before (<3.15) versus after (≥3.15):
+
+| Size | n before/after | Median total agent time per task | Mean code_review rounds | Tasks rerouted |
+|---|---|---|---|---|
+| XS | 31 / 26 | 8.8 → 18.9 min (permutation p≈0) | 1.52 → 1.19 | 16% → 8% |
+| S | 48 / 35 | 19.9 → 44.5 min (p≈0) | 2.00 → 1.51 (p≈0.08) | 31% → 31% |
+| M | 29 / 19 | 61 → 100 min (p≈0.1) | 3.00 → 2.79 | 31% → 37% |
+| L | 8 / 18 | not measurable: 13 of 18 after-tasks are one sliced refactor batch | — | — |
+
+Median time outside implementation did not move (XS 2.6 → 2.8 min, S 8.1 → 8.6 min), so fewer review rounds did not offset the slower implementation. The evidence is significant at XS/S only. The M and L defaults are judgment, not a measured result.
+
+**Rule**: Roll back effort by editing `codex.implement_effort`, and measure using the new trailing Effort telemetry column on each invocation, rather than inferring effort from canon version. Session rows record resolved effort, rejected pre-spawn values are retained when recorded, and Claude sub-agent rows use `-` because canon passes no effort. Upgrade refreshes only the header; historical rows stay byte-identical and their blank Effort means unknown. Rows folded before upgrade already carry an Effort cell that the old header does not yet show. A malformed main-checkout edit stops the next Codex invocation; Claude, size and loop-cap lookups remain unaffected. Efforts are checked against the model-agnostic allowed set, not per-model support.

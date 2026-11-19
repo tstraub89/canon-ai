@@ -189,7 +189,7 @@ canon task new my-first-feature "Short description"
 canon run my-first-feature
 ```
 
-Run `canon doctor` after install to verify your environment — it checks Node (24.x or 26.x; warns on other majors >= 24), git, and Claude Code versions, allowlist coverage, the `.canon/config.json` docs-freshness config, and that any local Claude settings file is gitignored, plus Codex CLI presence and codex project trust when `CANON_PROVIDER` is `mixed`, empty, or unset. Doctor checks that environment setting, not providers pinned on existing tasks, so mixed-pinned tasks still need Codex.
+Run `canon doctor` after install to verify your environment — it checks Node (24.x or 26.x; warns on other majors >= 24), git, and Claude Code versions, allowlist coverage, the `.canon/config.json` docs-freshness and Codex config sections, and that any local Claude settings file is gitignored, plus Codex CLI presence and codex project trust when `CANON_PROVIDER` is `mixed`, empty, or unset. Doctor checks that environment setting, not providers pinned on existing tasks, so mixed-pinned tasks still need Codex.
 
 ### Discovery nudge (recommended)
 
@@ -334,7 +334,7 @@ Run canon on repositories where you would be comfortable running your test suite
 | Command | What it does |
 |---|---|
 | `canon init` | Install canon into the current repo. Refuses symlinks at destination files or parent directories; replace them with regular files/directories first. |
-| `canon doctor` | Verify environment and canon setup — Node (24.x or 26.x; warns on other majors >= 24), git, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage, guard-hook registration, the `.canon/config.json` docs-freshness config, and that any local settings file is gitignored. |
+| `canon doctor` | Verify environment and canon setup — Node (24.x or 26.x; warns on other majors >= 24), git, Claude Code (≥ 2.1.72), Codex CLI presence and codex project trust (when `CANON_PROVIDER` is `mixed`, empty, or unset), recommended-permission coverage, guard-hook registration, the `.canon/config.json` docs-freshness and Codex config sections, and that any local settings file is gitignored. |
 | `canon completion <shell>` | Print a completion script for bash, zsh, fish, or tcsh; see Shell completion. |
 | `canon task new <id> "Title"` | Scaffold a new task from templates |
 | `canon task list` | Show all tasks and their pipeline phase |
@@ -411,9 +411,9 @@ listed in the spec's Affected Files.
 
 `canon init` does not create this file and `canon upgrade` leaves it alone.
 Commit the config before starting worktree-isolated tasks: each worktree reads its
-branch's copy, so uncommitted main-checkout changes are not available there.
-Malformed config stops runs, including reroute and ship, and fails the docs-freshness
-check in `canon doctor`; unknown keys warn. Telemetry files and task-artifact paths
+branch's docs-freshness/ship settings, so uncommitted main-checkout changes are not available there. The `codex` section always reads the main checkout's copy.
+Malformed JSON or invalid docs-freshness/ship settings stop runs, including reroute and ship, and fail the docs-freshness
+check in `canon doctor`; an invalid `codex` section instead fails the separate Codex config check and stops runs except plain `--ship`. Unknown keys warn. Telemetry files and task-artifact paths
 cannot be configured. Without a config, the default protected set applies.
 
 ### Configuring the merge method
@@ -429,6 +429,25 @@ as after an external merge.
   "ship": { "merge_method": "rebase" }
 }
 ```
+
+### Configuring Codex models and effort
+
+Use the optional `codex` section in `.canon/config.json`:
+
+```json
+{
+  "codex": {
+    "models": { "mini": "gpt-6-luna", "full": "gpt-6.2-sol" },
+    "implement_effort": { "XS": "medium", "S": "high", "M": "high", "L": "xhigh", "XL": "high" }
+  }
+}
+```
+
+All keys are optional. Models use env → deprecated env fallback → config → built-in default: `CODEX_MODEL_MINI` → `CODEX_MODEL_DEFAULT` → `codex.models.mini` → `gpt-6-luna`, and `CODEX_MODEL_FULL` → `CODEX_MODEL_DELICATE` → `codex.models.full` → `gpt-6.2-sol`. Model tiers reach all their phases. Implement effort uses the configured size cell or its default; `XL` also governs delicate tasks. Allowed efforts are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The retired `CODEX_EFFORT_*` env vars stay ignored. Spec-review, cold-lens and Claude effort are unchanged.
+
+Only the main checkout's file is read, committed or not, at startup and each Codex resolution. Main-checkout edits reach the next invocation of an in-flight task. Worktree copies are neither validated nor applied; a non-worktree task's own edits do apply. Invalid values stop startup (including dry-run) or the next Codex lookup after an edit; unknown keys warn once per process. Claude, size and loop-cap lookups do not read this section. Plain `--ship` skips it because it spawns no agent. Claude mode validates it at startup but does not apply it. `canon doctor` checks it separately from docs freshness.
+
+New telemetry rows record the resolved Effort in a trailing column; upgrade refreshes the header while leaving old rows unchanged, with blank effort meaning unknown. See `docs/pipeline-orchestrator.md` §"Codex settings" for the complete contract.
 
 ## Architecture: two layers
 

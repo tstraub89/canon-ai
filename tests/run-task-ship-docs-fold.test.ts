@@ -501,7 +501,7 @@ for (const kind of ['mapped', 'flag-only', 'malformed'] as const) {
 }
 
 for (const worktreeInvalid of [true, false]) {
-    void test(`dry-run config source: worktree ${worktreeInvalid ? 'invalid' : 'valid'}, main opposite`, () => {
+    void test(`dry-run validates main JSON and worktree docs config: worktree ${worktreeInvalid ? 'invalid' : 'valid'}, main opposite`, () => {
         withTempDir('run-config-worktree-source-', dir => {
             const { localDir, fakeTools } = prepareSharedWorktreeShipFixture(dir, ['config-a', 'config-b'], { prNumber: 602 });
             const worktreeDir = path.join(dir, 'worktrees/config-a');
@@ -510,9 +510,9 @@ for (const worktreeInvalid of [true, false]) {
             const statusPath = path.join(worktreeDir, 'tasks/config-a/status.json');
             const before = fs.readFileSync(statusPath, 'utf8');
             const result = runCanon(localDir, ['config-a', '--dry-run'], fakeTools, { CANON_WORKTREES_ROOT: path.join(dir, 'worktrees') });
-            assert.equal(result.status === 0, !worktreeInvalid, result.stderr);
+            assert.notEqual(result.status, 0, result.stderr);
             if (worktreeInvalid) assert.match(result.stderr, /\.canon\/config.json.*not valid JSON/);
-            else assert.doesNotMatch(result.stderr, /\.canon\/config.json is invalid/);
+            else assert.match(result.stderr, /main checkout.*codex.*cannot be read/);
             assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
         });
     });
@@ -778,7 +778,7 @@ void test('parallel branches write no shared logs and both ship after a real squ
                 gitIn(localDir, 'checkout', '-b', branch, base);
                 const status = makeStatus(id, branch);
                 writeTaskFiles(localDir, id, status);
-                recordMetric({ taskId: id, activeCwd: localDir, phase: 'qa', agent: 'claude', model: 'test', durationMs: 100, status: 'ok' });
+                recordMetric({ taskId: id, activeCwd: localDir, phase: 'qa', agent: 'claude', model: 'test', effort: 'medium', durationMs: 100, status: 'ok' });
                 writeQualityLogForTask(id, localDir, path.join(localDir, 'tasks', id, 'done.md'), status as unknown as StatusJson);
                 writeRel(localDir, `tasks/${id}/lessons.md`, `### Lesson ${id}\n\nReusable insight.\n`);
                 gitIn(localDir, 'add', 'tasks');
@@ -899,3 +899,17 @@ for (const mode of ['rename', 'commit', 'push'] as const) {
         });
     });
 }
+
+
+void test('fold appends a legacy nine-column fragment unchanged under the Effort header', () => {
+    withTempDir('fold-legacy-effort-', root => {
+        const legacyHeader = METRICS_SKELETON.replace(' | Effort |', ' |').replace('|---|---|---|---|---|---|---|---|---|---|', '|---|---|---|---|---|---|---|---|---|');
+        const row = '| 2026-01-01 | legacy | implement | codex | old-model | 1 | 2s | 42 | ok |\n';
+        assert.ok(legacyHeader.includes('| Status |\n'));
+        assert.ok(METRICS_SKELETON.includes('| Status | Effort |\n'));
+        writeRel(root, 'docs/pipeline-invocations.md', METRICS_SKELETON);
+        writeRel(root, 'tasks/legacy/metrics.md', legacyHeader + row);
+        applyTelemetryFold(planTelemetryFold(root, ['legacy'], id => path.join(root, 'tasks', id)));
+        assert.equal(readRel(root, 'docs/pipeline-invocations.md'), METRICS_SKELETON + row);
+    });
+});
