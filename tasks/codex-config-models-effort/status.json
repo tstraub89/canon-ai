@@ -1,0 +1,79 @@
+{
+  "id": "codex-config-models-effort",
+  "title": "Codex models and implement effort in .canon/config.json",
+  "status": "implement",
+  "created": "2026-11-19",
+  "updated": "2026-11-19",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "<unavailable>",
+    "orchestrator_commit": "27bae350f091b87a4fab95111b95b00f784836be",
+    "canon_version": "3.21.0",
+    "codex_cli": "codex-cli 0.170.0",
+    "claude_code": "2.1.327 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": true,
+  "human_spec_gate": false,
+  "full_send": false,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 2,
+      "changes_requested_total": 1,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "spec_reviewer": "01a1f24a-9cc2-7270-aecb-4e48d0873d94",
+    "author": "57955a51-ccb1-4803-9d94-f8b6b373aaef"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
+  "provider": "mixed",
+  "session_backends": {
+    "spec_reviewer": "codex",
+    "author": "claude"
+  }
+}
