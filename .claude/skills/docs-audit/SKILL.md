@@ -23,7 +23,7 @@ Launch one **Sonnet** agent per group, in the background, in one message. Every 
 | Patterns + decisions | `docs/patterns.md` (Trigger Table rows point at real sections and paths), `docs/decisions.md` (code still follows it? superseded without saying so? contradictions?), `docs/lessons-learned.md` (entries already promoted elsewhere or now false). Decisions are binding: judge only whether the doc matches reality |
 | Product + release | `docs/product-context.md`, `docs/release-process.md` (against `.github/workflows/auto-release.yml` and `ci.yml`), root `README.md` (commands, flags, install steps, the recommended-permissions block against `src/`) |
 | Skills + templates | `.claude/skills/canon-*/` and `.canon/templates/` (commands, flags, verdict names, headings, and paths they cite still exist and mean what they say) |
-| Prune (canon-managed set) | Root copies of markdown files in `CANON_OWNED` (`src/lib/canon-owned.ts`); compare shipped files with root docs for duplicates. Apply `/canon-prune` `.claude/skills/canon-prune/SKILL.md` §"Verdicts" and §"Implement-prompt guard" by reference. |
+| Prune (canon-managed set) | Root copies of markdown files in `CANON_OWNED` (`src/lib/canon-owned.ts`); compare shipped files with root docs for duplicates. Apply `/canon-prune` `.claude/skills/canon-prune/SKILL.md` §"Verdicts" and §"Implement-prompt guard" by reference, except the `delete` criterion for rules describing canon mechanisms and §"High-level canon mentions only" do not apply to canon-managed files, whose purpose includes documenting canon mechanisms. |
 
 Add a group for any new long-lived doc that doesn't fit. `docs/BACKLOG.md`, `CHANGELOG.md`, `docs/task-quality-log.md`, and the dated reports (`docs/harness-audit-*.md`, `docs/canon-*-report.md`) are records: report stale lines in them, never propose edits as findings. Skip `docs/pipeline-invocations.md` (auto-logged metrics).
 
@@ -46,7 +46,7 @@ Present one table (group, count, most serious items), recommend applying every W
 
 ## 3. Apply (parallel, file-disjoint)
 
-One **Sonnet** editing agent per group, each with an explicit list of files it alone may edit (no two agents share a file; anything shared, such as a `patterns.md` Trigger Table row, you do yourself afterward). Every brief says:
+One **Sonnet** editing agent per group, each with an explicit list of files it alone may edit (no two agents share a file; anything shared, such as a `patterns.md` Trigger Table row, you do yourself afterward). Assign each PRUNE row to the editing agent already responsible for that file; do not assign the same file to both its regular group and the Prune group. Every brief says:
 
 - verify each finding against source before editing; skip and report any that turn out wrong;
 - cite files and symbol names, never line numbers;

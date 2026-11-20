@@ -7,3 +7,5 @@ Raw observations from any phase. Prefix with phase name. Distilled into the task
 [plan] docs-refs-check validates skill-to-skill `§"…"` refs only in backticked-path form (`` `.claude/skills/canon-sweep/SKILL.md` §"Preconditions" ``); plan uses that form and has implement prove resolution by breaking one ref once.
 [plan] Skill's concrete canon-managed list adds the guard hook and docs-refs checker script to the spec's by-kind list; neither is a doc, so scope is unchanged.
 [plan] docs/lessons-learned.md is a PIPELINE_TELEMETRY_FILES entry: auto-commit allows it, handoff diff exempts it, `--pr` will warn about a shared-log edit — expected for AC-16.
+
+[implement-revision] Implement-prompt injection also depends on pitfall routing-table rows, the no-H3 Known Pitfalls prose fallback, and Trigger Table targets; prune triage must flag edits that remove any of those sources.

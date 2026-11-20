@@ -1,6 +1,6 @@
 ---
 name: canon-prune
-description: Use when the human asks to prune, trim, slim, or dedupe the project's permanent docs or "the canon" (`docs/patterns.md`, `docs/decisions.md`, `docs/architecture.md`, any pitfall docs they route to, and the agent instruction files) — phrases like "prune the docs", "trim the canon", "the permanent docs are bloated", "find duplicated rules", or explicit `/canon-prune` invocation. Human-invoked only; run it about monthly or after a model-generation change, never on an entry count. Proposes a delete, relocate, merge, or keep verdict per rule and writes nothing until the human approves each row. Not for the lessons-learned buffer (`docs/lessons-learned.md`), which is `/canon-sweep`'s, and never reads or edits canon-managed files.
+description: Use when the human asks to prune, trim, slim, or dedupe the project's permanent docs or "the canon" (`docs/patterns.md`, `docs/decisions.md`, `docs/architecture.md`, any pitfall docs they route to, and the agent instruction files) — phrases like "prune the docs", "trim the canon", "the permanent docs are bloated", "find duplicated rules", or explicit `/canon-prune` invocation. Human-invoked only; run it about monthly or after a model-generation change, never on an entry count. Proposes a delete, relocate, merge, or keep verdict per rule and writes nothing until the human approves each row. Not for the lessons-learned buffer (`docs/lessons-learned.md`), which is `/canon-sweep`'s. Canon-managed files are not prune input; the skill reads only the two canon-sweep sections named in its workflow as operating instructions.
 allowed-tools: Read AskUserQuestion Agent Glob Grep Edit Write Bash(git log *) Bash(git show *) Bash(git status *) Bash(git branch *) Bash(git diff *) Bash(git worktree list) Bash(canon task list) Bash(node scripts/docs-refs-check.mjs*)
 effort: medium
 ---
@@ -15,9 +15,9 @@ Run only when the human asks, about monthly or after a model-generation change. 
 
 ## Scope
 
-In scope: `docs/patterns.md`, `docs/decisions.md`, and `docs/architecture.md`; every document listed in the `Read this doc` / `Before touching` table directly under `docs/patterns.md` §"Known Pitfalls", if the project keeps that table (discover destinations by reading it, never from a fixed list); and `AGENTS.md` and `CLAUDE.md`, if the project keeps them.
+In scope: `docs/patterns.md`, `docs/decisions.md`, and `docs/architecture.md`; every non-managed document listed in the `Read this doc` / `Before touching` table directly under `docs/patterns.md` §"Known Pitfalls", if the project keeps that table (discover destinations by reading it, never from a fixed list); and `AGENTS.md` and `CLAUDE.md`, if the project keeps them. If a routed destination is canon-managed, it remains out of scope and is not read.
 
-Out of scope: `docs/lessons-learned.md`, which belongs to `/canon-sweep`; and every file canon manages: everything under `.canon/` except `config.json`, the `canon-*` skills, the review agent definitions canon installs under `.claude/agents/`, `docs/pipeline-orchestrator.md`, the guard hook canon installs, and the docs-refs checker script canon installs. Canon-managed files are never read, inventoried or edited.
+Out of scope: `docs/lessons-learned.md`, which belongs to `/canon-sweep`; and, as prune input, every file canon manages: everything under `.canon/` except `config.json`, the `canon-*` skills, the review agent definitions canon installs under `.claude/agents/`, `docs/pipeline-orchestrator.md`, the guard hook canon installs, and the docs-refs checker script canon installs. Canon-managed files are never reviewed, inventoried or edited as prune input. The only canon-managed text this skill reads is the two canon-sweep sections named below, solely as operating instructions.
 
 ## Verdicts
 
@@ -36,7 +36,7 @@ A project convention such as “Use `/canon-spec` for new features” stays. A s
 
 ## Implement-prompt guard
 
-Entries under `docs/patterns.md` §"Known Pitfalls", and H3 entries in the docs routed by its `Read this doc` table, are injected into implement prompts when their backticked paths match a task's affected files. Mark every verdict that would remove such an entry or strip its path citations with the literal tag **removes from implement prompts** in its triage row. This includes a `delete`, a `relocate` out of the entry, a `merge` whose home is elsewhere, and rewrite text that drops paths. A pitfall `merge` keeps its home as a path-citing H3 in one of those docs.
+Implement prompts can receive guidance through three surfaces. First, H3 entries under `docs/patterns.md` §"Known Pitfalls" and in docs routed by its `Read this doc` / `Before touching` table are selected by their backticked paths matching a task’s affected files. Removing a row from that routing table can stop a whole routed document from being selected. Second, when `docs/patterns.md` §"Known Pitfalls" has no H3 entries, its prose is included whole. Third, rows in a `Trigger Table` can select a section when the task’s affected files match the row; the selected section may be in another doc. Mark every verdict that would remove or redirect one of those routing rows, remove included no-H3 prose, remove a selected H3 or Trigger Table target section, strip the path or trigger that selects it, or rewrite it so it no longer carries that guidance, with the literal tag **removes from implement prompts** in its triage row. This includes a `delete`, a `relocate` out of the selected content, a `merge` whose home is elsewhere, and rewrite text that drops paths or trigger conditions. A pitfall `merge` keeps its home as a path-citing H3 in a Known Pitfalls doc.
 
 ## Default stance: remove and measure
 
@@ -44,7 +44,7 @@ Removal or movement is cheap and reversible through git; no step requires provin
 
 ## Step 1 — Preconditions and scope
 
-Triage is read-only. Before any write, run the preflight in `.claude/skills/canon-sweep/SKILL.md` §"Preconditions" and stop if a check fails. At run start, read the latest prune record as described in Step 6, before launching inventory agents. Discover and tell the human which in-scope docs will be reviewed, including routed pitfall docs; state that the lessons buffer and canon-managed files will not be touched. Change nothing.
+Triage is read-only. At run start, read the latest prune record as described in Step 6, before launching inventory agents. Discover and tell the human which in-scope docs will be reviewed, including routed pitfall docs; state that the lessons buffer and canon-managed files will not be used as prune input. Change nothing. For the apply preflight, only the three check bullets in `.claude/skills/canon-sweep/SKILL.md` §"Preconditions" apply; its step numbers and separate “Read before triaging” list belong to the lessons sweep and are not part of this workflow. These three checks are operating instructions, not prune input.
 
 ## Step 2 — Inventory and evidence
 
@@ -79,7 +79,7 @@ Ask with `AskUserQuestion` for each batch. The human approves, flips, or edits e
 
 ## Step 5 — Apply and validate
 
-Rerun the preflight. Apply approved rows with file-disjoint editing agents on a light model: no two agents edit the same file, and the invoking session makes shared edits afterward. Always run docs validation: the shipped docs-refs checker, if the project has it, and any docs check listed in the validation section of `docs/architecture.md`. If any non-doc file changed, such as for a code-comment relocation, also run the project's full validation commands from that section. Do not commit.
+Run those same three preflight checks immediately before applying. Apply approved rows with file-disjoint editing agents on a light model: no two agents edit the same file, and the invoking session makes shared edits afterward. Always run docs validation: the shipped docs-refs checker, if the project has it, and any docs check listed in the validation section of `docs/architecture.md`. If any non-doc file changed, such as for a code-comment relocation, also run the project's full validation commands from that section. These project-specific validation commands may prompt for permission. Do not commit.
 
 ## Step 6 — Prune record
 
@@ -107,4 +107,4 @@ Hand back the counts, skipped list, and follow-ups such as code-comment relocati
 
 ## What this skill does not do
 
-It does not touch the lessons buffer, read or edit canon-managed files, start on a schedule or size threshold, commit, or run ablation by default.
+It does not touch the lessons buffer, use canon-managed files as prune input, start on a schedule or size threshold, commit, or run ablation by default. Its only reads from canon-managed files are the two canon-sweep sections identified as operating instructions in Steps 1 and 3.

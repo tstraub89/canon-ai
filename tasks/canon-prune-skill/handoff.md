@@ -95,3 +95,50 @@ Added the prune workflow as a shipped skill, connected it to existing install, u
 - [x] All spec ACs met (see AC Coverage table above)
 - [x] All applicable validation checks pass (no failures)
 - [x] All deviations from plan documented with rationale
+
+## Iteration 2 — addressing review round 1
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `.claude/skills/canon-prune/SKILL.md`, `templates/.claude/skills/canon-prune/SKILL.md` | Clarified that canon-managed files are excluded as prune input while only the two named canon-sweep sections may be read as operating instructions; limited preflight to its three check bullets; expanded the implement-prompt guard to routing rows, no-H3 Known Pitfalls prose, and Trigger Table rows and targets; noted that validation commands may prompt. |
+| `.claude/skills/canon-sweep/SKILL.md`, `templates/.claude/skills/canon-sweep/SKILL.md` | Required a `git log -S` match to be an actual phrase removal in a commit marked by the prune subject or trailer before counting it as recurrence. |
+| `.claude/skills/docs-audit/SKILL.md` | Exempted canon mechanism rules from the adopter-facing delete criterion for canon-managed files and assigned PRUNE rows to the file's existing editor. |
+| `tasks/canon-prune-skill/notes.md` | Recorded the additional implement-prompt selection surfaces found during review. |
+| `tasks/canon-prune-skill/handoff.md` | Appended this iteration's findings, AC deltas, self-check, and validation results. |
+
+### Findings addressed
+
+- **Finding 1 — managed-file scope / preflight:** Defined canon-managed files as excluded prune input. The only managed-file reads are canon-sweep §"Preconditions" and §"Step 2 — Choose the smallest carrier", used only as operating instructions. The preflight uses only its three check bullets, before apply; it does not inherit the sweep's step numbers or lessons-buffer read list. Routed canon-managed destinations are explicitly excluded.
+- **Finding 2 — implement-prompt guard:** Added tags for removal or redirection of pitfall routing-table rows, prose-only Known Pitfalls sections, Trigger Table rows, and their selected target sections, alongside H3 entries and path citations.
+- **Finding 3 — docs-audit delete criterion:** Clarified that the adopter-facing mechanism-delete criterion and high-level-only rule do not apply to canon-managed files, whose purpose includes documenting canon mechanisms.
+- **Finding 4 — recurrence evidence:** The sweep now counts a history hit only when the patch removes the phrase and the commit subject starts `docs: canon-prune` or the commit has a `Canon-Prune:` trailer.
+- **Finding 5 — validation permissions (optional):** Step 5 says project validation commands may prompt for permission.
+- **Finding 6 — file-disjoint apply (optional):** PRUNE rows go to the editor already assigned to that file; the Prune group does not assign a second editor.
+
+### AC deltas
+
+- AC-1 remains Met; the description now names the narrow operating-instruction exception for canon-managed files.
+- AC-2 remains Met; only the three preflight check bullets apply, and the sweep's lessons read list and step numbering are excluded.
+- AC-7: Partial → Met; the guard covers all three selection surfaces and their rows/targets.
+- AC-11 remains Met; a matching phrase must be removed by a marked prune commit before counting as recurrence.
+- AC-15: Partial → Met; canon-ai's own mechanism docs are excluded from the adopter-facing delete rule.
+
+### Self-Check
+
+| Check | Evidence |
+|---|---|
+| Restatement sweep | Searched `canon-managed`, `Implement-prompt guard`, `Trigger Table`, `git log -S`, and `Canon-Prune:` across the changed skills and mirrors. The root and template copies agree; the only recurrence clause is in canon-sweep and its mirror. The related docs-audit row carries the canon-ai exception, and its apply instructions resolve the overlapping editor assignment. No other source surface restates these contracts. |
+| Sibling parity | `npm run sync-templates:check` confirms the shipped canon-prune and canon-sweep mirrors match their roots; `npm run docs-refs-check` resolves the new skill references. The inventory agent rule excludes managed files, while the invoking session alone reads the two named sections as operating instructions. The added guard covers patterns-table routing, no-H3 fallback prose, and Trigger Table selection; docs-audit's overlapping groups now assign each PRUNE row to the existing file owner. |
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm test` | Pass | Final-tree rerun after the scope clarification: 2,248 passed, 1 skipped, 0 failed. |
+| `git diff --check` | Pass | |
+
+Lint, type-check, and build were not rerun because this iteration changed only Markdown and task artifacts; no source code or generated build output changed.
