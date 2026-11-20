@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [3.22.0] — 2026-11-19
+
+### Added
+
+- **Codex models and implement effort are configurable in `.canon/config.json`.** A new optional `codex` section sets the mini and full Codex models (`codex.models.mini`, `codex.models.full`) and the implement effort for each task size (`codex.implement_effort`, keys XS–XL; XL also covers delicate tasks). Keys you leave out keep the built-in default. Environment variables such as `CODEX_MODEL_FULL` still take precedence over the file. canon reads the section from the main checkout, not a task worktree, so an edit on main reaches an in-flight task at its next Codex call. Invalid values stop the run with a message that names the key and lists the allowed values. `canon run --ship` skips the check, and `canon doctor` reports the section under its own Codex check.
+
+### Changed
+
+- **Default Codex implement effort is lower.** XS is now `medium` (was `xhigh`), S is `high` (was `xhigh`), M is `high` (was `max`), and L is `xhigh` (was `max`). XL and delicate tasks are unchanged. Spec-review and cold-Codex review effort are unchanged. To restore the previous values, set `codex.implement_effort` in `.canon/config.json`.
+- **Telemetry records the effort used for each agent run.** `docs/pipeline-invocations.md` gains a trailing Effort column. Rows written before the upgrade keep nine cells and show a blank Effort cell.
+
+### Fixed
+
+- **The implement prompt lists only checked Validation Required rows.** An unchecked template placeholder (such as `<E2E>`) no longer reaches the implementer as a required check, matching the code_review pre-flight, which already ignored unchecked rows. The `canon-spec` checklist now says to delete placeholders that don't apply and record the N/A reason in the spec.
+
 ## [3.21.0] — 2026-11-18
 
 ### Changed
