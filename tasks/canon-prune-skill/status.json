@@ -1,10 +1,10 @@
 {
   "id": "canon-prune-skill",
   "title": "Add /canon-prune: periodic multi-agent prune of the permanent docs",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-20",
   "updated": "2026-11-20",
-  "branch": "",
+  "branch": "task/canon-prune-skill",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
-      "changes_requested_total": 0,
-      "auto_block_count": 0
+      "iterations_total": 3,
+      "changes_requested_total": 2,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -65,13 +66,17 @@
   },
   "escalations": [],
   "sessions": {
-    "spec_reviewer": "01a1f6df-0366-7d92-8322-d3a00fe2b548"
+    "spec_reviewer": "01a1f6df-0366-7d92-8322-d3a00fe2b548",
+    "implementer": "01a1f6ee-795f-7022-897f-ee8acf7e0c15",
+    "reviewer": "57020e6d-5864-479a-ba3f-f4cf44275efe"
   },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
   "provider": "mixed",
   "session_backends": {
-    "spec_reviewer": "codex"
+    "spec_reviewer": "codex",
+    "implementer": "codex",
+    "reviewer": "claude"
   }
 }
