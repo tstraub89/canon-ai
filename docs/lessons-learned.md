@@ -28,18 +28,6 @@ The rule, then the failure mode it prevents (specific incident if recent), then 
 
 The title is the lesson — a future reader scanning headings should learn the rule from titles alone. Resist the urge to make it cute or descriptive of the bug; name the *rule that prevents the bug*.
 
-## Example entry
-
-### Always reset derived state when source identifier changes
-
-*(2026-04-12, source: feat-photo-swap)*
-
-When a record references another by ID, computed fields (caches, transforms, ephemeral selections) calibrated for the old reference can survive an ID swap and produce stale-data bugs that are visible to users but invisible in logs. The fix: reset every derived field at every site that writes the ID — there's no single chokepoint for this. Canonical reset rule: reset derived state at every writer of the ID field. Grep all writers of the ID field before adding a new one.
-
----
-
-> **TODO[canon]: Real entries land here as tasks ship. New projects start with this file mostly empty — that's fine. The discipline is: after every task QA, ask the "would this have changed how a different task was approached?" question, and only write if yes.**
-
 ---
 
 ### When adding a location/scope constraint, add one boundary check rather than teaching every consumer a new state
@@ -121,20 +109,12 @@ When a matcher asks "could some path inside this directory match this glob," a g
 The Self-Check placeholder check moved from matching the template's exact `_(` prefix to rejecting any Evidence cell that is entirely parenthesized. That also rejects real evidence written the same way, such as `(verified both entry points against the diff)`. Two cold reviewers flagged it. The spec had accepted the shape rule as a Known Risk, so it shipped with the cost. Rule of thumb: when a check moves from exact-text matching to shape matching, list the real values that share the shape (parenthesized prose, a bare `(N/A)`) in the spec, and either accept each one or keep the exact match. Canonical example: `checkSelfCheckEvidence` in `src/orchestrator/validation.ts`, with its tests in `tests/run-task-validation.test.ts`.
 
 
-<!-- Buffer swept 2026-11-09 (35 entries reviewed: 12 promoted into 6 carriers, 10 kept in buffer, 13 pruned).
-     Promotions → docs/patterns.md: Validation Gate Discipline bullet "Enumerate every writer of each state the gate reads" (guard-on-one-field, gate-fixtures-from-writer, resume-keyed-on-writer, loop-local-vs-lifetime-counter, every-writer-of-checked-artifact); new pitfall "Read a CLI's option grammar before parsing or matching its argv" (flag look-behind, matcher option forms); Test-writing bullet "A skipped test is unverified, not passing"; Pure Policy bullets "Pin expected values as literals" and "Moving a cell between tiers changes what each env var reaches". Site comments: die() in src/orchestrator/cli.ts (finally never runs); required-job names in .github/workflows/ci.yml (ruleset requires them by name).
-     Kept in buffer: one-boundary-check — re-evaluate if a scope/boundary task hits it; overlap-winner — re-evaluate on the next adopter file-list config; round-trip-two-cycles — re-evaluate on another parse-and-rewrite cell bug; exit-handler-files — re-evaluate if crash detection is touched; message-restates-value — graft into the clause-builder pitfall if it recurs; prompt-names-file — re-evaluate if another prompt cites an artifact without a read step; backend-flag-no-op — re-evaluate when another call site changes backend; classify-table-by-position — re-evaluate if another parser churns on a content heuristic in review; shape-vs-exact-placeholder — re-evaluate if a shape check rejects real values again; directory-glob-depth — structural, stays until a test pins the equal-depth boundary (`src/*` against `src/a/`) in tests/pitfalls.test.ts.
-     Pruned: ls-remote exact ref (site comment in git.ts); fail-closed prune (write-safety fail-closed pitfall); override-vs-absolute (tests landed); git fake argv (fakes-honest bullet); show-toplevel (git list item); ls-files tracked state (architecture.md dist/ rule); nullish-on-empty (self-evident, fixture landed); splice exact-replace (prompt test pins splice); sandbox probe flags (recorded in README); startup-block skip (test pinned); shared-parser exclusion (canon-spec enumerate-callers rule); fail-open throw path (prove-can-fail bullet); cumulative handoff evidence (rule in anchored charter + foreman).
-     Unresolved follow-ups: The equal-depth boundary test for `globCouldMatchInsideDir` has not landed.
+<!-- Buffer swept 2026-11-19 (16 entries reviewed: 3 promoted, 12 kept in buffer, 1 pruned).
+     Promotions → AGENTS.md Code Review Rules: restatement bullet now covers relational claims and operator config-location instructions (contract-sweep-relational; recurred after message-restates-value). canon-spec skill checklist and the pipeline spec prompt checklist (src/orchestrator/prompts/index.ts): unchecked Validation Required rows are ignored, so delete inapplicable template placeholders such as <E2E> with an N/A reason. Site comment: string-built recordMetric call in tests/run-task-safety-routing.test.ts.
+     Kept in buffer: one-boundary-check — re-evaluate if a scope/boundary task hits it; overlap-winner — re-evaluate on the next adopter file-list config; round-trip-two-cycles — re-evaluate on another parse-and-rewrite cell bug; exit-handler-files — re-evaluate if crash detection is touched; message-restates-value — graft its bypass-gate check into the clause-builder pitfall if it recurs; prompt-names-file — re-evaluate if another prompt cites an artifact without a read step; backend-flag-no-op — re-evaluate when another call site changes backend; classify-table-by-position — re-evaluate if another parser churns on a content heuristic in review; shape-vs-exact-placeholder — re-evaluate if a shape check rejects real values again; directory-glob-depth — structural, stays until a test pins the equal-depth boundary; gate-every-caller — graft into patterns.md "Enumerate every writer" if another gate change breaks a salvage or recovery caller; plan-file-outside-affected-files — re-evaluate if it recurs; carrier would be the plan prompt.
+     Pruned: malformed-precondition fixture — covered by patterns.md "Prove each regression test can fail".
+     Unresolved follow-ups: the equal-depth boundary test for globCouldMatchInsideDir (src/* against src/a/) has not landed.
      Prior entries are in git history. -->
-
----
-
-### Delete unused Validation Required placeholders instead of leaving them unchecked
-
-*(2026-11-09, source: spec-prompts-term-renames-rule)*
-
-The spec's Validation Required list kept an unchecked `<E2E>` line from the template, and the implementer could not tell whether it was a required check or a placeholder. It logged an ambiguity blocker and had to decide on its own that E2E was N/A for a prompt-template-only change. Prevention: when a spec has no end-to-end surface, delete the `<E2E>` line rather than leaving it unchecked, and write the N/A reason in the spec. Before handoff, grep the spec's Validation Required section for any `<...>` placeholder that is still unchecked.
 
 ---
 
@@ -154,20 +134,3 @@ The plan noticed that a salvage path, five QA test fixtures, and a recovery guid
 
 ---
 
-### A contract sweep must cover relational claims and operator instructions, not just literal defaults
-
-*(date 2026-11-19, source: codex-config-models-effort)*
-
-A sweep that searched only for the changed literals and the named decision entries missed two stale restatements in review: a clause saying M and L were identical on implement, and a generic "make config edits in your worktree" instruction. Both were still true before the change and false after it. Before closing a default or config-location change, also search for comparisons between sizes or tiers ("identical to", "same as"), and for broad how-to lines about where to edit config or settings, in the docs, templates and root guidance. Treat each hit as a restatement to check, not a literal to replace.
-
-### A required field on a shared type does not reach code that builds the call as a string
-
-*(date 2026-11-19, source: codex-config-models-effort)*
-
-Adding a required field to a record type gives no type-check error to a call site that runs inside a subprocess source string, such as a JavaScript snippet passed to `node -e`. The call then writes a row with the field missing. When a type gains a required field, grep the whole tree, including test fixtures that build code as strings, for every call site, and assert on the written output, not only on the type.
-
-### A fixture that makes the precondition malformed hides the behaviour it was meant to test
-
-*(date 2026-11-19, source: codex-config-models-effort)*
-
-A run-level test that wrote malformed JSON into the main checkout to check that a worktree ignores the main checkout's settings stopped passing for the reason it was written for: a new reader failed on the malformed file before the ownership check ran. Keep the malformed-file case in its own test, and give the test under study a file that is valid JSON with invalid settings. Confirm the test fails under a deliberate mutation of the code it guards.

@@ -763,6 +763,7 @@ void test('uncaught exceptions and unhandled rejections write one exit marker an
 void test('recordMetric honors CANON_METRICS_FILE_OVERRIDE', () => {
     withTempDir('run-task-metrics-override-', dir => {
         const telemetryFile = path.join(dir, 'pipeline-invocations.md');
+        // Built as a source string, so type-checking does not reach this call: update it when MetricEntry gains a required field.
         const result = runNodeInline([
             "import { recordMetric } from './src/orchestrator/metrics.ts';",
             "recordMetric({ taskId: 'metrics-override', phase: 'implement', agent: 'codex', model: 'gpt-5.4-mini', effort: 'high', durationMs: 0, status: 'ok', tokens: null, iteration: 0 });",
