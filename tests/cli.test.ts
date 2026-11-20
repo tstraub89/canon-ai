@@ -1386,9 +1386,9 @@ void test('EXPECTED_TEMPLATES covers every canon-owned .canon/templates entry', 
 
 // ── checkSkills ──────────────────────────────────────────────────────────────
 
-void test('checkSkills: all eight skills present → pass', () => {
+void test('checkSkills: all nine skills present → pass', () => {
     withTempDir(dir => {
-        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-spec-review', 'canon-inline-review', 'canon-sweep']) {
+        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-spec-review', 'canon-inline-review', 'canon-sweep', 'canon-prune']) {
             const skillDir = path.join(dir, '.claude', 'skills', skill);
             fs.mkdirSync(skillDir, { recursive: true });
             fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '');
@@ -1418,6 +1418,7 @@ void test('checkSkills: canon-init present but all operational skills missing �
         assert.match(check.detail ?? '', /canon-changelog/);
         assert.match(check.detail ?? '', /canon-inline-review/);
         assert.match(check.detail ?? '', /canon-sweep/);
+        assert.match(check.detail ?? '', /canon-prune/);
     });
 });
 
@@ -1431,6 +1432,20 @@ void test('checkSkills: canon-changelog specifically checked — missing canon-c
         const check = checkSkills(dir);
         assert.equal(check.status, 'warn');
         assert.match(check.detail ?? '', /canon-changelog/);
+    });
+});
+
+void test('checkSkills: canon-prune specifically checked — missing canon-prune warns even with others present', () => {
+    withTempDir(dir => {
+        for (const skill of ['canon-init', 'canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-spec-review', 'canon-inline-review', 'canon-sweep']) {
+            const skillDir = path.join(dir, '.claude', 'skills', skill);
+            fs.mkdirSync(skillDir, { recursive: true });
+            fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '');
+        }
+        const check = checkSkills(dir);
+        assert.equal(check.status, 'warn');
+        assert.match(check.detail ?? '', /canon-prune/);
+        assert.doesNotMatch(check.detail ?? '', /canon-sweep/);
     });
 });
 
