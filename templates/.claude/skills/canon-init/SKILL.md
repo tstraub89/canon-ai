@@ -17,7 +17,7 @@ Follow these phases in order. Do not skip or combine phases.
 
 ## Phase 0 — Check for existing canon files
 
-Before doing anything else, check whether `AGENTS.md` or `CLAUDE.md` exists in the project root. If either is present, note it — they are adopter-owned; canon does not insert, merge, or read managed content into them. `canon doctor` may warn that no agent file mentions canon; that is the adopter's call, canon does not write those files. Note any team conventions, terminology, or pitfalls you find from the codebase and docs — you'll need them in Phase 4.
+Before doing anything else, check whether `AGENTS.md` or `CLAUDE.md` exists in the project root. If either is present, note it — they are adopter-owned; canon does not insert, merge, or read managed content into them. `canon doctor` may warn that no agent file mentions canon; that is the adopter's call, canon does not write those files. Note any team conventions, terminology, or pitfalls you find from the codebase and docs — you'll need them in Phase 4. If suggesting canon guidance for `AGENTS.md` / `CLAUDE.md`, pass this on to the project owner: Keep canon mentions in agent files and docs at a high level: that the project uses canon, and how and when (which skills or flows to use for what, and where the project's own canon conventions live). Don't copy canon's mechanisms (what canon injects into prompts, how phases route, what a gate checks, which files canon reads) into them: canon's own docs carry those, and a copy goes stale when canon changes.
 
 ---
 
@@ -137,7 +137,8 @@ By default, Claude Code prompts on every `git`, `gh`, `codex`, and `canon` subpr
            "Skill(canon-changelog)", "Skill(canon-changelog:*)",
            "Skill(canon-spec-review)", "Skill(canon-spec-review:*)",
            "Skill(canon-inline-review)", "Skill(canon-inline-review:*)",
-           "Skill(canon-sweep)", "Skill(canon-sweep:*)"
+           "Skill(canon-sweep)", "Skill(canon-sweep:*)",
+           "Skill(canon-prune)", "Skill(canon-prune:*)"
          ]
        }
      }
@@ -202,5 +203,5 @@ Then print a summary:
 - `/canon-spec` — author the first task once scaffold docs are filled.
 - `/canon-status` — verify the project's task state.
 - `/canon-pipeline` — once a task exists, drive it through the pipeline.
-- `AGENTS.md` / `CLAUDE.md` — adopter-owned; generate them with the built-in `/init` (Claude Code or Codex) when you don't already have them.
+- `AGENTS.md` / `CLAUDE.md` — adopter-owned; generate them with the built-in `/init` (Claude Code or Codex) when you don't already have them; keep canon mentions there at a high level (see Phase 0).
 - `docs/pipeline-orchestrator.md` — pipeline internals for when tasks are running.

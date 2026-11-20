@@ -87,6 +87,8 @@ export const RECOMMENDED_ALLOW = [
     'Skill(canon-inline-review:*)',
     'Skill(canon-sweep)',
     'Skill(canon-sweep:*)',
+    'Skill(canon-prune)',
+    'Skill(canon-prune:*)',
 ];
 
 export const GUARD_HOOK_PATH = '.claude/hooks/canon-guard.mjs';
@@ -398,7 +400,7 @@ export function checkSkills(cwd: string): Check {
             detail: 'canon-init skill missing — run `canon init` or `canon upgrade`',
         };
     }
-    const skillNames = ['canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-spec-review', 'canon-inline-review', 'canon-sweep'];
+    const skillNames = ['canon-spec', 'canon-pipeline', 'canon-status', 'canon-changelog', 'canon-spec-review', 'canon-inline-review', 'canon-sweep', 'canon-prune'];
     const missing = skillNames.filter(s => !existsSync(join(cwd, '.claude', 'skills', s, 'SKILL.md')));
     if (missing.length > 0) {
         return {

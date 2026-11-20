@@ -1,157 +1,185 @@
 # Implementation Handoff: canon-prune-skill
 
 > Author: implementer | Spec: `tasks/canon-prune-skill/spec.md` | Plan: `tasks/canon-prune-skill/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a source file with its test, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
-
-## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
-| Canon version | `status.json.canon.canon_version` |
-
-Codex CLI applies in mixed mode only.
+| `.claude/skills/canon-prune/SKILL.md`, `templates/.claude/skills/canon-prune/SKILL.md` | Added the human-invoked permanent-doc prune workflow, evidence protocol, four verdicts, implement-prompt guard, triage/apply flow, and drafted git-history record. |
+| `.claude/skills/canon-sweep/SKILL.md`, `templates/.claude/skills/canon-sweep/SKILL.md` | Added the recurrence check for permanent rules removed by a prune. |
+| `.claude/skills/docs-audit/SKILL.md` | Added a canon-managed-set prune pass, verdict reporting, individual triage, and prompt-template follow-up handling. |
+| `src/lib/canon-owned.ts` | Registered the new shipped skill. |
+| `src/cli/commands/doctor.ts` | Added the new recommended permission entries and skill check. |
+| `dist/cli/index.js` | Rebuilt the generated CLI bundle. |
+| `tests/cli.test.ts` | Added canon-prune doctor coverage and updated the skill-count test. |
+| `README.md` | Added the skill listing and allowlist entries, install listing, and high-level canon guidance. |
+| `.claude/skills/canon-init/SKILL.md`, `templates/.claude/skills/canon-init/SKILL.md` | Added permission entries and high-level canon guidance for adopter-owned agent files. |
+| `.claude/settings.json` | Added the two canon-prune permission entries. |
+| `docs/lessons-learned.md`, `templates/docs/lessons-learned.md` | Added the human-invoked permanent-doc pruning sentence. |
+| `CHANGELOG.md` | Added the unreleased canon-prune and sweep recurrence entries. |
+| `tasks/canon-prune-skill/handoff.md` | Recorded implementation, AC coverage, self-check, and validation. |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Added the prune workflow as a shipped skill, connected it to existing install, upgrade, doctor, permissions, and template-sync paths, and extended the local docs audit for canon-ai's own managed files as specified. Canon-managed adopter files remain excluded from the shipped prune skill.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| Used the repository's resolvable section-reference form for `Known Pitfalls` after `docs-refs-check` rejected literal backticked heading text. | The checker resolves `docs/patterns.md` §"Known Pitfalls" and catches invalid section references; the literal `##` form was parsed as a missing symbol. | None; intended scope and discovery behavior are unchanged. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Frontmatter names canon-prune; description is human-invoked, monthly/model-change cadence, permanent-doc scope, and lessons-buffer exclusion. Allowed tools include required agent, question, file, task-list, and git-read tools. canon-sweep remains lessons-buffer-only. |
+| AC-2 | Met | Six numbered workflow steps appear in order; preflight points to canon-sweep §"Preconditions". Scope discovers routed pitfall docs from the table and excludes lessons and managed files. |
+| AC-3 | Met | Managed set is named by kind and never read/inventoried/edited. High-level-only rule and keep/delete/mixed examples are present. No canon-ai-specific branch. |
+| AC-4 | Met | Three default groups use concurrent read-only agents and a light model; output includes location, form, gist, six evidence items, and proposed verdict/text. |
+| AC-5 | Met | Comparison is limited to rule-form entries; candidates are source-confirmed; home selection references canon-sweep; cluster merge replaces member verdicts. |
+| AC-6 | Met | Exactly delete, relocate, merge, keep are defined; project duplicates are merge, never delete. No demote mention. |
+| AC-7 | Met | Implement-prompt removals and path-citation stripping get the required guard tag; pitfall merge keeps a path-citing H3 home. |
+| AC-8 | Met | Removal is the default without proof of unneededness; ablation is optional and human-requested. Measurement uses the prune record and sweep history check. |
+| AC-9 | Met | Triage is batched by group with merges last and individual approvals; application is file-disjoint; docs checks always run, full validation for non-doc changes; no commit. |
+| AC-10 | Met | Draft message has fixed prefix, per-verdict reasons and Reviewed and kept entries. Start lookup, matching, evidence-change re-proposal, skip summary, and no-log-file rule are specified. |
+| AC-11 | Met | canon-sweep Stage B recurrence bullet has one added clause; template mirror synced. |
+| AC-12 | Met | Only `src/lib/canon-owned.ts` and `src/cli/commands/doctor.ts` changed outside `dist/`; doctor edits are limited to `RECOMMENDED_ALLOW` and `checkSkills`. No config parser or command registration edits. |
+| AC-13 | Met | `npm run sync-templates:check` and `npm run docs-refs-check` pass; manual adopter-scope read found no internal source paths or unsupported path assumptions in the shipped skill. |
+| AC-14 | Met | New skill is in CANON_OWNED, doctor checks and recommends it, README/init/settings allowlists include both entries, and CLI tests cover present/missing cases. Repo-wide canon-sweep listing search reviewed. |
+| AC-15 | Met | Local docs-audit covers markdown root copies in CANON_OWNED, applies the shared verdict/guard contract by reference, adds PRUNE rows to individual triage, and leaves prompt-template candidates as follow-ups. docs-audit is not CANON_OWNED. |
+| AC-16 | Met | Exactly one canon-prune sentence appears in each lessons-learned file's usage section. |
+| AC-17 | Met | Unreleased changelog describes skill behavior, adopter doctor warnings and upgrade/settings action, plus sweep recurrence check. |
+| AC-18 | Met | README and canon-init carry the identical canonical sentence; init root and mirror are synced. Nudge text and RECOMMENDED_NUDGE were not changed. |
 
 ## Edge Cases Considered
 
-- ...
+- Pointer and index rows are excluded from cross-doc duplicate matching and are not deleted merely for summarizing rules.
+- A rule's project-document duplicate cannot be deleted independently; a confirmed cluster uses one merge verdict.
+- A previous Reviewed and kept rule is skipped unless its text or recorded evidence changes; gist is the fallback locator.
+- Canon-managed files and the lessons buffer remain outside the shipped skill's read and edit scope.
+- Verified docs-refs-check resolves skill-to-skill heading references: changing §"Preconditions" to §"PreconditionsX" produced a missing-heading error; restoring it passed.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- None.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| None — no red-first ACs | | | | |
 
 ## Self-Check
 
-> One row per pre-handoff self-check, each with evidence a reviewer can check against the diff. **Test integrity:** each behavioral test added or changed, the assertion that pins its failure reason, and how you know it fails without the change (a Red-First Evidence row counts; regenerated snapshots and fixture-only edits are exempt and can be summarized in one line). **Restatement sweep:** the search pattern(s) you ran for each changed contract, and every hit outside Affected Files with how it was handled — updated, or recorded as a Blocker. **Sibling parity:** the parallel paths you examined for each added guard or branch, and whether each got the same treatment, or why not. A row may read `N/A — <reason>`. Write a literal pipe inside a cell as `\|`. Cite paths by the same file-citation rule as the rest of this handoff (full repository-root paths; the markdown-link form for a file that does not exist).
-
 | Check | Evidence |
 |---|---|
-| Test integrity | _(tests added or changed → the assertion that pins each failure reason → how you know it fails without the change)_ |
-| Restatement sweep | _(search pattern(s) run per changed contract → hits outside Affected Files and how each was handled)_ |
-| Sibling parity | _(parallel paths examined per added guard or branch → same treatment, or why not)_ |
+| Test integrity | Updated `tests/cli.test.ts`: missing canon-prune case asserts `warn`, names canon-prune, and excludes canon-sweep; all-operational-missing asserts canon-prune is named; all-nine-present pins the new count. `src/cli/commands/doctor.ts`'s skill list lacks canon-prune without this change, so the missing-specific assertion would fail (warn detail would not name it) and the all-present fixture would still warn. Full `npm test` passes after the change. |
+| Restatement sweep | Searched `canon-sweep`, `canon-prune`, the canonical sentence, and `RECOMMENDED_NUDGE`; inspected the repo-wide `grep -rn 'canon-sweep'` results excluding tasks, node_modules, dist, and .git. Live listings were updated in README, permissions, tests, source, shipped skills, and mirrors; historical changelog entries and intentional negative test assertions remain historical/assertional. README/init canonical sentence matches the skill exactly; doctor diff has no RECOMMENDED_NUDGE line. |
+| Sibling parity | Checked root/mirror pairs for canon-prune, canon-sweep, and canon-init; checked README, canon-init, and `.claude/settings.json` allowlists against `src/cli/commands/doctor.ts`; checked `CANON_OWNED` registration against generated mirror; checked root and scaffold lessons guidance. Each parallel carrier was updated, and `docs-audit` intentionally remains local and unregistered. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | Final run: 2,248 passed, 1 skipped, 0 failed. An earlier overlapping run read the pre-correction skill reference and failed the shipped-markdown fixture; final run used the corrected tree. |
+| `npm run build` | Pass | `git diff --stat -- dist/` showed only `dist/cli/index.js`. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
+| `npm run docs-refs-check` | Pass | Broken-reference experiment failed as expected; restored run passed with “All refs OK”. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale
 
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
+## Iteration 2 — addressing review round 1
 
 ### Changes
 
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
 | File | What Changed |
 |---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+| `.claude/skills/canon-prune/SKILL.md`, `templates/.claude/skills/canon-prune/SKILL.md` | Clarified that canon-managed files are excluded as prune input while only the two named canon-sweep sections may be read as operating instructions; limited preflight to its three check bullets; expanded the implement-prompt guard to routing rows, no-H3 Known Pitfalls prose, and Trigger Table rows and targets; noted that validation commands may prompt. |
+| `.claude/skills/canon-sweep/SKILL.md`, `templates/.claude/skills/canon-sweep/SKILL.md` | Required a `git log -S` match to be an actual phrase removal in a commit marked by the prune subject or trailer before counting it as recurrence. |
+| `.claude/skills/docs-audit/SKILL.md` | Exempted canon mechanism rules from the adopter-facing delete criterion for canon-managed files and assigned PRUNE rows to the file's existing editor. |
+| `tasks/canon-prune-skill/notes.md` | Recorded the additional implement-prompt selection surfaces found during review. |
+| `tasks/canon-prune-skill/handoff.md` | Appended this iteration's findings, AC deltas, self-check, and validation results. |
 
 ### Findings addressed
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
+- **Finding 1 — managed-file scope / preflight:** Defined canon-managed files as excluded prune input. The only managed-file reads are canon-sweep §"Preconditions" and §"Step 2 — Choose the smallest carrier", used only as operating instructions. The preflight uses only its three check bullets, before apply; it does not inherit the sweep's step numbers or lessons-buffer read list. Routed canon-managed destinations are explicitly excluded.
+- **Finding 2 — implement-prompt guard:** Added tags for removal or redirection of pitfall routing-table rows, prose-only Known Pitfalls sections, Trigger Table rows, and their selected target sections, alongside H3 entries and path citations.
+- **Finding 3 — docs-audit delete criterion:** Clarified that the adopter-facing mechanism-delete criterion and high-level-only rule do not apply to canon-managed files, whose purpose includes documenting canon mechanisms.
+- **Finding 4 — recurrence evidence:** The sweep now counts a history hit only when the patch removes the phrase and the commit subject starts `docs: canon-prune` or the commit has a `Canon-Prune:` trailer.
+- **Finding 5 — validation permissions (optional):** Step 5 says project validation commands may prompt for permission.
+- **Finding 6 — file-disjoint apply (optional):** PRUNE rows go to the editor already assigned to that file; the Prune group does not assign a second editor.
 
-### AC deltas (if any)
+### AC deltas
 
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
+- AC-1 remains Met; the description now names the narrow operating-instruction exception for canon-managed files.
+- AC-2 remains Met; only the three preflight check bullets apply, and the sweep's lessons read list and step numbering are excluded.
+- AC-7: Partial → Met; the guard covers all three selection surfaces and their rows/targets.
+- AC-11 remains Met; a matching phrase must be removed by a marked prune commit before counting as recurrence.
+- AC-15: Partial → Met; canon-ai's own mechanism docs are excluded from the adopter-facing delete rule.
 
 ### Self-Check
 
-_Include only when this round makes an earlier Self-Check row incomplete or untrue, and include only the rows it updates. Each row restates that check's evidence for all work on the branch, not only this round, and supersedes every earlier version of that row (earlier rows stay in place as history). This subsection never replaces the baseline `## Self-Check` section._
-
 | Check | Evidence |
 |---|---|
+| Restatement sweep | Searched `canon-managed`, `Implement-prompt guard`, `Trigger Table`, `git log -S`, and `Canon-Prune:` across the changed skills and mirrors. The root and template copies agree; the only recurrence clause is in canon-sweep and its mirror. The related docs-audit row carries the canon-ai exception, and its apply instructions resolve the overlapping editor assignment. No other source surface restates these contracts. |
+| Sibling parity | `npm run sync-templates:check` confirms the shipped canon-prune and canon-sweep mirrors match their roots; `npm run docs-refs-check` resolves the new skill references. The inventory agent rule excludes managed files, while the invoking session alone reads the two named sections as operating instructions. The added guard covers patterns-table routing, no-H3 fallback prose, and Trigger Table selection; docs-audit's overlapping groups now assign each PRUNE row to the existing file owner. |
 
-### Re-run validation (only checks that re-ran)
+### Re-run validation
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm test` | Pass | Final-tree rerun after the scope clarification: 2,248 passed, 1 skipped, 0 failed. |
+| `git diff --check` | Pass | |
+
+Lint, type-check, and build were not rerun because this iteration changed only Markdown and task artifacts; no source code or generated build output changed.
+
+## Iteration 3 — addressing review round 2
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `.claude/skills/canon-prune/SKILL.md`, `templates/.claude/skills/canon-prune/SKILL.md` | Generalized the implement-prompt guard to all rows under Known Pitfalls and Trigger Table headings, H3 entries in whole-document targets, section targets, and no-H3 Known Pitfalls prose. It calls for the required tag when a verdict removes, redirects, or strips the selectors for any of those sources. |
+| `tasks/canon-prune-skill/notes.md` | Recorded that whole-document targets can surface H3 titles even when the entry body does not match affected paths. |
+| `tasks/canon-prune-skill/handoff.md` | Appended this iteration's finding, AC delta, self-check, and validation results. |
+
+### Findings addressed
+
+- **R2-1 — implement-prompt guard:** The guard now identifies the table rows under Known Pitfalls and Trigger Table headings, all H3 entries in those docs or a whole-document target, sections targeted by those rows, and the no-H3 Known Pitfalls prose. It marks any proposed removal, redirection, selector removal, or guidance-stripping rewrite with **removes from implement prompts**. H3 removals in whole-document targets are tagged even when their bodies lack matching paths because their titles may still appear.
+
+### AC deltas
+
+- AC-7: Partial → Met; the guard includes whole-document H3 entries and titles, in addition to routing rows, section targets, no-H3 prose, and matching path/trigger selectors.
+
+### Optional findings deferred
+
+- **R2-2:** No change to distinguish `Deleted:` records from relocate/merge records in the sweep recurrence search. This was an optional nit; Round 2 requested that nits be deferred during this tightening pass.
+- **R2-3:** No additional assignment rule for canon-managed markdown files that have no regular docs-audit group. This was an optional nit; the current guidance still routes any PRUNE row to the file's existing owner where one exists.
+
+### Self-Check
+
+| Check | Evidence |
+|---|---|
+| Restatement sweep | Searched `Implement-prompt guard`, `removes from implement prompts`, `Trigger Table`, and `Known Pitfalls` across the canon-prune skill, its template, and `docs-audit`. The full contract lives in the two identical canon-prune copies; `docs-audit` references that section and adds no competing guard definition. Confirmed the adopter-facing table terms against `templates/docs/patterns.md`; the whole-document H3 behavior is grounded in the linked-target selection path in `src/orchestrator/pitfalls.ts`. |
+| Sibling parity | Compared `.claude/skills/canon-prune/SKILL.md` with its template and ran `npm run sync-templates:check`; they match. Read `src/orchestrator/pitfalls.ts` around linked targets, candidate collection, and no-H3 prose selection: the guard covers whole-doc and section targets as well as directly routed entries. No runtime branch or code path changed. |
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm test` | Pass | 2,248 passed, 1 skipped, 0 failed. |
+| `git diff --check` | Pass | |
+
+Lint, type-check, and build were not rerun because this iteration changed only Markdown and task artifacts; no source code or generated build output changed.

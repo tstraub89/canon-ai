@@ -1,0 +1,1 @@
+The updated implement-prompt guard covers the routing tables, whole-document and section targets, and no-H3 prose described by the runtime selection paths. The shipped skill and its template are synchronized; no actionable defects were found.

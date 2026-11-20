@@ -175,6 +175,7 @@ The other installed skills (auto-trigger on natural-language phrases — see eac
 | `/canon-spec-review` | Pre-flighting a spec before invoking the pipeline; strongly recommended after authoring any spec with logic to vet |
 | `/canon-inline-review` | Independent cross-review of inline or below-pipeline changes before commit or PR |
 | `/canon-sweep` | Triaging `docs/lessons-learned.md` — promote, keep, or prune, human-approved |
+| `/canon-prune` | Pruning the permanent docs (patterns, decisions, architecture, agent files) — delete, relocate, or merge rules, human-approved; about monthly |
 | `/canon-pipeline` | Driving an existing task forward (`canon run`, `--pr`, `--ship`, recovery) |
 | `/canon-status` | "Where are we?" — surfaces phases and blockers across in-flight tasks |
 | `/canon-changelog` | Drafting release notes (projects that version their releases) |
@@ -200,6 +201,8 @@ This project uses canon, a spec-first multi-agent pipeline.
 Route new features / fixes / refactors through the canon skills.
 Start with `/canon-spec` rather than implementing directly.
 ```
+
+Keep canon mentions in agent files and docs at a high level: that the project uses canon, and how and when (which skills or flows to use for what, and where the project's own canon conventions live). Don't copy canon's mechanisms (what canon injects into prompts, how phases route, what a gate checks, which files canon reads) into them: canon's own docs carry those, and a copy goes stale when canon changes.
 
 ### Independent review for inline work
 
@@ -258,7 +261,9 @@ Canon drives a lot of `git`, `gh`, `codex`, and `npm` invocations, plus short sh
       "Skill(canon-inline-review)",
       "Skill(canon-inline-review:*)",
       "Skill(canon-sweep)",
-      "Skill(canon-sweep:*)"
+      "Skill(canon-sweep:*)",
+      "Skill(canon-prune)",
+      "Skill(canon-prune:*)"
     ]
   }
 }
@@ -489,7 +494,7 @@ Drop this into any repo and you have:
 - Agent rules and per-agent guidance delivered just-in-time via per-phase prompt templates (`src/orchestrator/prompts/templates/`) and the `/canon-*` skills; adopters generate their own `AGENTS.md` / `CLAUDE.md` with the built-in `/init`
 - `docs/` — knowledge corpus templates with detailed scaffolding
 - `.claude/hooks/canon-guard.mjs` — Claude Code guard hook (registration is recommend-only; canon never writes `.claude/settings.json`)
-- Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects), `/canon-sweep` (triage the lessons-learned buffer)
+- Claude Code skills installed by `canon init`: `/canon-init` (knowledge-corpus bootstrap), `/canon-spec` (new task authoring), `/canon-spec-review` (pre-flight a spec), `/canon-inline-review` (independent cross-review of below-pipeline work), `/canon-pipeline` (drive an existing task), `/canon-status` (in-flight task map), `/canon-changelog` (release notes for versioned projects), `/canon-sweep` (triage the lessons-learned buffer), `/canon-prune` (prune the permanent docs)
 - Unit-test suite covering the policy module, orchestrator extractors, and validation parsers (`npm test`)
 
 🚧 **Stubbed with `TODO[canon]:` markers — fill in for your project:**

@@ -45,7 +45,7 @@ Walk each entry through this sequence. Stop at the first stage that decides it, 
 
 Promotion is on the table when either holds:
 
-- **Recurrence.** It has bitten at least twice, in independent tasks. Check archived task notes and prior sweep comments for the second occurrence before claiming it.
+- **Recurrence.** It has bitten at least twice, in independent tasks. Check archived task notes and prior sweep comments for the second occurrence before claiming it. Also check whether the lesson was once a permanent rule removed by `/canon-prune`: run `git log -S '<key phrase>' -- docs/patterns.md docs/decisions.md docs/architecture.md AGENTS.md CLAUDE.md` (plus any pitfall docs `docs/patterns.md` routes to), inspect each matching commit, and count it only when its patch removes the phrase and its subject starts `docs: canon-prune` or it carries a `Canon-Prune:` trailer.
 - **Severity.** It bit once, but the cost of one more occurrence clearly exceeds the recurring cost of a rule read on every task. Say why in the reason.
 
 And both of these hold:

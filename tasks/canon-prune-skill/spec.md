@@ -333,3 +333,18 @@ E2E: N/A, since canon-ai has no UI surface (`docs/architecture.md` §Validation)
 - [x] (Bug/flake fixes) N/A: feature
 - [x] (Refactors) N/A: feature
 - [x] *Judgment Calls* lists every judgment call with strongest alternative and Decided by
+
+## Amendment — previously kept rules are shown, not skipped (post-QA, human-approved 2026-11-20)
+
+Supersedes the skip behavior in Decision step 6 ("It does not re-propose a 'Reviewed and kept' rule unless…" and *Matching across runs*) and the skip bullets of AC-10. Review on the PR showed that hiding a rule on a fuzzy identity match (path, heading, opening words, a diff baseline) keeps producing cases where a rule the human never reviewed is hidden. Instead:
+
+- The prune record's "Reviewed and kept" entries record the doc path, heading (plus row key for a table row), proposed verdict, evidence, and the reason it was kept.
+- At the start of a run, the skill reads the newest prune record. It hides nothing: in triage, a non-keep row at a location named by a "Reviewed and kept" entry is shown pre-marked "previously kept on <date>: <reason>" at the end of its table. The mark is information only; every row is still decided individually.
+- Only rows that aren't merges, sit at a location with exactly one current rule, and match exactly one record entry are pre-marked; ambiguous locations and merge rows appear unmarked. The new record lists only the rules kept in that run; a rule not triaged loses its marking but is never hidden.
+
+AC-10 now reads: the skill drafts the prune commit message from Decision step 6 (fixed subject prefix, removed/relocated/merged rules with reasons, a "Reviewed and kept" list with the fields above), creates no log file, and at run start reads the newest record and pre-marks matching rows in triage as previously kept without hiding any. **Verify:** read the file; `grep -n -i 'skip' .claude/skills/canon-prune/SKILL.md` finds no instruction to skip or hide a rule because of a prior record.
+
+Triage batching (Decision step 4, AC-9) becomes one table per doc group for deletes and relocates, then all merges as one final table; pre-marked rows come last within each table.
+
+Human Test Plan step 5 now expects a rejected delete or relocate row (one that is the only rule under its heading, and is proposed again) to reappear, pre-marked "previously kept", at the end of its batch.
+
