@@ -5223,7 +5223,7 @@ function extractValidationChecks(taskId) {
     if (!section) return [];
     const checks = [];
     for (const line of section[1].split("\n")) {
-      const match = line.match(/^-\s+\[[ x]\]\s+`?([^`]+?)`?\s*(?:\(|$)/i);
+      const match = line.match(/^-\s+\[x\]\s+`?([^`]+?)`?\s*(?:\(|$)/i);
       if (match?.[1]) checks.push(match[1].trim());
     }
     return checks;

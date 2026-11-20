@@ -118,7 +118,8 @@ export function extractValidationChecks(taskId: string): string[] {
         if (!section) return [];
         const checks: string[] = [];
         for (const line of section[1].split('\n')) {
-            const match = line.match(/^-\s+\[[ x]\]\s+`?([^`]+?)`?\s*(?:\(|$)/i);
+            // Checked rows only: unchecked rows are template placeholders, not required checks.
+            const match = line.match(/^-\s+\[x\]\s+`?([^`]+?)`?\s*(?:\(|$)/i);
             if (match?.[1]) checks.push(match[1].trim());
         }
         return checks;

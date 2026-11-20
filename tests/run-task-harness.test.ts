@@ -226,7 +226,7 @@ void test('extractAcSummary returns an empty list when no AC markers are present
     });
 });
 
-void test('extractValidationChecks captures checkbox rows and ignores malformed bullets', () => {
+void test('extractValidationChecks captures checked rows and ignores unchecked rows and malformed bullets', () => {
     withTempTaskSpec([
         '# Spec',
         '',
@@ -240,7 +240,6 @@ void test('extractValidationChecks captures checkbox rows and ignores malformed 
     ].join('\n'), taskId => {
         assert.deepEqual(extractValidationChecks(taskId), [
             'npm run lint',
-            'npm run test',
             'npm run build',
         ]);
     });
