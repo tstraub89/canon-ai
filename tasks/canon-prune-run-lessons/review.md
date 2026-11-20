@@ -1,134 +1,126 @@
 # Code Review: canon-prune-run-lessons
 
-> Reviewer: Claude | Spec: `tasks/canon-prune-run-lessons/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
+> Reviewer: Claude (foreman: anchored Claude + cold-Claude + cold-Codex) | Spec: `tasks/canon-prune-run-lessons/spec.md`
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
-
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-- [ ] Self-Check evidence in the effective record is not contradicted by the diff
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence: none required (no red-first ACs)
+- [x] Self-Check evidence in the effective record is not contradicted by the diff
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1: per-sentence delete classification | Pass | Steps 2, 3 and the Step 4 column in `.claude/skills/canon-prune/SKILL.md` |
+| AC-2: guard rows name requirements and selecting paths | Pass | §"Implement-prompt guard" states own-H3, no-fold and same-failure rules; headings unchanged |
+| AC-3: Step 5 reference sweep | Pass | Archive-excluded search, same-apply retarget, hand-back listing |
+| AC-4: record survives merge | Pass | Step 6 requires carrying the record into the squash message or PR body |
+| AC-5: shipped skill adopter-safe, mirror synced | Pass | Anchored lens re-ran `sync-templates:check`; no `canon-ai` match in the skill; mirror diff identical |
+| AC-6: docs-audit carve-out | Pass (wording issue below) | Carve-out present; `docs-audit` not in `CANON_OWNED` |
+| AC-7: patterns/decisions doc fixes | Pass | `taskDirFromRoot` gone, `taskDirFor()` kept; "Backlogged" line gone |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected
+- [x] Known Risks addressed or documented as accepted
+- [x] Human Test Plan is satisfiable by the implementation
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
+- [x] **Pass** — proceed to Stage 2
 - [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The prune-skill edits are small and land in the steps they govern. The mirror matches. One restatement, the `docs-audit` carve-out, is worded ambiguously and weakens the old text's clarity. Everything else is nit-level.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
+1. **[code-bug] `.claude/skills/docs-audit/SKILL.md:26` — carve-out wording is ambiguous (flagged by 2 lenses: cold-Claude, cold-Codex; anchored lens noted it as near-circular).** The old text said the "describes a canon mechanism" delete criterion and §"High-level canon mentions only" do not apply to *canon-managed files* (the files this row covers). The new text reads "except when pruning canon-ai's own root docs with `/canon-prune`". A docs-audit agent applying §"Verdicts" by reference is not obviously "pruning with `/canon-prune`", so it can read the exemption as not applying, and then flag canon-mechanism rules in `CANON_OWNED` root docs for deletion. Codex adds that `/canon-prune` itself excludes canon-managed files from prune input, so a carve-out phrased as conditional on a `/canon-prune` run looks unreachable for the files this row names. Spec evidence: AC-6 fixes the intent (the two criteria do not apply to canon-ai's own root docs), not this conditional phrasing. Failure: a docs-audit prune pass over `docs/architecture.md`-style canon docs proposes `delete` for rules whose job is to describe canon. Fix: state it unconditionally for this row, e.g. "for this row, which covers canon-ai's own root docs, the 'describes a canon mechanism' delete criterion and §"High-level canon mentions only" do not apply, because these docs exist to describe canon."
 
 #### Risk / Guardrails
 
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
+(none surviving; see nits)
 
 #### Optional Cleanup / Nit
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
+- `docs/decisions.md:~233`: deleting the "Backlogged" line leaves two consecutive blank lines before `---` (flagged by anchored and cold-Claude). Remove one.
+- `.claude/skills/canon-prune/SKILL.md` Step 2: the inventory agent return-format sentence ("a proposed verdict with exact replacement text, or `delete`") doesn't list the sentence classification. It is stated as a separate instruction and required in Step 4, but adding it to the return fields would make the omission visible earlier (anchored lens; Known Risk 2).
+- Step 5 reference sweep: edits to files outside the approved rows (changelog, backlog) are described in the hand-back only, not surfaced at triage; "heading rename" is not a verdict. AC-3 mandates this shape, so informational.
+- Step 4: the "Sentence classification" column has no stated value for relocate and merge rows.
+- Step 6 / Codex P2: carrying the record only in a PR body is findable by `git log --grep` only if the merge uses that body as the commit message. AC-4 states this exact allowance and the skill words it as "the PR body used to merge", so no change required; a clarifying clause would be harmless.
 
 #### Spec Gaps
 
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+(none)
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): `docs/decisions.md` "Backlogged" deletion is data loss because the four ideas are tracked nowhere — spec Judgment Calls row "The untracked 'Backlogged' ideas" chose delete (Decided by Author) and AC-7 requires the line gone.
+- Dismissed (cold-Claude): `docs/patterns.md:168` losing the `taskDirFromRoot()` incident drops a live requirement — AC-7 requires removing it; `taskDirFromRoot` is now a private helper in `src/task/index.ts`, and the rule ("use `taskDirFor()`") plus its test shape is retained.
+- Dismissed (cold-Claude): Step 6 carry-the-record rule contradicts "Do not commit" / "Create no log file" — the skill only tells the human to carry the drafted message into the merge text; nothing commits or logs.
+- Dismissed (cold-Claude): Step 5 retargets in `docs/BACKLOG.md`/`CHANGELOG.md` conflict with docs-audit's record rule — that rule governs docs-audit findings, not `/canon-prune`; AC-3 explicitly includes changelog and backlog.
+- Dismissed (cold-Codex): [P2] put the prune record in a searchable commit message — AC-4 explicitly permits "the squash commit message or PR body the merge uses"; GitHub squash uses the PR body as the commit message, which is the failure mode this change addresses. Recorded as a nit above.
+- Cold-Codex [P2] make the docs-audit carve-out reachable — retained as code-bug finding 1.
 
 ## Final Verdict
 
 - [ ] **Approved** — ship as-is
 - [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
+- [x] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
 - [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
 
----
+## Round 2 — verifying iteration response to round 1
 
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
+**Scope:** Delta — base `731149447bcfa03fcab964b3921aebb61ab4acc5` — reason: small fix within the files already under review
 
 ### Stage 1 — Acceptance Criteria Re-Check
 
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
+Anchored lens re-read the full task diff, the handoff (baseline plus the "Iteration 2 — addressing review round 1" section), and the effective Self-Check record. Validation Outcomes have no `Fail`; no red-first ACs.
 
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
+| AC-1 | Met (unchanged from round 1) | Steps 2–4 in `.claude/skills/canon-prune/SKILL.md` |
+| AC-2 | Met (unchanged from round 1) | §"Implement-prompt guard" |
+| AC-3 | Met (unchanged from round 1) | Step 5 |
+| AC-4 | Met (unchanged from round 1) | Step 6 |
+| AC-5 | Met (unchanged from round 1) | Mirror identical; no `canon-ai` match in the shipped skill |
+| AC-6 | Met | `.claude/skills/docs-audit/SKILL.md:26` now reads "except for this row's canon-ai root docs, … do not apply, because these docs exist to describe canon" |
+| AC-7 | Met (unchanged from round 1) | Greps return nothing; `taskDirFor()` kept |
 
-### Verifying Round N-1 findings
+### Verifying Round 1 findings
 
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
+- _code-bug:_ docs-audit carve-out conditional on a `/canon-prune` run → addressed (`.claude/skills/docs-audit/SKILL.md:26`, now unconditional for the row, with rationale) ✓. Cold-Claude and cold-Codex both find the new wording clear.
+- _nit:_ double blank line in `docs/decisions.md` → addressed (delta removes it) ✓.
+- _nits left as-is:_ Step 2 return-field listing, Step 4 column for relocate/merge rows, PR-body wording. Round 1 marked these informational; not blocking.
 
-### New findings (only NEW issues introduced by Iteration N's changes)
+### New findings
 
-(none / list)
+(none blocking)
+
+Nits (not blocking):
+- Anchored: "this row's canon-ai root docs" is slightly loose versus "root copies of `CANON_OWNED` markdown files"; meaning is clear in context.
+- Anchored: Step 6 does not literally say "tell the human"; audience is implicit.
+- Cold-Claude: reach of "this row's canon-ai root docs" (only `CANON_OWNED` root markdown, or all root docs) is slightly ambiguous; low severity. Same point as the first nit.
+
+### Dismissed Cold Findings
+
+(none: cold-Claude returned no findings; cold-Codex found no actionable issue)
 
 ### Verdict for this round
 
 - [ ] Approved
-- [ ] Approved with nits
+- [x] Approved with nits
 - [ ] Changes requested
 - [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->

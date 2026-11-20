@@ -1,0 +1,1 @@
+The changes relative to the specified base clarify the docs-audit carve-out without changing its intended scope. The remaining diff is task review/state documentation; no actionable correctness issue was found.
