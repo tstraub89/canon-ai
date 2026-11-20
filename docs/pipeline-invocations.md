@@ -1686,3 +1686,21 @@
 | 2026-11-19T13:18:38.916Z | codex-config-models-effort | code_review | claude:code-review-anchored | claude-opus-5-5 | 2 | 87.4s | 1301558 | ok |
 | 2026-11-19T13:18:38.922Z | codex-config-models-effort | code_review | claude:code-review-cold | claude-opus-5-5 | 2 | 546.2s | 8272928 | ok |
 | 2026-11-19T13:20:13.760Z | codex-config-models-effort | qa | claude | claude-haiku-5-5 | 0 | 94.3s | 1739636 | ok |
+| 2026-11-20T02:54:18.082Z | canon-prune-skill | spec_review | codex | gpt-6-luna | 0 | 85.5s | 443330 | ok | high |
+| 2026-11-20T03:09:43.021Z | canon-prune-skill | plan | claude | opus | 0 | 366.5s | 4173184 | ok | medium |
+| 2026-11-20T03:17:20.568Z | canon-prune-skill | implement | codex | gpt-6-luna | 0 | 455.0s | 2095624 | ok | high |
+| 2026-11-20T03:18:54.508Z | canon-prune-skill | code_review | codex | gpt-6-luna | 0 | 91.2s | - | ok | high |
+| 2026-11-20T03:23:26.260Z | canon-prune-skill | code_review | claude | opus | 0 | 271.7s | 1306192 | ok | medium |
+| 2026-11-20T03:23:26.266Z | canon-prune-skill | code_review | claude:code-review-cold | claude-opus-5-5 | 0 | 101.4s | 1889897 | ok | - |
+| 2026-11-20T03:23:26.270Z | canon-prune-skill | code_review | claude:code-review-anchored | claude-opus-5-5 | 0 | 147.0s | 2905981 | ok | - |
+| 2026-11-20T03:31:27.863Z | canon-prune-skill | implement | codex | gpt-6-luna | 1 | 481.1s | 4732207 | ok | high |
+| 2026-11-20T03:32:25.370Z | canon-prune-skill | code_review | codex | gpt-6-luna | 1 | 54.5s | - | ok | high |
+| 2026-11-20T03:35:01.036Z | canon-prune-skill | code_review | claude | opus | 1 | 155.7s | 1203442 | ok | medium |
+| 2026-11-20T03:35:01.040Z | canon-prune-skill | code_review | claude:code-review-cold | claude-opus-5-5 | 1 | 72.0s | 1022481 | ok | - |
+| 2026-11-20T03:35:01.043Z | canon-prune-skill | code_review | claude:code-review-anchored | claude-opus-5-5 | 1 | 82.8s | 1376687 | ok | - |
+| 2026-11-20T03:38:50.714Z | canon-prune-skill | implement | codex | gpt-6-luna | 2 | 229.1s | 6503408 | ok | high |
+| 2026-11-20T03:39:23.081Z | canon-prune-skill | code_review | codex | gpt-6-luna | 2 | 29.4s | - | ok | high |
+| 2026-11-20T03:41:33.146Z | canon-prune-skill | code_review | claude | opus | 2 | 130.1s | 1165478 | ok | medium |
+| 2026-11-20T03:41:33.150Z | canon-prune-skill | code_review | claude:code-review-anchored | claude-opus-5-5 | 2 | 48.7s | 796243 | ok | - |
+| 2026-11-20T03:41:33.152Z | canon-prune-skill | code_review | claude:code-review-cold | claude-opus-5-5 | 2 | 60.5s | 762064 | ok | - |
+| 2026-11-20T03:43:12.987Z | canon-prune-skill | qa | claude | claude-haiku-5-5 | 0 | 99.4s | 812994 | ok | medium |
