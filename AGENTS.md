@@ -53,14 +53,12 @@ canon-ai runs a phase pipeline: `spec -> spec_review -> plan -> implement -> cod
 
 - Task artifacts live under `tasks/<id>/`; `tasks/<id>/notes.md` is the raw scratchpad and `docs/lessons-learned.md` is the promotion buffer.
 - Root canon-managed files are authoritative; `templates/` is a derived mirror. Edit the root copy, then run `npm run sync-templates` and verify with `npm run sync-templates:check`. `AGENTS.md` and `CLAUDE.md` are not part of the managed set; they have no `templates/` mirror and need no sync. Only files in `CANON_OWNED` are mirrors. The other `templates/docs/*.md` files (architecture, codebase-map, decisions, patterns, product-context, lessons-learned and the two logs) are hand-edited adopter scaffolds, independent of the root docs.
-- Prefer `canon task` helpers over direct `status.json` edits so phase state stays consistent.
 - Use worktrees for task isolation when canon creates them.
 - The managed set lives in `src/lib/canon-owned.ts` as `CANON_OWNED` and `DELIMITED`; add managed files there, not here.
 
 ## Boundaries
 
 - **This repo is public.** Code, tests, fixtures, docs, commit messages, issues, and PR text must not name any private adopter project: no product names, task ids, file paths, or PR numbers from other repositories. Use neutral placeholders (`example-app`, `tasks/example-task/`).
-- Never edit `templates/` copies of `CANON_OWNED` files directly; edit the root copy and sync.
 - Never force-push `main`; the pipeline and release flow manage branch state.
 
 ## Code Review Rules
