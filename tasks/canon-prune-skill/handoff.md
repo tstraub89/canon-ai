@@ -142,3 +142,44 @@ Added the prune workflow as a shipped skill, connected it to existing install, u
 | `git diff --check` | Pass | |
 
 Lint, type-check, and build were not rerun because this iteration changed only Markdown and task artifacts; no source code or generated build output changed.
+
+## Iteration 3 — addressing review round 2
+
+### Changes
+
+| File | What Changed |
+|---|---|
+| `.claude/skills/canon-prune/SKILL.md`, `templates/.claude/skills/canon-prune/SKILL.md` | Generalized the implement-prompt guard to all rows under Known Pitfalls and Trigger Table headings, H3 entries in whole-document targets, section targets, and no-H3 Known Pitfalls prose. It calls for the required tag when a verdict removes, redirects, or strips the selectors for any of those sources. |
+| `tasks/canon-prune-skill/notes.md` | Recorded that whole-document targets can surface H3 titles even when the entry body does not match affected paths. |
+| `tasks/canon-prune-skill/handoff.md` | Appended this iteration's finding, AC delta, self-check, and validation results. |
+
+### Findings addressed
+
+- **R2-1 — implement-prompt guard:** The guard now identifies the table rows under Known Pitfalls and Trigger Table headings, all H3 entries in those docs or a whole-document target, sections targeted by those rows, and the no-H3 Known Pitfalls prose. It marks any proposed removal, redirection, selector removal, or guidance-stripping rewrite with **removes from implement prompts**. H3 removals in whole-document targets are tagged even when their bodies lack matching paths because their titles may still appear.
+
+### AC deltas
+
+- AC-7: Partial → Met; the guard includes whole-document H3 entries and titles, in addition to routing rows, section targets, no-H3 prose, and matching path/trigger selectors.
+
+### Optional findings deferred
+
+- **R2-2:** No change to distinguish `Deleted:` records from relocate/merge records in the sweep recurrence search. This was an optional nit; Round 2 requested that nits be deferred during this tightening pass.
+- **R2-3:** No additional assignment rule for canon-managed markdown files that have no regular docs-audit group. This was an optional nit; the current guidance still routes any PRUNE row to the file's existing owner where one exists.
+
+### Self-Check
+
+| Check | Evidence |
+|---|---|
+| Restatement sweep | Searched `Implement-prompt guard`, `removes from implement prompts`, `Trigger Table`, and `Known Pitfalls` across the canon-prune skill, its template, and `docs-audit`. The full contract lives in the two identical canon-prune copies; `docs-audit` references that section and adds no competing guard definition. Confirmed the adopter-facing table terms against `templates/docs/patterns.md`; the whole-document H3 behavior is grounded in the linked-target selection path in `src/orchestrator/pitfalls.ts`. |
+| Sibling parity | Compared `.claude/skills/canon-prune/SKILL.md` with its template and ran `npm run sync-templates:check`; they match. Read `src/orchestrator/pitfalls.ts` around linked targets, candidate collection, and no-H3 prose selection: the guard covers whole-doc and section targets as well as directly routed entries. No runtime branch or code path changed. |
+
+### Re-run validation
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm test` | Pass | 2,248 passed, 1 skipped, 0 failed. |
+| `git diff --check` | Pass | |
+
+Lint, type-check, and build were not rerun because this iteration changed only Markdown and task artifacts; no source code or generated build output changed.

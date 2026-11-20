@@ -9,3 +9,4 @@ Raw observations from any phase. Prefix with phase name. Distilled into the task
 [plan] docs/lessons-learned.md is a PIPELINE_TELEMETRY_FILES entry: auto-commit allows it, handoff diff exempts it, `--pr` will warn about a shared-log edit — expected for AC-16.
 
 [implement-revision] Implement-prompt injection also depends on pitfall routing-table rows, the no-H3 Known Pitfalls prose fallback, and Trigger Table targets; prune triage must flag edits that remove any of those sources.
+[implement-revision] A table row may route a whole document; its H3 titles can appear in implement prompts even when their bodies do not match the affected paths. Tag removal of any H3 in a whole-document target.

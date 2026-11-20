@@ -36,7 +36,14 @@ A project convention such as “Use `/canon-spec` for new features” stays. A s
 
 ## Implement-prompt guard
 
-Implement prompts can receive guidance through three surfaces. First, H3 entries under `docs/patterns.md` §"Known Pitfalls" and in docs routed by its `Read this doc` / `Before touching` table are selected by their backticked paths matching a task’s affected files. Removing a row from that routing table can stop a whole routed document from being selected. Second, when `docs/patterns.md` §"Known Pitfalls" has no H3 entries, its prose is included whole. Third, rows in a `Trigger Table` can select a section when the task’s affected files match the row; the selected section may be in another doc. Mark every verdict that would remove or redirect one of those routing rows, remove included no-H3 prose, remove a selected H3 or Trigger Table target section, strip the path or trigger that selects it, or rewrite it so it no longer carries that guidance, with the literal tag **removes from implement prompts** in its triage row. This includes a `delete`, a `relocate` out of the selected content, a `merge` whose home is elsewhere, and rewrite text that drops paths or trigger conditions. A pitfall `merge` keeps its home as a path-citing H3 in a Known Pitfalls doc.
+Implement prompts can draw guidance from these parts of `docs/patterns.md` and the docs it points to:
+
+- Any table under a `Known Pitfalls` or `Trigger Table` heading in `docs/patterns.md`. A row can point to a section or to a whole document.
+- H3 entries under `Known Pitfalls` in `docs/patterns.md`, and H3 entries in any whole document named by one of those table rows. A whole-document target makes its H3 entries eligible; their titles may appear even when their full text is not selected.
+- Any section named as a target by one of those table rows.
+- If `Known Pitfalls` has no H3 entries, its prose is included as a whole.
+
+Mark every verdict that would remove or redirect one of those table rows, remove an H3 entry or selected section, remove the included no-H3 prose, strip a path or trigger that selects the content, or rewrite any of it so it no longer carries that guidance, with the literal tag **removes from implement prompts** in its triage row. Tag removal of any H3 in a whole-document target, even if its body has no matching path, because its title may still appear in implement prompts. This includes a `delete`, a `relocate` out of the selected content, a `merge` whose home is elsewhere, or a rewrite that drops paths or trigger conditions. A pitfall `merge` keeps its home as a path-citing H3 in a Known Pitfalls doc.
 
 ## Default stance: remove and measure
 
