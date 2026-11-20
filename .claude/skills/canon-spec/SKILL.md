@@ -144,7 +144,7 @@ Spec quality checklist before presenting:
 - [ ] If this spec replaces existing behavior: frame it as one replacement ("replace X with Y; X must not exist after") and add a structural/grep AC when practical; use paired add/remove bullets only when true replacement framing doesn't fit
 - [ ] Known Risks covers failure modes for the trickiest ACs
 - [ ] Human Test Plan uses product language only — no code, no file paths
-- [ ] Validation Required has at least one entry marked `- [x]` (or a single checked `- [x] None - <reason>`); unchecked `- [ ]` placeholders block the code_review pre-flight
+- [ ] Validation Required has at least one entry marked `- [x]` (or a single checked `- [x] None - <reason>`); a section with none blocks the code_review pre-flight. Unchecked rows are ignored, so delete a template placeholder that does not apply (such as `<E2E>` with no end-to-end surface) and record the N/A reason in the spec
 - [ ] Non-Goals rules out the most tempting scope expansions — back load-bearing exclusions with a positive scope-bound or grep AC, not prose "NOT" alone
 - [ ] Symbols named in ACs actually exist in the codebase — grep-verify before presenting
 - [ ] (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class (runtime-dependent mechanisms need executed confirmation), not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative

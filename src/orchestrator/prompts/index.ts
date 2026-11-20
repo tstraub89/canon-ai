@@ -178,7 +178,7 @@ export function promptSpec(state: PipelineState, docsPaths?: Readonly<Record<str
             '- Symbols named in ACs actually exist in the codebase (grep-verify before marking the spec done)',
             '- Known Risks covers failure modes for the trickiest ACs',
             '- Human Test Plan describes product behavior only (no code, no file names, no TypeScript)',
-            '- Validation Required has at least one entry marked `- [x]` (or a single checked `- [x] None - <reason>`); unchecked `- [ ]` placeholders block the code_review pre-flight',
+            '- Validation Required has at least one entry marked `- [x]` (or a single checked `- [x] None - <reason>`); a section with none blocks the code_review pre-flight. Unchecked rows are ignored, so delete a template placeholder that does not apply (such as `<E2E>` with no end-to-end surface) and record the N/A reason in the spec',
             '- (Bug/flake fixes; N/A for features/refactors) *Problem* states the confirmed mechanism and how it was confirmed, with evidence matching the mechanism class (runtime-dependent mechanisms need executed confirmation), not merely a plausible cause; *Acceptance Criteria* includes a red-first regression-test AC or an explicit environment-bound and faithful-repro-impractical escape with a deterministic alternative',
             '- (Refactors; N/A for features/bug fixes) the spec records a correctness audit of each behavior declared preserved, with one outcome each: correct as-is, fixed deliberately (with its own AC), split into a separate task, or kept as a named quirk',
             '- *Judgment Calls* lists every judgment call the spec makes, each with its strongest alternative and a Decided by value (`Human` or `Author`), or says `None — <reason>`',
