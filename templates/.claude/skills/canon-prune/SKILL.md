@@ -36,14 +36,7 @@ A project convention such as “Use `/canon-spec` for new features” stays. A s
 
 ## Implement-prompt guard
 
-Implement prompts can draw guidance from these parts of `docs/patterns.md` and the docs it points to:
-
-- Any table under a `Known Pitfalls` or `Trigger Table` heading in `docs/patterns.md`. A row can point to a section or to a whole document.
-- H3 entries under `Known Pitfalls` in `docs/patterns.md`, and H3 entries in any whole document named by one of those table rows. A whole-document target makes its H3 entries eligible; their titles may appear even when their full text is not selected.
-- Any section named as a target by one of those table rows.
-- If `Known Pitfalls` has no H3 entries, its prose is included as a whole.
-
-Mark every verdict that would remove or redirect one of those table rows, remove an H3 entry or selected section, remove the included no-H3 prose, strip a path or trigger that selects the content, or rewrite any of it so it no longer carries that guidance, with the literal tag **removes from implement prompts** in its triage row. Tag removal of any H3 in a whole-document target, even if its body has no matching path, because its title may still appear in implement prompts. This includes a `delete`, a `relocate` out of the selected content, a `merge` whose home is elsewhere, or a rewrite that drops paths or trigger conditions. A pitfall `merge` keeps its home as a path-citing H3 in a Known Pitfalls doc.
+`docs/patterns.md`, and every doc that one of its tables points to, can feed implement prompts. Which parts get selected is canon's concern, and it can change; this skill doesn't try to predict it. Mark every non-keep verdict that edits one of those docs with the literal tag **removes from implement prompts** in its triage row, so the human checks it before approving. The tag means the edit may change what implement prompts receive, not that it certainly does. A pitfall `merge` keeps its home as a path-citing H3 in a Known Pitfalls doc.
 
 ## Default stance: remove and measure
 

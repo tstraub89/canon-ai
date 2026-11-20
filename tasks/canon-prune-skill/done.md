@@ -85,28 +85,22 @@ The entries below are already drafted under `[Unreleased]` in `CHANGELOG.md`. QA
 - **Prune record.** The commit message uses the subject `docs: canon-prune` and also a `Canon-Prune: <date>` trailer, so the lookup still works after a squash merge keeps the body.
 - **Stopped after round 3.** The third review round found another selection path the guard prose missed. The foreman chose not to run a fourth implement round. It recorded the remaining gaps as follow-ups, with a note that the cold-Claude lens signalled `changes_requested` while the anchored lens approved with nits. That disagreement is real and is listed under Open Questions.
 
+- **Post-QA inline fix: coarse implement-prompt guard.** At human_review, the enumerated guard (which review rounds 1–3 kept finding incomplete) was replaced with a doc-level rule: every non-keep verdict that edits `docs/patterns.md` or a doc one of its tables points to carries the **removes from implement prompts** tag, read as "may change". This removes follow-up risk rows 1–4, the two guard nits and the shared-helper observation. The skill no longer describes canon's selection internals. Validated with `sync-templates:check`, `docs-refs-check` and `npm test` (2,249 passed); reviewed cross-model with Gemini (`agy`), because Codex was out of credits.
+
 ## Open Questions
 
-- Should the four remaining guard gaps in Follow-ups (rows 1–4) block the ship, or is it acceptable to ship with them recorded as known risk? The anchored review says approve with nits. The cold-Claude lens says changes requested. The foreman chose the first.
-- Should the "no new canon subcommand" non-goal be lifted so the implement-prompt guard can become a shared helper that computes the tags? The review argues that prose patches are not converging. Lifting the non-goal is a scope decision, so it is yours to make.
+- Resolved at human_review: the guard gaps are closed by the post-QA coarse guard (see Decisions Made), so the "no new canon subcommand" non-goal stays.
 
 ## Follow-ups
 
 | Category | Follow-up | Tracked |
 |---|---|---|
-| risk | Adding the first H3 under a prose-only Known Pitfalls section turns off the prose fallback (`src/orchestrator/pitfalls.ts`, lines 174–189). A merge into that section drops the prose from every implement prompt with no tag. Review round 3, item 1. | untracked |
-| risk | Nothing says who computes the guard tag for sections in other docs that Trigger Table rows target. The invoking session should check each non-keep row against those table targets before triage. Review round 3, item 2. | untracked |
-| risk | Renaming or retitling a heading that a row targets breaks or redirects the row. `sectionHeading` in `src/orchestrator/pitfalls.ts` matches exact, then prefix. Review round 3, item 3. | untracked |
-| risk | Scope discovery reads only the `Read this doc` table. The guard also treats whole-document targets in other Known Pitfalls and Trigger Table tables as sources, so a prune can skip checking them. It fails safe, since unreviewed docs are not pruned. Review round 3, item 4. | untracked |
-| nit | The sweep recurrence check counts a prune relocate or merge as a removal, because `git log -S` is per file. The optional fix counts only rules listed under `Deleted:` in the prune record. Review round 2, finding 2. | untracked |
-| nit | PRUNE rows for files that no regular docs-audit group owns (`.canon/README.md` and three code-review agent definitions) have no clear editing agent. Review round 2, finding 3. | untracked |
-| nit | The guard over-tags tables that sit inside H3 entry bodies under Known Pitfalls (`knownPitfallsIndexTables`). It fails safe. Review round 3, optional nit. | untracked |
-| nit | "A Known Pitfalls doc" as a merge home is no longer defined by the guard's list. Wording only. Review round 3, optional nit. | untracked |
+| nit | The sweep recurrence check counts a prune relocate or merge as a removal, because `git log -S` is per file. The optional fix counts only rules listed under `Deleted:` in the prune record. Review round 2, finding 2. | dropped |
+| nit | PRUNE rows for files that no regular docs-audit group owns (`.canon/README.md` and three code-review agent definitions) have no clear editing agent. Review round 2, finding 3. | dropped |
 | scope | The version number and changelog finalization happen at release through `/canon-changelog` and human sign-off. The `[Unreleased]` entries are drafted and need that step. | post-ship |
-| observation | Move the implement-prompt guard into a shared helper that reports which implement-prompt sources an edit would remove. This would replace the prose selector and needs the no-new-subcommand non-goal lifted. Review round 3. | untracked |
-| observation | Add a `canon doctor` per-file size budget warning once the first real prune runs produce data. The spec deliberately defers it. | untracked |
-| observation | Run the prune on canon-ai's own docs and on an adopter repo. The spec did not run it as part of this task. | untracked |
-| observation | Orchestrator prompt-template candidates surfaced by the docs-audit prune pass are listed as follow-ups, not edited (spec AC-15). Those templates are not canon-managed. | untracked |
+| observation | Add a `canon doctor` per-file size budget warning once the first real prune runs produce data. The spec deliberately defers it. | post-ship |
+| observation | Run the prune on canon-ai's own docs and on an adopter repo. The spec did not run it as part of this task. | dropped |
+| observation | Orchestrator prompt-template candidates surfaced by the docs-audit prune pass are listed as follow-ups, not edited (spec AC-15). Those templates are not canon-managed. | dropped |
 
 ## Quality Log
 
