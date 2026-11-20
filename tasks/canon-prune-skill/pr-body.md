@@ -1,7 +1,7 @@
 ## Summary
 
 - Adds `/canon-prune`, a human-invoked skill that reviews the project's permanent docs rule by rule and proposes delete, relocate, merge or keep for each rule. Rules stated in more than one place become one merge. Nothing is written until the human approves each row, and nothing is committed.
-- The skill drafts a `docs: canon-prune` commit message that records removed and reviewed-and-kept rules. The next run reads that commit and skips kept rules unless their evidence has changed.
+- The skill drafts a `docs: canon-prune` commit message that records removed and reviewed-and-kept rules. The next run reads that commit and shows previously kept rules pre-marked in triage where the match is unambiguous, without hiding any.
 - `/canon-sweep` gets one clause: a lesson that was once a permanent rule removed by a prune counts as a prior occurrence.
 - The local `docs-audit` skill gets a prune pass over canon-ai's own canon-managed files. It is not shipped to adopters.
 - The skill is registered in `CANON_OWNED`, `canon doctor`'s skill check and recommended allowlist, the README, `canon-init`, and canon-ai's `.claude/settings.json`. `dist/` is rebuilt.

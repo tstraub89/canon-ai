@@ -4,7 +4,7 @@
 
 ## What Changed
 
-Adds `/canon-prune`, a skill you run by hand about monthly, or after a model-generation change. It reads the project's permanent docs (patterns, decisions, architecture, any pitfall docs the patterns doc routes to, and the agent instruction files) rule by rule. For each rule it proposes one verdict: delete, relocate, merge, or keep. Rules stated in more than one place become one merge. It writes nothing until you approve each row, and it never commits. The skill drafts a `docs: canon-prune` commit message that records what was removed and which rules you reviewed and kept, so the next run skips them unless their evidence changed. It leaves the lessons buffer and canon's own managed files alone.
+Adds `/canon-prune`, a skill you run by hand about monthly, or after a model-generation change. It reads the project's permanent docs (patterns, decisions, architecture, any pitfall docs the patterns doc routes to, and the agent instruction files) rule by rule. For each rule it proposes one verdict: delete, relocate, merge, or keep. Rules stated in more than one place become one merge. It writes nothing until you approve each row, and it never commits. The skill drafts a `docs: canon-prune` commit message that records what was removed and which rules you reviewed and kept, so the next run shows them pre-marked "previously kept" instead of hiding them. It leaves the lessons buffer and canon's own managed files alone.
 
 Also: `/canon-sweep` gets one clause so a lesson that was once a permanent rule removed by a prune counts as a prior occurrence. The local `docs-audit` skill (canon-ai only, not shipped) gets a prune pass over canon-ai's own managed files. The skill is registered wherever the shipped skills are listed, so `canon init` and `canon upgrade` install it and `canon doctor` checks for it.
 
@@ -30,7 +30,7 @@ Also: `/canon-sweep` gets one clause so a lesson that was once a permanent rule 
 1. In a project with permanent docs, run `/canon-prune`. Expected: it lists the docs it will review, including any pitfall docs the patterns doc routes to. It says it will not touch the lessons buffer or canon's managed files. It changes nothing yet.
 2. Review the proposals. Expected: they arrive in batches per doc group, with merges last. Each row shows the exact edit, its destination and its evidence. Any row that would take a pitfall out of implement prompts is marked "removes from implement prompts".
 3. Approve some rows, reject one, and edit one. Expected: only approved and edited rows change, the docs checks pass, nothing is committed, and you get a draft commit message whose "Reviewed and kept" list includes the rejected row.
-4. Commit that message and run the prune again. Expected: the rejected row is not proposed again unless its text or evidence has changed. Skipped rows are listed in the run summary.
+4. Commit that message and run the prune again. Expected: a rejected delete or relocate row that is the only rule under its heading, and is proposed again, appears at the end of its table pre-marked "previously kept" with the date and reason; you still decide it like any other row.
 5. In a repo that has not run `canon upgrade`, run `canon doctor`. Expected: it warns that `canon-prune` is missing and lists the two allowlist entries as recommended.
 
 ## Test Results
@@ -86,6 +86,8 @@ The entries below are already drafted under `[Unreleased]` in `CHANGELOG.md`. QA
 - **Stopped after round 3.** The third review round found another selection path the guard prose missed. The foreman chose not to run a fourth implement round. It recorded the remaining gaps as follow-ups, with a note that the cold-Claude lens signalled `changes_requested` while the anchored lens approved with nits. That disagreement is real and is listed under Open Questions.
 
 - **Post-QA inline fix: coarse implement-prompt guard.** At human_review, the enumerated guard (which review rounds 1–3 kept finding incomplete) was replaced with a doc-level rule: every non-keep verdict that edits `docs/patterns.md` or a doc one of its tables points to carries the **removes from implement prompts** tag, read as "may change". This removes follow-up risk rows 1–4, the two guard nits and the shared-helper observation. The skill no longer describes canon's selection internals. Validated with `sync-templates:check`, `docs-refs-check` and `npm test` (2,249 passed); reviewed cross-model with Gemini (`agy`), because Codex was out of credits.
+
+- **Post-QA amendment: previously kept rules are shown, not skipped.** PR review (CodeRabbit, then Codex) kept finding cases where matching a rule to an earlier keep decision could hide a rule the human never reviewed. With human approval, the skill now never hides a rule; it pre-marks previously kept rows in triage. Recorded as a spec `## Amendment`.
 
 ## Open Questions
 

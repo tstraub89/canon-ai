@@ -73,7 +73,7 @@ In the invoking session, compare gists of `rule`-form entries only; `pointer` en
 
 ## Step 4 — Triage with the human
 
-Present one verdict table per doc group, with merges last, and one row per non-keep verdict. Each delete, relocate, and merge row shows the exact edit, destination, and evidence, plus the implement-prompt guard tag where it applies. Suggested columns: `| # | Location | Verdict | Edit / destination | Evidence | Guard |`.
+Present one verdict table per doc group for deletes and relocates, then all merges as one final table, with one row per non-keep verdict. Within each table, pre-marked “previously kept” rows come last. Each delete, relocate, and merge row shows the exact edit, destination, and evidence, plus the implement-prompt guard tag where it applies. Suggested columns: `| # | Location | Verdict | Edit / destination | Evidence | Guard |`.
 
 Ask with `AskUserQuestion` for each batch. The human approves, flips, or edits each row individually; nothing is written before approval. Rejected rows become “Reviewed and kept” entries for Step 6. Offer ablation only if the human asks for it on a specific row.
 
@@ -96,14 +96,14 @@ Merged:
 - <home doc path> :: <heading> ← <other locations> — <reason>
 
 Reviewed and kept:
-- <doc path> :: <heading>[ :: <row key>] | proposed: <verdict> | evidence: <the evidence items that drove the proposal> | kept because: <reason>
+- <doc path> :: <heading>[ :: <row key>]  | proposed: <verdict> | evidence: <the evidence items that drove the proposal> | kept because: <reason>
 
 Canon-Prune: <YYYY-MM-DD>
 ```
 
-At run start, look up the latest record with `git log -1 --format=%H --grep='^docs: canon-prune' --grep='^Canon-Prune:'`. The patterns are ORed, so the trailer still finds a squash-merged record. Read it with `git show <sha>`. If none exists, skip nothing. A current rule matches a “Reviewed and kept” entry by doc path and heading, plus row key for a table row; if those do not match, use its gist as fallback. Re-propose a matched rule only if `git diff <sha> -- <doc path>` shows a hunk inside its text, or a recorded evidence item now reads differently (for example, a named path disappeared, a check now enforces it, or a later decision superseded it). Otherwise skip it and list every skipped rule in the run summary. Create no log file.
+At run start, look up the latest record with `git log -1 --format=%H --grep='^docs: canon-prune' --grep='^Canon-Prune:'`. The patterns are ORed, so the trailer still finds a squash-merged record. Read it with `git show <sha>`. The record never hides a rule. In Step 4, any non-keep row at a location that a “Reviewed and kept” entry names (doc path, heading, and row key for a table row) is shown pre-marked “previously kept on <record date>: <kept because>” at the end of its table. The mark is information only: the human still decides each row individually. Pre-mark a row only when it is not a merge row, exactly one current rule sits at that location, and exactly one record entry names it; show every other row unmarked, in ordinary triage. The new record's “Reviewed and kept” list holds the rules kept in this run only. A rule that wasn't triaged this run simply loses its marking; it is never hidden. Create no log file.
 
-Hand back the counts, skipped list, and follow-ups such as code-comment relocations needing review, then present the drafted message. Do not commit.
+Hand back the counts and follow-ups such as code-comment relocations needing review, then present the drafted message. Do not commit.
 
 ## What this skill does not do
 
