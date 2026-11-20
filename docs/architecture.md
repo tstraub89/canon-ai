@@ -4,15 +4,6 @@
 
 ## How to use this doc
 
-This is the *map* of the codebase, not a tutorial on building features. It should answer questions like:
-
-- What's the tech stack?
-- How does data flow from user input to persistent storage?
-- Where do major boundaries live?
-- What are the load-bearing libraries / frameworks the project depends on?
-
-Anything that would change if you migrated to a different framework belongs here. Patterns within the framework belong in `docs/patterns.md`.
-
 > **canon-ai is a CLI orchestrator, not a web/app product.** This doc describes canon-ai's own internals. When dropped into a downstream repo, this file is rewritten for that project.
 
 ---
@@ -187,7 +178,3 @@ Three gates protect the implement → review boundary:
 - **`autoCommitCode()`** (pre-commit): cross-checks dirty tree against handoff Changes table both directions. Fails if files aren't accounted for.
 - **`classifyPreflightBlockers()`** (pre-review, per-task): rejects handoffs with `Fail` validation outcomes, missing AC coverage tables, missing or unfilled baseline Self-Check evidence, or skipped required checks.
 - **`verifyHandoffAgainstDiff()`** (pre-review, bundle-wide): post-commit cross-check that the committed diff matches the union of all bundle members' handoff Changes tables — catches hallucinated handoff entries and silent edits that slipped past the pre-commit check. Two kinds of row are exempt: gitignored build output listed beside its generator, and a row naming one of the listing task's own artifacts under `tasks/<id>/` (the pipeline may rewrite those identical to the base). A row naming another bundle member's artifact is not exempt.
-
-### Concerns that don't apply
-
-The template includes auth/session/feature-flag/i18n/accessibility sections from app projects. canon-ai is a CLI orchestrator with no end-user UI, no auth surface, no localization, no accessibility surface. None of those apply.

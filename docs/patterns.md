@@ -153,9 +153,9 @@ The post-QA window is now closed by the QA-end commit: when `qa.status` becomes 
 
 Rule: **don't `git reset --hard`, `git checkout HEAD~N`, `git stash drop`, or any equivalent on a task branch before the first QA-end commit.** If you need to drop a stray commit, prefer `git revert <sha>` — it writes a new commit that reverses the target rather than rewriting history, so the prior tip stays reachable. (`git revert` does modify the working tree and can conflict with uncommitted state; if you have uncommitted pipeline progress, stash explicitly to a named ref first or accept that the revert may surface a conflict you have to resolve by hand.) If the task branch is already corrupted, the recovery path is `canon task phase` to re-mark phases and restore artifacts from the worktree's reachable history or backups.
 
-### Editing managed docs inside a worktree-isolated task — verify dirty before phase close
+### Confirm protected-doc edits landed in the task worktree before closing a phase
 
-The orchestrator's `autoCommitCode()` stages only files that appear dirty in the worktree at commit time. Historical pre-commit sync paths that moved worktree edits to the supervising checkout could make protected-doc edits appear clean and silently omit them from the implementation commit. The sync path is gone, but the verification habit still matters for worktree-isolated tasks: when editing protected docs (`docs/decisions.md`, `docs/codebase-map.md`, `docs/patterns.md`, etc.), run `git status` in the worktree before the phase closes and explicitly investigate anything that came up clean unexpectedly.
+Before closing a phase that should have edited a protected doc (such as `docs/decisions.md`, `docs/patterns.md` or `docs/codebase-map.md`), run `git status` in the task worktree and confirm the change is there or already committed on the task branch. An edit made in the supervising checkout is not committed with the task, so a clean worktree status is a reason to investigate, not to close.
 
 ### Worktree runs: read files and set subprocess cwd from the active checkout, not REPO_ROOT
 
@@ -217,9 +217,9 @@ When an irreversible operation (PR merge) is followed by a cleanup step (remote 
 
 When tolerating a `gh pr merge` failure, confirm the **specific PR number** that was just attempted (`isPRMerged(prNum)` — `gh pr view <prNum> --json state`), never a branch-based query like `findMergedPRNumber(branch, baseBranch)`. The branch-based query returns the most-recent merged PR for that branch/base combination: if a branch name was reused after an earlier merged PR, the query falsely confirms the *current* (failed) merge as succeeded, hiding a real merge failure. With a prNum-specific query, the only failure mode is a gh transient error returning false on a genuinely merged PR — that case is reported as a failed result and `shipTasks` dies (restoring preserved state first), reverting to today's behavior (fails safe). Canonical implementation: `mergeOpenPRsAndPull` in `src/orchestrator/main.ts`, introduced by base-divergence-gate AC-14 after the spec's Codex spec-review round surfaced the branch-reuse trap.
 
-### Orchestrator survives supervising-shell death; the stall timer still detects hangs
+### Keep agent runs alive and detached when the supervising shell exits
 
-Before this fix, a backgrounded `canon run <id>` could die silently when the supervising shell exited: Node took the default SIGHUP termination path, the orchestrator vanished, and the in-process stall timer died with it. The fix is to install the SIGHUP handler at module top-level in `src/orchestrator/run-task.ts` and sever child stdin in `src/orchestrator/agents/stream.ts`; after that, the orchestrator survives supervising-shell exit and the existing stall timer remains the detection layer for genuinely hung agents. The remaining detach-mode and heartbeat follow-up is tracked as a GitHub issue (label `bug`).
+Two safeguards protect a run from its terminal closing. `src/orchestrator/run-task.ts` imports the SIGHUP handler as its first, side-effect import, so a hangup during startup can't kill the run before the stall timer exists. `streamProcess()` in `src/orchestrator/agents/stream.ts` spawns agent CLIs with `detached: true`, so a SIGHUP sent to the shell's process group doesn't reach them, and with stdin set to `ignore`, because process-group isolation does not close an inherited stdin. Keep all three when restructuring the entry point or changing how agents are spawned.
 
 ### Declare `templates/` mirrors of canon-managed edits in BOTH the spec Affected Files and the handoff Changes table
 
