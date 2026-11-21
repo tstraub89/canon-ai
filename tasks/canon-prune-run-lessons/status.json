@@ -1,15 +1,15 @@
 {
   "id": "canon-prune-run-lessons",
   "title": "Tighten /canon-prune from its first real run",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-20",
-  "updated": "2026-11-20",
+  "updated": "2026-11-21",
   "branch": "task/canon-prune-run-lessons",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
     "upstream_commit": "<unavailable>",
-    "orchestrator_commit": "629a1c386a724de1cb5d629f3a9a9315bb7ecd7f",
+    "orchestrator_commit": "517683ddc59bb05741b893dc37053f56024c7a5c",
     "canon_version": "3.22.0",
     "codex_cli": "codex-cli 0.171.0",
     "claude_code": "2.1.328 (Claude Code)"
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },
