@@ -4,76 +4,90 @@
 
 ## What Changed
 
-One paragraph, plain English. No code jargon.
+The first real `/canon-prune` run needed eleven review rounds, and they fell into four repeatable gaps in the skill's instructions. This change closes those gaps in the skill's steps. Before proposing a delete, the skill now classifies every sentence in the removed text as superseded, obsolete, or stated elsewhere, and keeps any sentence that still states a live fact. Each row that removes an implement-prompt guard now names the live requirements it drops and the paths that still select them, and a requirement with no remaining path becomes its own short pitfall. Before any delete, merge, relocate, or heading rename, the skill searches the repo (archives excluded) for references and retargets them in the same apply step. The hand-back now says the drafted prune record must be carried into the squash commit or PR body used to merge. In canon-ai's local `docs-audit` skill, a carve-out says its own root docs describe canon, so the "describes a canon mechanism" delete rule does not apply to them. Two stale doc lines are gone: a helper name in an incident aside in `docs/patterns.md`, and an untracked "Backlogged" list in `docs/decisions.md`. The shipped skill stays adopter-neutral and its template mirror is in sync.
 
 ## Files Changed
 
-- `<path>` — brief note
-- ...
+- `.claude/skills/canon-prune/SKILL.md` — sentence classification (Steps 2–4), guard requirement and path accounting (§"Implement-prompt guard"), reference sweep (Step 5), record hand-back (Step 6).
+- `templates/.claude/skills/canon-prune/SKILL.md` — mirror of the shipped skill, synced with `npm run sync-templates`.
+- `.claude/skills/docs-audit/SKILL.md` — canon-ai-only carve-out for its own root docs in the prune pass (line 26). Not a shipped file.
+- `docs/patterns.md` — removed the incident aside naming `taskDirFromRoot()`; the `taskDirFor()` rule stays.
+- `docs/decisions.md` — removed the "Backlogged (separate future minors" line and its extra blank line.
 
 ## How to Test
 
-1. ...
-2. ...
-3. Expected: ...
+1. Read `/canon-prune`'s delete step (Step 2 and Step 3). Expected: every removed sentence is classified, and a sentence that states a current fact keeps the proposal an edit.
+2. Read the triage step (Step 4). Expected: the triage row shows the classification and the "Sentence classification" column.
+3. Read §"Implement-prompt guard". Expected: each tagged row names its live requirements and their remaining selecting paths. Rules that guard one failure stay in one H3, and a short rule is not folded into a larger pitfall.
+4. Read Step 5. Expected: a repo-wide reference search (archives excluded) runs before any delete, merge, relocate, or heading rename, and the hand-back lists the references it changed.
+5. Read Step 6. Expected: the hand-back says the drafted message is the prune record and must be carried into the squash commit or PR body used to merge.
+6. Read the `docs-audit` prune pass. Expected: for canon-ai's own root docs, the "describes a canon mechanism" criterion and the "High-level canon mentions only" section do not apply.
+7. Check `docs/patterns.md` and `docs/decisions.md`. Expected: the helper name and the "Backlogged" line are gone, and `taskDirFor()` is still named.
 
 ## Test Results
 
 | Check | Result |
 |---|---|
-| Lint | Pass |
-| Type-check | Pass |
-| Unit tests | Pass |
-| E2E tests | Pass / Skipped |
-| Build | Pass |
+| Lint (`npm run lint`) | N/A — no source file changed (spec Validation Required) |
+| Type-check (`npm run type-check`) | N/A — no source file changed (spec Validation Required) |
+| Unit tests (`npm test`) | Pass — 2,248 passed, 0 failed, 1 skipped (round-2 re-run in `handoff.md`; QA did not re-run) |
+| Template mirror (`npm run sync-templates:check`) | Pass — re-run by QA: "All canon-managed files in sync" |
+| Docs refs (`npm run docs-refs-check`) | Pass — re-run by QA: "All refs OK" |
+| Build (`npm run build`) | N/A — no source file changed (spec Validation Required) |
+| E2E | N/A — no UI surface |
+| AC-7 greps (`taskDirFromRoot`, "Backlogged (separate") | Pass — re-run by QA: no matches in `docs/`, `.claude/`, or `templates/` |
 
 ## Human Verification Required
 
-List any unresolved `human_pending` validation checks from handoff.md. If none remain, write "None." If the human intentionally defers a pending check, add an unbulleted line that begins exactly with `Acknowledged:` and states the rationale, such as `Acknowledged: <check> deferred until after merge because …`. Leave it out unless the human defers a check: the line itself is the waiver.
+None.
 
-- (none / `Check name` — why it requires human verification)
+Pre-merge checklist (cannot be confirmed yet):
+
+- [x] Version correct — no bump in this task (Judgment Call 4); `/canon-prune` is still under `[Unreleased]`.
+- [x] Changelog updated if needed — no change proposed (see Proposed Changelog).
+- [ ] PR body current — `tasks/canon-prune-run-lessons/pr-body.md` is drafted; confirm after `--pr` opens the PR.
+- [ ] Final CI/CD checks green — no PR exists yet.
+- [x] Final diff matches spec intent — round-2 review checked AC-1 to AC-7 against the diff.
 
 ## Proposed Changelog
 
-Apply the project's changelog scope (`docs/decisions.md` §"Versioning and release policy") and the "would a user notice" test. If nothing qualifies, write: no user-facing change — omit from changelog.
-
-- (proposed bullet(s), in the changelog's voice)
+No user-facing change beyond the unreleased entry — omit from changelog. The unreleased `/canon-prune` bullet already describes the skill that these instructions govern, and no adopter has a released version of it yet. When `/canon-changelog` runs, the human may choose to fold in "the prune record must be carried into the squash or PR merge," but this QA pass proposes no separate bullet.
 
 ## Judgment Calls to Confirm
 
-List every row in the spec's *Judgment Calls* section whose Decided by value is `Author`: the call, the chosen option, and the strongest alternative. These are calls the human did not explicitly make. If there are no `Author` rows, or the spec has no such section, write "None."
-
-- (call — chosen option; alternative: …)
+- Delete the untracked "Backlogged" line in `docs/decisions.md` — chose delete; alternative: file the four ideas as backlog items (none has been picked up since 2026-06).
+- How guard cost is shown — chose prose in each row (the requirement and its remaining selecting paths); alternative: a `canon` command that diffs pitfall selection before and after.
+- Version bump and changelog — chose none, since `/canon-prune` is still under `[Unreleased]`; alternative: a new changelog bullet for this change.
 
 ## Decisions Made
 
-Any choices that were made during implementation that you should be aware of.
+- **Carve-out wording is unconditional for this row (review round 2).** Round 1 found the first wording ("when pruning with `/canon-prune`") unreachable, because `/canon-prune` excludes canon-managed files from its input and this row covers those root copies. The carve-out now applies to this row's canon-ai root docs without a condition (`.claude/skills/docs-audit/SKILL.md:26`).
+- **Headings kept.** §"Verdicts" and §"Implement-prompt guard" keep their names because `docs-audit` cites them by heading.
+- **No source or test changes.** The diff touches only the Affected Files in the spec.
+
+- **Post-QA inline fix (human-approved).** Folded five review nits into the skills: Step 2's return fields include the sentence classification; Step 4 classifies all text a row removes from any location it edits (merge homes, relocation destinations, clauses and table cells included), redoes it after a triage edit, and rechecks "stated elsewhere" citations across all approved edits before applying; Step 6 says the record must land on the base branch (squash message, or the prune commit for rebase/merge-commit merges); `docs-audit` routes canon-ai's root docs to a separate, opt-in `/canon-prune` pass started from its session, passing both exemptions to it and its inventory agents. Reviewed by Codex over seven rounds; the last round's generalization was not re-reviewed. Checks and `npm test` (2,249 passed) re-run.
 
 ## Open Questions
 
-Decisions that still need your input. Work recommended for later goes in the next section, not here.
+- Should the prune record be required in the squash commit message itself, not only in the PR body that the merge uses? AC-4 allows either. Round 1 Codex review argued that `git log --grep` finds the record only when the commit message contains it, since GitHub's squash merge uses the PR body as the message only when the PR is set up that way. The current wording stays as the spec wrote it unless you decide otherwise.
 
 ## Follow-ups
 
-Work that should happen after this task ships. One row per item, or write `None.` alone in place of the table. Write a literal pipe inside a cell as `\|`.
-
-- Category: `correctness`, `risk`, `spec-gap`, `nit`, `scope`, or `observation`.
-- Tracked: `untracked` (not yet decided), `dropped` (decided not to do), `post-ship` (written on base after the merge as a backlog entry or doc fix), or a reference: a link, an issue reference such as `#42`, or another canon task as `task:<id>`. A bare task id is not a reference.
-
 | Category | Follow-up | Tracked |
 |---|---|---|
-| (category) | (what remains and why it matters) | untracked |
+| nit | Step 5 reports edits outside the approved rows (CHANGELOG, backlog) only in the hand-back, not at triage, and "heading rename" is not a verdict. AC-3 mandates this shape; the reviewer marked it informational. Round 1 nit. | dropped |
+| observation | Check whether the per-sentence classification is filled in on the next real `/canon-prune` run. Known Risk 2 says an inventory agent could label a whole clause "superseded" without per-sentence work. | post-ship |
+
+Maintenance: lessons-learned.md plus this task's fragment have 16 entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").
 
 ## Quality Log
 
-QA fills these five cells; the pipeline's QA prompt defines each one.
-
-- Spec verdict:
-- Human reroute?:
-- Dropped ACs:
-- Validation gaps:
-- Notes:
+- Spec verdict: approved
+- Human reroute?: No
+- Dropped ACs: 0
+- Validation gaps: 0
+- Notes: Two review rounds; round 1 found one blocking wording bug in the docs-audit carve-out, fixed in round 2, with nits left as follow-ups.
 
 ## Root Cause
 
-One line per blocking review finding, reroute, or dropped AC: `- <class>: <one-line cause>`, where class is `context-missing`, `context-conflicting`, `spec-gap`, `plan-error`, `execution`, or `unrequested-change`. If there were none, write "None."
+- context-conflicting: the docs-audit group covers root copies of `CANON_OWNED` files, but `/canon-prune` excludes canon-managed files from its input, so a carve-out conditioned on a `/canon-prune` run could never apply to the rows it covers.

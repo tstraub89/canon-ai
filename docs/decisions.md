@@ -232,8 +232,6 @@ _Generation: Opus 4.8 / Sonnet 4.6 / GPT-5.5._
 **Deliberately NOT changed**:
 - **Lens count: one anchored + two cross-family adversarial lenses (cold-Claude + cold-Codex).** The near-clone caveat scopes to same-model additions: beyond one anchored reviewer and one same-family adversarial reviewer, added same-model reviewers tend to produce correlated misses, limited recall gain, and more noise. A lens from a different model family is the exception when evidence shows decorrelated blind spots. The archived head-to-head (`docs/canon-opus48-gpt55-report.md`: 173 Codex PR findings, 0 false positives, ~76% off-AC) found Codex and cold-Claude complementary, and the operator's current practice of pre-running `codex review` before PRs confirms Codex repeatedly finds P2s the Claude lenses miss. Do not add another same-model review lens without fresh evidence; cross-family additions are evaluated on their own merits.
 
-**Backlogged (separate future minors, each its own spec)**: a test-generation / self-verification phase after implement; confidence-based cascaded reviewer escalation (Sonnet→Opus on low confidence) replacing pure size-based routing; micro-spec decomposition guidance for L/XL; a spec-contradiction lint in `/canon-spec-review`.
-
 ---
 
 ## `spec_review` M effort raised medium → high (2026-07)
