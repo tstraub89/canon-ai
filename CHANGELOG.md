@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.23.0] — 2026-11-21
+
 ### Added
 
 - **New `/canon-prune` skill prunes the permanent docs.** It reviews patterns, decisions, architecture, routed pitfall docs and agent files rule by rule with parallel inventory agents; proposes deletes, relocations and merges with evidence, each approved by the human individually, and reports how many rules it proposes to leave unchanged; and flags edits to docs that may change what implement prompts receive. It drafts a `docs: canon-prune` commit message recording reviewed-and-kept rules, and never touches the lessons buffer or canon-managed files. It is installed by `canon init` / `canon upgrade` and checked by `canon doctor`. Until you run `canon upgrade` and add `Skill(canon-prune)` and `Skill(canon-prune:*)` to `.claude/settings.json`, `canon doctor` warns about the missing skill and both missing allowlist entries. The README and `/canon-init` advise keeping canon mentions in agent files at a high level.
