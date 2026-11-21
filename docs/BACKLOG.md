@@ -343,6 +343,13 @@
 
 ## 🛠️ Tooling & Dev Experience
 
+- [ ] **`canon doctor` size budget for the permanent docs** *(filed 2026-11-21, post-ship from `canon-prune-skill`; deliberately deferred there.)*
+  - **What**: a doctor warning when a permanent doc outgrows a budget, as the trigger signal for `/canon-prune` (like the ~15-entry signal for `/canon-sweep`).
+  - **Before building**: set thresholds from real prune runs, not a guess. Measure what loads and when, not raw file size: agent files load every session, while pitfall docs are injected under a 24 KiB cap. The first run on canon-ai cut about 80 net lines.
+
+- [ ] **Check that `/canon-prune`'s sentence classification gets filled in** *(filed 2026-11-21, post-ship from `canon-prune-run-lessons`.)*
+  - **What**: on the next real `/canon-prune` run, check that every delete, relocate and merge row shows a per-sentence classification rather than labeling a whole clause "superseded". If inventory agents skip it, make it a required return field they can't omit.
+
 - [ ] **Replay eval harness for pipeline changes** *(filed 2026-11-06. **Priority: medium. It would make every future model, prompt or lens change measurable.**)*
   - **Problem**: model swaps (GPT-5 → 6, Claude 4 → 5 → 5.5), prompt edits and lens changes are checked today by replaying past commits and PRs by hand to see whether the change would have shifted the outcome. That works, but each check is rebuilt from scratch and leaves no corpus behind. So the same question ("does this catch more, at what cost?") gets answered differently each time, and old answers can't be re-run when the next model lands.
   - **Design sketch**: a fixed corpus of replay cases, each a base SHA plus a diff (or spec) plus an expected outcome. Take cases mainly from known misses: defects fixed after the PR that `code_review` approved, the `changes_requested` rounds in `task-quality-log.md`, and accepted cold-lens catches. A runner replays one phase (start with `code_review`, then `spec_review`) under a named config (model, effort, prompt version, lens set). It scores catch or miss for each case, plus false positives, tokens and duration, and diffs the result against a stored baseline run.
