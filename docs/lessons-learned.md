@@ -147,3 +147,11 @@ The prune skill's implement-prompt guard listed the content that pitfall selecti
 *(2026-11-19, source: canon-prune-skill)*
 
 The prune spec said canon-managed files are never read. The skill still told the agent to run the preflight in canon-sweep §"Preconditions" and to take a home from canon-sweep §"Step 2", and both sections sit in that managed set. The contradiction went to review as a correctness bug. Prevention: when a rule says a set is never read or edited and a skill points at a heading in that set, state the exception in the same sentence, name the exact sections, and say which parts of them apply (here, only the three preflight checks). Otherwise the agent either skips the reference or breaks the rule.
+
+---
+
+### A carve-out's condition must match the rows it covers, not a run of another skill
+
+*(date 2026-11-20, source: canon-prune-run-lessons)*
+
+A docs-audit carve-out said the "describes a canon mechanism" delete rule does not apply "when pruning canon-ai's own root docs with `/canon-prune`." The rows it covers are canon-managed root copies, and `/canon-prune` excludes canon-managed files from its input, so the condition could never be true for them. Two cold reviewers flagged it as unreachable. Prevention: when a carve-out covers a set of files, state the exception unconditionally for those rows and say why it applies. Do not condition it on a run of another skill that never touches those files. Before writing the wording, check the other skill's input rule for those same files. Canonical example: the docs-audit prune row in `.claude/skills/docs-audit/SKILL.md` (line 26), against the exclusion in `.claude/skills/canon-prune/SKILL.md`.

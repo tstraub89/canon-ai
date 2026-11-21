@@ -1704,3 +1704,14 @@
 | 2026-11-20T03:41:33.150Z | canon-prune-skill | code_review | claude:code-review-anchored | claude-opus-5-5 | 2 | 48.7s | 796243 | ok | - |
 | 2026-11-20T03:41:33.152Z | canon-prune-skill | code_review | claude:code-review-cold | claude-opus-5-5 | 2 | 60.5s | 762064 | ok | - |
 | 2026-11-20T03:43:12.987Z | canon-prune-skill | qa | claude | claude-haiku-5-5 | 0 | 99.4s | 812994 | ok | medium |
+| 2026-11-20T07:16:22.466Z | canon-prune-run-lessons | implement | codex | gpt-6-luna | 0 | 280.3s | 2311008 | ok | medium |
+| 2026-11-20T07:17:49.043Z | canon-prune-run-lessons | code_review | codex | gpt-6-luna | 0 | 82.7s | - | ok | high |
+| 2026-11-20T07:19:19.577Z | canon-prune-run-lessons | code_review | claude | sonnet | 0 | 90.5s | 642031 | ok | medium |
+| 2026-11-20T07:19:19.581Z | canon-prune-run-lessons | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 20.2s | 313086 | ok | - |
+| 2026-11-20T07:19:19.584Z | canon-prune-run-lessons | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 35.1s | 352141 | ok | - |
+| 2026-11-20T07:26:29.065Z | canon-prune-run-lessons | implement | codex | gpt-6-luna | 1 | 428.7s | 7297978 | ok | medium |
+| 2026-11-20T07:27:06.020Z | canon-prune-run-lessons | code_review | codex | gpt-6-luna | 1 | 32.5s | - | ok | high |
+| 2026-11-20T07:28:03.676Z | canon-prune-run-lessons | code_review | claude | sonnet | 1 | 57.6s | 623721 | ok | medium |
+| 2026-11-20T07:28:03.685Z | canon-prune-run-lessons | code_review | claude:code-review-cold | claude-sonnet-5-5 | 1 | 13.7s | 214373 | ok | - |
+| 2026-11-20T07:28:03.690Z | canon-prune-run-lessons | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 1 | 18.9s | 238808 | ok | - |
+| 2026-11-20T07:29:38.954Z | canon-prune-run-lessons | qa | claude | claude-haiku-5-5 | 0 | 92.5s | 702036 | ok | medium |
