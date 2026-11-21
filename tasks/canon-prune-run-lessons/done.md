@@ -65,6 +65,8 @@ No user-facing change beyond the unreleased entry — omit from changelog. The u
 - **Headings kept.** §"Verdicts" and §"Implement-prompt guard" keep their names because `docs-audit` cites them by heading.
 - **No source or test changes.** The diff touches only the Affected Files in the spec.
 
+- **Post-QA inline fix (human-approved).** Folded five review nits into the skills: Step 2's return fields include the sentence classification; Step 4 classifies all text a row removes from any location it edits (merge homes, relocation destinations, clauses and table cells included), redoes it after a triage edit, and rechecks "stated elsewhere" citations across all approved edits before applying; Step 6 says the record must land on the base branch (squash message, or the prune commit for rebase/merge-commit merges); `docs-audit` routes canon-ai's root docs to a separate, opt-in `/canon-prune` pass started from its session, passing both exemptions to it and its inventory agents. Reviewed by Codex over seven rounds; the last round's generalization was not re-reviewed. Checks and `npm test` (2,249 passed) re-run.
+
 ## Open Questions
 
 - Should the prune record be required in the squash commit message itself, not only in the PR body that the merge uses? AC-4 allows either. Round 1 Codex review argued that `git log --grep` finds the record only when the commit message contains it, since GitHub's squash merge uses the PR body as the message only when the PR is set up that way. The current wording stays as the spec wrote it unless you decide otherwise.
@@ -73,13 +75,8 @@ No user-facing change beyond the unreleased entry — omit from changelog. The u
 
 | Category | Follow-up | Tracked |
 |---|---|---|
-| nit | Step 2's inventory-agent return format ("a proposed verdict with exact replacement text, or `delete`") does not list the sentence classification. Adding it to the return fields would show an omission earlier (Known Risk 2). Round 1 nit, left as-is in round 2. | untracked |
-| nit | Step 4's "Sentence classification" column has no stated value for `relocate` and `merge` rows. Round 1 nit, left as-is in round 2. | untracked |
-| nit | Step 5 reports edits outside the approved rows (CHANGELOG, backlog) only in the hand-back, not at triage, and "heading rename" is not a verdict. AC-3 mandates this shape; the reviewer marked it informational. Round 1 nit. | untracked |
-| nit | Step 6 carries the record in a PR body, which `git log --grep` finds only if the merge uses that body as the commit message. A clarifying clause would help; AC-4 allows the PR-body route, so no change was required. Round 1 nit, from the Codex P2 dismissed as blocking. | untracked |
-| nit | `.claude/skills/docs-audit/SKILL.md:26` says "this row's canon-ai root docs," which is looser than "root copies of `CANON_OWNED` markdown files," so the carve-out's reach is ambiguous. Flagged by the anchored and cold-Claude lenses in round 2. | untracked |
-| nit | Step 6 does not literally tell the human to carry the record; the audience is implicit. Round 2 nit, from the anchored lens. | untracked |
-| observation | Check whether the per-sentence classification is filled in on the next real `/canon-prune` run. Known Risk 2 says an inventory agent could label a whole clause "superseded" without per-sentence work. | untracked |
+| nit | Step 5 reports edits outside the approved rows (CHANGELOG, backlog) only in the hand-back, not at triage, and "heading rename" is not a verdict. AC-3 mandates this shape; the reviewer marked it informational. Round 1 nit. | dropped |
+| observation | Check whether the per-sentence classification is filled in on the next real `/canon-prune` run. Known Risk 2 says an inventory agent could label a whole clause "superseded" without per-sentence work. | post-ship |
 
 Maintenance: lessons-learned.md plus this task's fragment have 16 entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").
 
