@@ -368,6 +368,24 @@ void test('blank legacy model overrides resolve like unset variables', () => {
     assert.equal(codex.codexModelMini, 'gpt-6-luna');
 });
 
+void test('blank model overrides preserve Claude and Codex fallback precedence', () => {
+    const blankClaudeLegacy = loadPolicyConfigForEnv({ CLAUDE_MODEL: '' });
+    assert.equal(getPipelinePolicy([s('XS')], blankClaudeLegacy).claude('qa').model, 'claude-haiku-5-5');
+    assert.equal(getPipelinePolicy([s('M')], blankClaudeLegacy).claude('spec').model, 'opus');
+
+    const blankQaPin = loadPolicyConfigForEnv({ CLAUDE_MODEL_QA: '', CLAUDE_MODEL: 'legacy-x' });
+    assert.equal(getPipelinePolicy([s('M')], blankQaPin).claude('qa').model, 'legacy-x');
+    const blankPhasePin = loadPolicyConfigForEnv({ CLAUDE_MODEL_SPEC: '', CLAUDE_MODEL_LIGHT: 'tier-x' });
+    assert.equal(getPipelinePolicy([s('XS')], blankPhasePin).claude('spec').model, 'tier-x');
+    assert.equal(getPipelinePolicy([s('XS')], loadPolicyConfigForEnv({ CLAUDE_MODEL_SPEC: '' })).claude('spec').model, 'sonnet');
+
+    assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_MINI: '', CODEX_MODEL_DEFAULT: 'legacy-mini' }).codexModelMini, 'legacy-mini');
+    assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_MINI: '', CODEX_MODEL_DEFAULT: '' }).codexModelMini, 'gpt-6-luna');
+    assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_DEFAULT: '' }).codexModelMini, 'gpt-6-luna');
+    assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_FULL: '', CODEX_MODEL_DELICATE: 'legacy-full' }).codexModelFull, 'legacy-full');
+    assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_FULL: '', CODEX_MODEL_DELICATE: '' }).codexModelFull, 'gpt-6.2-sol');
+});
+
 void test('every blank model environment variable matches its unset baseline and trims values', () => {
     const variables = ['CLAUDE_MODEL', 'CLAUDE_MODEL_QA', 'CLAUDE_MODEL_SPEC_REVIEW', 'CLAUDE_MODEL_IMPLEMENT', 'CLAUDE_MODEL_SPEC', 'CLAUDE_MODEL_PLAN', 'CLAUDE_MODEL_REVIEW', 'CLAUDE_MODEL_REVIEW_LARGE', 'CLAUDE_MODEL_LIGHT', 'CLAUDE_MODEL_STRONG', 'CODEX_MODEL_MINI', 'CODEX_MODEL_FULL', 'CODEX_MODEL_DEFAULT', 'CODEX_MODEL_DELICATE'];
     const baseline = loadPolicyConfigForEnv({});
@@ -381,7 +399,7 @@ void test('every blank model environment variable matches its unset baseline and
 
 void test('legacy model warnings ignore blank values and retain non-empty warnings', () => {
     const originalError = console.error;
-    const original = new Map(['CLAUDE_MODEL', 'CODEX_MODEL_DEFAULT', 'CODEX_MODEL_DELICATE', 'CODEX_EFFORT_DEFAULT'].map(name => [name, process.env[name]]));
+    const original = new Map(['CLAUDE_MODEL', 'CODEX_MODEL_DEFAULT', 'CODEX_MODEL_DELICATE', 'CODEX_EFFORT_DEFAULT', 'CODEX_EFFORT_DELICATE'].map(name => [name, process.env[name]]));
     const messages: string[] = [];
     console.error = message => messages.push(String(message));
     try {
@@ -395,8 +413,9 @@ void test('legacy model warnings ignore blank values and retain non-empty warnin
         process.env.CODEX_MODEL_DEFAULT = 'legacy-mini';
         process.env.CODEX_MODEL_DELICATE = 'legacy-full';
         process.env.CODEX_EFFORT_DEFAULT = 'high';
+        process.env.CODEX_EFFORT_DELICATE = 'high';
         warnLegacyEnvVars();
-        assert.equal(messages.length, 4);
+        assert.equal(messages.length, 5);
     } finally {
         console.error = originalError;
         for (const [name, value] of original) {

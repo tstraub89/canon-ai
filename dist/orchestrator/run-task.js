@@ -779,7 +779,7 @@ var LEGACY_IGNORED_ENV_VARS = [
 ];
 function warnLegacyEnvVars() {
   for (const { old, replacement } of LEGACY_FALLBACK_ENV_VARS) {
-    if (old === "CLAUDE_MODEL" || old === "CODEX_MODEL_DEFAULT" || old === "CODEX_MODEL_DELICATE" ? envModel(old) !== null : process.env[old]) {
+    if (envModel(old) !== null) {
       console.error(`\u26A0\uFE0F  ${old} is deprecated \u2014 use ${replacement}. Current run still honors it.`);
     }
   }

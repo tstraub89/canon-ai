@@ -55,9 +55,7 @@ export const LEGACY_IGNORED_ENV_VARS: Array<{ old: string; reason: string }> = [
 
 export function warnLegacyEnvVars(): void {
     for (const { old, replacement } of LEGACY_FALLBACK_ENV_VARS) {
-        if (old === 'CLAUDE_MODEL' || old === 'CODEX_MODEL_DEFAULT' || old === 'CODEX_MODEL_DELICATE'
-            ? envModel(old) !== null
-            : process.env[old]) {
+        if (envModel(old) !== null) {
             console.error(`⚠️  ${old} is deprecated — use ${replacement}. Current run still honors it.`);
         }
     }
