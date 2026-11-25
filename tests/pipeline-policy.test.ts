@@ -23,7 +23,7 @@ import {
     resolveCodeReviewScope,
     type CodeReviewScopeFacts,
 } from '../src/lib/pipeline-policy.ts';
-import { LEGACY_FALLBACK_ENV_VARS } from '../src/orchestrator/env.ts';
+import { LEGACY_FALLBACK_ENV_VARS, warnLegacyEnvVars } from '../src/orchestrator/env.ts';
 import { invalidCodexEffortMessage } from '../src/orchestrator/agents/codex.ts';
 
 const reviewFacts: CodeReviewScopeFacts = {
@@ -359,6 +359,51 @@ void test('shipped Codex model defaults apply when no Codex model variables are 
     assert.equal(config.codexModelFull, 'gpt-6.2-sol');
     assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_DELICATE: 'legacy-full' }).codexModelFull, 'legacy-full');
     assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_FULL: 'pinned-full', CODEX_MODEL_DELICATE: 'legacy-full' }).codexModelFull, 'pinned-full');
+});
+
+void test('blank legacy model overrides resolve like unset variables', () => {
+    const claude = loadPolicyConfigForEnv({ CLAUDE_MODEL: '' });
+    assert.equal(getPipelinePolicy([s('XS')], claude).claude('spec').model, 'sonnet');
+    const codex = loadPolicyConfigForEnv({ CODEX_MODEL_MINI: '' });
+    assert.equal(codex.codexModelMini, 'gpt-6-luna');
+});
+
+void test('every blank model environment variable matches its unset baseline and trims values', () => {
+    const variables = ['CLAUDE_MODEL', 'CLAUDE_MODEL_QA', 'CLAUDE_MODEL_SPEC_REVIEW', 'CLAUDE_MODEL_IMPLEMENT', 'CLAUDE_MODEL_SPEC', 'CLAUDE_MODEL_PLAN', 'CLAUDE_MODEL_REVIEW', 'CLAUDE_MODEL_REVIEW_LARGE', 'CLAUDE_MODEL_LIGHT', 'CLAUDE_MODEL_STRONG', 'CODEX_MODEL_MINI', 'CODEX_MODEL_FULL', 'CODEX_MODEL_DEFAULT', 'CODEX_MODEL_DELICATE'];
+    const baseline = loadPolicyConfigForEnv({});
+    for (const name of variables) for (const value of ['', '  ']) {
+        assert.deepEqual(loadPolicyConfigForEnv({ [name]: value }), baseline, `${name}=${JSON.stringify(value)}`);
+    }
+    assert.equal(loadPolicyConfigForEnv({ CLAUDE_MODEL_QA: ' opus ' }).claudeModelQa, 'opus');
+    assert.equal(loadPolicyConfigForEnv({ CODEX_MODEL_MINI: ' m ' }).codexModelMini, 'm');
+    assert.equal(loadPolicyConfigForEnv({ CLAUDE_BUDGET: '' }).claudeBudget, '');
+});
+
+void test('legacy model warnings ignore blank values and retain non-empty warnings', () => {
+    const originalError = console.error;
+    const original = new Map(['CLAUDE_MODEL', 'CODEX_MODEL_DEFAULT', 'CODEX_MODEL_DELICATE', 'CODEX_EFFORT_DEFAULT'].map(name => [name, process.env[name]]));
+    const messages: string[] = [];
+    console.error = message => messages.push(String(message));
+    try {
+        for (const name of original.keys()) delete process.env[name];
+        process.env.CLAUDE_MODEL = '  ';
+        process.env.CODEX_MODEL_DEFAULT = '  ';
+        process.env.CODEX_MODEL_DELICATE = '  ';
+        warnLegacyEnvVars();
+        assert.deepEqual(messages, []);
+        process.env.CLAUDE_MODEL = 'legacy';
+        process.env.CODEX_MODEL_DEFAULT = 'legacy-mini';
+        process.env.CODEX_MODEL_DELICATE = 'legacy-full';
+        process.env.CODEX_EFFORT_DEFAULT = 'high';
+        warnLegacyEnvVars();
+        assert.equal(messages.length, 4);
+    } finally {
+        console.error = originalError;
+        for (const [name, value] of original) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
+    }
 });
 
 void test('every Codex matrix effort is one the Codex effort validator accepts', () => {

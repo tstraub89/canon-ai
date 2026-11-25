@@ -760,6 +760,9 @@ function parseMaxReviewLoops(raw) {
   }
   return parsed;
 }
+function envModel(name) {
+  return process.env[name]?.trim() || null;
+}
 var REPO_ROOT = resolveProjectRoot();
 var TASKS_DIR = path2.join(REPO_ROOT, "tasks");
 var WORKTREES_ROOT = process.env.CANON_WORKTREES_ROOT ? path2.resolve(REPO_ROOT, process.env.CANON_WORKTREES_ROOT) : path2.resolve(REPO_ROOT, ".canon/worktrees");
@@ -776,7 +779,7 @@ var LEGACY_IGNORED_ENV_VARS = [
 ];
 function warnLegacyEnvVars() {
   for (const { old, replacement } of LEGACY_FALLBACK_ENV_VARS) {
-    if (process.env[old]) {
+    if (old === "CLAUDE_MODEL" || old === "CODEX_MODEL_DEFAULT" || old === "CODEX_MODEL_DELICATE" ? envModel(old) !== null : process.env[old]) {
       console.error(`\u26A0\uFE0F  ${old} is deprecated \u2014 use ${replacement}. Current run still honors it.`);
     }
   }
@@ -2486,18 +2489,18 @@ import path26 from "path";
 
 // src/orchestrator/policy.ts
 var config2 = {
-  claudeModelSpecReview: process.env.CLAUDE_MODEL_SPEC_REVIEW ?? null,
-  claudeModelImplement: process.env.CLAUDE_MODEL_IMPLEMENT ?? null,
-  claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? null,
-  claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? null,
-  claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? null,
-  claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? null,
-  claudeModelQa: process.env.CLAUDE_MODEL_QA ?? null,
-  claudeModelLight: process.env.CLAUDE_MODEL_LIGHT || null,
-  claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
-  claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
-  codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT,
-  codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE,
+  claudeModelSpecReview: envModel("CLAUDE_MODEL_SPEC_REVIEW"),
+  claudeModelImplement: envModel("CLAUDE_MODEL_IMPLEMENT"),
+  claudeModelSpec: envModel("CLAUDE_MODEL_SPEC"),
+  claudeModelPlan: envModel("CLAUDE_MODEL_PLAN"),
+  claudeModelReview: envModel("CLAUDE_MODEL_REVIEW"),
+  claudeModelReviewLarge: envModel("CLAUDE_MODEL_REVIEW_LARGE"),
+  claudeModelQa: envModel("CLAUDE_MODEL_QA"),
+  claudeModelLight: envModel("CLAUDE_MODEL_LIGHT"),
+  claudeModelStrong: envModel("CLAUDE_MODEL_STRONG"),
+  claudeModelLegacy: envModel("CLAUDE_MODEL"),
+  codexModelMini: envModel("CODEX_MODEL_MINI") ?? envModel("CODEX_MODEL_DEFAULT"),
+  codexModelFull: envModel("CODEX_MODEL_FULL") ?? envModel("CODEX_MODEL_DELICATE"),
   maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
   claudeBudget: process.env.CLAUDE_BUDGET ?? null
 };

@@ -14,23 +14,23 @@ import {
 } from '../lib/pipeline-policy.js';
 
 import type { StatusJson, TaskContext } from './types.js';
-import { parseMaxReviewLoops, REPO_ROOT } from './env.js';
+import { envModel, parseMaxReviewLoops, REPO_ROOT } from './env.js';
 import { loadCodexSection, formatUnknownKeysWarning, type CodexSectionConfig } from './docs-freshness.js';
 import { die, warn } from './cli.js';
 
 const config = {
-    claudeModelSpecReview: process.env.CLAUDE_MODEL_SPEC_REVIEW ?? null,
-    claudeModelImplement: process.env.CLAUDE_MODEL_IMPLEMENT ?? null,
-    claudeModelSpec: process.env.CLAUDE_MODEL_SPEC ?? null,
-    claudeModelPlan: process.env.CLAUDE_MODEL_PLAN ?? null,
-    claudeModelReview: process.env.CLAUDE_MODEL_REVIEW ?? null,
-    claudeModelReviewLarge: process.env.CLAUDE_MODEL_REVIEW_LARGE ?? null,
-    claudeModelQa: process.env.CLAUDE_MODEL_QA ?? null,
-    claudeModelLight: process.env.CLAUDE_MODEL_LIGHT || null,
-    claudeModelStrong: process.env.CLAUDE_MODEL_STRONG || null,
-    claudeModelLegacy: process.env.CLAUDE_MODEL ?? null,
-    codexModelMini: process.env.CODEX_MODEL_MINI ?? process.env.CODEX_MODEL_DEFAULT,
-    codexModelFull: process.env.CODEX_MODEL_FULL ?? process.env.CODEX_MODEL_DELICATE,
+    claudeModelSpecReview: envModel('CLAUDE_MODEL_SPEC_REVIEW'),
+    claudeModelImplement: envModel('CLAUDE_MODEL_IMPLEMENT'),
+    claudeModelSpec: envModel('CLAUDE_MODEL_SPEC'),
+    claudeModelPlan: envModel('CLAUDE_MODEL_PLAN'),
+    claudeModelReview: envModel('CLAUDE_MODEL_REVIEW'),
+    claudeModelReviewLarge: envModel('CLAUDE_MODEL_REVIEW_LARGE'),
+    claudeModelQa: envModel('CLAUDE_MODEL_QA'),
+    claudeModelLight: envModel('CLAUDE_MODEL_LIGHT'),
+    claudeModelStrong: envModel('CLAUDE_MODEL_STRONG'),
+    claudeModelLegacy: envModel('CLAUDE_MODEL'),
+    codexModelMini: envModel('CODEX_MODEL_MINI') ?? envModel('CODEX_MODEL_DEFAULT'),
+    codexModelFull: envModel('CODEX_MODEL_FULL') ?? envModel('CODEX_MODEL_DELICATE'),
     maxReviewLoops: parseMaxReviewLoops(process.env.MAX_REVIEW_LOOPS),
     claudeBudget: process.env.CLAUDE_BUDGET ?? null,
 };
