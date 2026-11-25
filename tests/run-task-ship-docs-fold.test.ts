@@ -667,9 +667,11 @@ void test('--ship failed merge restores preserved telemetry dirt before aborting
         });
         markTaskWorktree(localDir, taskId);
         fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+        const ghLog = path.join(dir, 'gh.log');
 
         const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
             TMPDIR: tmpDir,
+            FAKE_GH_LOG: ghLog,
             FAKE_GH_OPEN_PR_NUMBER: '107',
             FAKE_GH_PR_HEAD: branch,
             FAKE_GH_PR_BASE: 'main',
@@ -685,6 +687,40 @@ void test('--ship failed merge restores preserved telemetry dirt before aborting
         assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);
         assert.match(result.stderr, /no local cleanup ran/i);
         assert.match(result.stderr, /re-run `canon run .* --ship`/);
+        const calls = fs.readFileSync(ghLog, 'utf8').trim().split('\n');
+        const mergeIndex = calls.findIndex(call => call.includes('PUT repos/{owner}/{repo}/pulls/107/merge'));
+        const proofIndex = calls.findIndex((call, index) => index > mergeIndex && call.includes('GET repos/{owner}/{repo}/pulls/107'));
+        assert.ok(mergeIndex >= 0, calls.join('\n'));
+        assert.ok(proofIndex > mergeIndex, calls.join('\n'));
+    });
+});
+
+void test('--ship tolerates a failed merge request when a fresh REST read proves the PR merged', () => {
+    withTempDir('ship-merge-fail-but-merged-', dir => {
+        const taskId = 'merge-fail-but-merged';
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], { prNumbers: { [taskId]: 107 } });
+        const ghLog = path.join(dir, 'gh.log');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_LOG: ghLog,
+            FAKE_GH_OPEN_PR_NUMBER: '107',
+            FAKE_GH_MERGED_PR_NUMBER: '107',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            FAKE_GH_MERGE_FAIL: '1',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /PR #107 merged, but gh api exited non-zero and was tolerated: merge failed/);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+        const calls = fs.readFileSync(ghLog, 'utf8').trim().split('\n');
+        const mergeIndex = calls.findIndex(call => call.includes('PUT repos/{owner}/{repo}/pulls/107/merge'));
+        const proofIndex = calls.findIndex((call, index) => index > mergeIndex && call.includes('GET repos/{owner}/{repo}/pulls/107'));
+        assert.ok(mergeIndex >= 0, calls.join('\n'));
+        assert.ok(proofIndex > mergeIndex, calls.join('\n'));
     });
 });
 

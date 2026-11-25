@@ -63,14 +63,19 @@ export function parseAllowedMergeMethods(stdout: string): { ok: true; allowed: R
 export function lookupPRByBranch(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): ExactPRLookup {
     const query = `state=${state === 'open' ? 'open' : 'closed'}&head={owner}:${encodeQuery(branch)}` +
         (baseBranch === null ? '' : `&base=${encodeQuery(baseBranch)}`) + '&per_page=100';
-    const result = ghApi(['-X', 'GET', '--paginate', '--slurp', `${REPO}/pulls?${query}`]);
+    const result = ghApi(['-X', 'GET', '--paginate', '--jq', '.[]', `${REPO}/pulls?${query}`]);
     const prefix = 'GitHub REST pull-request listing';
     if (!result.ok) return { kind: 'unreadable', reason: result.stderr.trim() || `${prefix} (gh api) exited unsuccessfully` };
-    if (!result.stdout.trim()) return { kind: 'unreadable', reason: `${prefix} returned empty output` };
-    let parsed: unknown;
-    try { parsed = JSON.parse(result.stdout); } catch { return { kind: 'unreadable', reason: `${prefix} returned malformed JSON` }; }
-    if (!Array.isArray(parsed) || parsed.some(page => !Array.isArray(page))) return { kind: 'unreadable', reason: `${prefix} did not return a JSON array of pages` };
-    for (const page of parsed as unknown[][]) for (const raw of page) {
+    const output = result.stdout.trim();
+    if (!output) return { kind: 'none' };
+    const entries: unknown[] = [];
+    for (const line of output.split(/\r?\n/)) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(line); } catch { return { kind: 'unreadable', reason: `${prefix} returned malformed JSON` }; }
+        if (!object(parsed)) return { kind: 'unreadable', reason: `${prefix} did not return a JSON object per result` };
+        entries.push(parsed);
+    }
+    for (const raw of entries) {
         const entry = object(raw);
         const head = object(entry?.head);
         const base = object(entry?.base);

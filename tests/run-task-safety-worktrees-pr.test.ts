@@ -1903,7 +1903,7 @@ void test('commitHumanReviewFiles(createPR = true) opens a PR on a clean-tree re
         const gitLog = fs.readFileSync(gitLogPath, 'utf8');
         assert.match(gitLog, /^push -u origin task\/task-a$/m);
         const ghLog = fs.readFileSync(ghLogPath, 'utf8');
-        assert.match(ghLog, /^api -X GET --paginate --slurp .*pulls\?/m);
+        assert.match(ghLog, /^api -X GET --paginate --jq \.\[\] .*pulls\?/m);
         assert.match(ghLog, /^api -X POST .*pulls/m);
     });
 });

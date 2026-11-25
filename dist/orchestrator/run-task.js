@@ -8854,18 +8854,23 @@ function parseAllowedMergeMethods(stdout) {
 }
 function lookupPRByBranch(branch, baseBranch, state) {
   const query = `state=${state === "open" ? "open" : "closed"}&head={owner}:${encodeQuery(branch)}` + (baseBranch === null ? "" : `&base=${encodeQuery(baseBranch)}`) + "&per_page=100";
-  const result = ghApi(["-X", "GET", "--paginate", "--slurp", `${REPO}/pulls?${query}`]);
+  const result = ghApi(["-X", "GET", "--paginate", "--jq", ".[]", `${REPO}/pulls?${query}`]);
   const prefix = "GitHub REST pull-request listing";
   if (!result.ok) return { kind: "unreadable", reason: result.stderr.trim() || `${prefix} (gh api) exited unsuccessfully` };
-  if (!result.stdout.trim()) return { kind: "unreadable", reason: `${prefix} returned empty output` };
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
-    return { kind: "unreadable", reason: `${prefix} returned malformed JSON` };
+  const output = result.stdout.trim();
+  if (!output) return { kind: "none" };
+  const entries = [];
+  for (const line of output.split(/\r?\n/)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return { kind: "unreadable", reason: `${prefix} returned malformed JSON` };
+    }
+    if (!object(parsed)) return { kind: "unreadable", reason: `${prefix} did not return a JSON object per result` };
+    entries.push(parsed);
   }
-  if (!Array.isArray(parsed) || parsed.some((page) => !Array.isArray(page))) return { kind: "unreadable", reason: `${prefix} did not return a JSON array of pages` };
-  for (const page of parsed) for (const raw of page) {
+  for (const raw of entries) {
     const entry = object(raw);
     const head = object(entry?.head);
     const base = object(entry?.base);
@@ -10775,7 +10780,7 @@ function assertNoOpenPRForTask(branchName, baseBranch, taskIds, mergeMethod) {
     die(
       `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.
   This can happen during gh transient hiccups. Re-run \`canon run ${taskIds.map(shellQuoteArg).join(" ")} --ship\`; if it keeps failing,
-  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks direct merges of task PRs) and re-run --ship, or fix the cause.
+  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks \`gh pr merge\` of task PRs) and re-run --ship, or fix the cause.
   canon merges with \`ship.merge_method\` (currently ${mergeMethod}); set it to squash, rebase, or merge in .canon/config.json.`
     );
   }

@@ -16,10 +16,10 @@ afterEach(() => {
 
 void test('forge lists every REST page and filters an exact head and base', () => {
     const calls: string[][] = [];
-    setGhRunnerForTest(argv => { calls.push(argv); return result('[[{"number":1,"state":"open","head":{"ref":"task/foo-extra"},"base":{"ref":"main"}}],[{"number":2,"state":"open","head":{"ref":"task/foo"},"base":{"ref":"main"}}]]'); });
+    setGhRunnerForTest(argv => { calls.push(argv); return result('{"number":1,"state":"open","head":{"ref":"task/foo-extra"},"base":{"ref":"main"}}\n{"number":2,"state":"open","head":{"ref":"task/foo"},"base":{"ref":"main"}}'); });
     try {
         assert.deepEqual(lookupPRByBranch('task/foo', 'main', 'open'), { kind: 'found', number: 2 });
-        assert.deepEqual(calls[0], ['api', '-X', 'GET', '--paginate', '--slurp', 'repos/{owner}/{repo}/pulls?state=open&head={owner}:task/foo&base=main&per_page=100']);
+        assert.deepEqual(calls[0], ['api', '-X', 'GET', '--paginate', '--jq', '.[]', 'repos/{owner}/{repo}/pulls?state=open&head={owner}:task/foo&base=main&per_page=100']);
     } finally { setGhRunnerForTest(null); }
 });
 
@@ -28,8 +28,10 @@ void test('forge listing distinguishes unreadable, malformed and empty responses
     assert.deepEqual(lookupPRByBranch('task/x', null, 'open'), { kind: 'unreadable', reason: 'offline' });
     setGhRunnerForTest(() => result('not json'));
     assert.equal(lookupPRByBranch('task/x', null, 'open').kind, 'unreadable');
-    setGhRunnerForTest(() => result('[{}]'));
+    setGhRunnerForTest(() => result('[]'));
     assert.equal(lookupPRByBranch('task/x', null, 'open').kind, 'unreadable');
+    setGhRunnerForTest(() => result(''));
+    assert.deepEqual(lookupPRByBranch('task/x', null, 'open'), { kind: 'none' });
     setGhRunnerForTest(null);
 });
 
