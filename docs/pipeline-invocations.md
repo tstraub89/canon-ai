@@ -1755,3 +1755,16 @@
 | 2026-11-25T11:27:34.656Z | rest-forge-pr-calls | code_review | claude | opus | 1 | 470.1s | 258051 | ok | medium |
 | 2026-11-25T11:27:34.658Z | rest-forge-pr-calls | code_review | claude:code-review-cold | claude-opus-5-5 | 1 | 32.7s | 214739 | ok | - |
 | 2026-11-25T11:30:23.981Z | rest-forge-pr-calls | qa | claude | claude-haiku-5-5 | 0 | 168.6s | 936190 | ok | medium |
+| 2026-11-25T16:37:48.137Z | empty-model-env-unset | implement | codex | gpt-6-luna | 0 | 308.1s | 2417354 | ok | medium |
+| 2026-11-25T16:41:19.572Z | empty-model-env-unset | implement | codex | gpt-6-luna | 0 | 210.0s | 4699810 | ok | medium |
+| 2026-11-25T16:45:42.389Z | empty-model-env-unset | implement | codex | gpt-6-luna | 0 | 261.9s | 8497347 | ok | medium |
+| 2026-11-25T16:46:06.043Z | empty-model-env-unset | code_review | codex | gpt-6-luna | 0 | 23.1s | - | ok | high |
+| 2026-11-25T16:46:49.054Z | empty-model-env-unset | code_review | claude | sonnet | 0 | 43.0s | 260876 | ok | medium |
+| 2026-11-25T16:46:49.056Z | empty-model-env-unset | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 8.2s | 158506 | ok | - |
+| 2026-11-25T16:46:49.058Z | empty-model-env-unset | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 17.7s | 194786 | ok | - |
+| 2026-11-25T16:51:17.818Z | empty-model-env-unset | implement | codex | gpt-6-luna | 1 | 268.4s | 13514204 | ok | medium |
+| 2026-11-25T16:51:48.721Z | empty-model-env-unset | code_review | codex | gpt-6-luna | 1 | 30.0s | - | ok | high |
+| 2026-11-25T16:52:17.073Z | empty-model-env-unset | code_review | claude | sonnet | 1 | 28.4s | 238961 | ok | medium |
+| 2026-11-25T16:52:17.075Z | empty-model-env-unset | code_review | claude:code-review-cold | claude-sonnet-5-5 | 1 | 8.1s | 119806 | ok | - |
+| 2026-11-25T16:52:17.076Z | empty-model-env-unset | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 1 | 13.7s | 202317 | ok | - |
+| 2026-11-25T16:53:50.106Z | empty-model-env-unset | qa | claude | claude-haiku-5-5 | 0 | 92.6s | 730270 | ok | medium |

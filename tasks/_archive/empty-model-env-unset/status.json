@@ -1,7 +1,7 @@
 {
   "id": "empty-model-env-unset",
   "title": "Treat empty model env vars as unset",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-25",
   "updated": "2026-11-25",
   "branch": "task/empty-model-env-unset",
@@ -61,7 +61,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

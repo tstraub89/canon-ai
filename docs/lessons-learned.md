@@ -177,3 +177,11 @@ Three test files (`tests/agent-backend.test.ts`, `tests/agent-prompt-argv.test.t
 *(2026-11-25, source: rest-forge-pr-calls)*
 
 `gh api` and `gh pr` do not share a host. With an Enterprise `origin` and a github.com login, `gh api` sent requests to api.github.com while `gh pr` used the Enterprise host. `gh api --hostname` also does no normalization: `ssh.github.com` and SSH host aliases such as `git@github-work:` failed. Prevention: before writing a rule that picks an API host, run each gh subcommand with `GH_DEBUG=api` and compare the logged request URLs, and gate any `--hostname` on an offline check such as `gh auth token --hostname`. Canonical example: the host selection in `src/orchestrator/forge.ts`, and the same rule in `.claude/hooks/canon-guard.mjs`.
+
+---
+
+### A blank-value test that compares against an unset baseline cannot prove a fallback chain; assert each link by name
+
+*(date 2026-11-25, source: empty-model-env-unset)*
+
+A loop that checked each blank variable against its unset baseline passed, even though a blank primary variable could still shadow a set fallback in the same chain. Equal-to-unset only shows that the blank value is treated as absent. It does not show that the next source in the chain wins. Code review round 1 found that the named cases (blank `CODEX_MODEL_MINI` with `CODEX_MODEL_DEFAULT=legacy-mini`, and blank `CLAUDE_MODEL_QA` with `CLAUDE_MODEL=legacy-x`) had no assertion. Prevention: for every fallback chain that a blank value can enter, write one assertion per link (primary blank with a fallback set, fallback blank with the default reached, and the default when everything is blank), in addition to any baseline loop. Canonical example: the test `blank model overrides preserve Claude and Codex fallback precedence` in `tests/pipeline-policy.test.ts`.
