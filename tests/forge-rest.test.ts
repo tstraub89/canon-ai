@@ -44,12 +44,24 @@ afterEach(() => {
     setOriginUrlReaderForTest(null);
 });
 
-void test('forge lists every REST page and filters an exact head and base', () => {
+void test('forge parses paginated NDJSON and filters the exact head and base', () => {
     const calls: string[][] = [];
     setGhRunnerForTest(argv => { calls.push(argv); return result('{"number":1,"state":"open","head":{"ref":"task/foo-extra"},"base":{"ref":"main"}}\n{"number":2,"state":"open","head":{"ref":"task/foo"},"base":{"ref":"main"}}'); });
     try {
         assert.deepEqual(lookupPRByBranch('task/foo', 'main', 'open'), { kind: 'found', number: 2 });
-        assert.deepEqual(calls[0], ['api', '-X', 'GET', '--paginate', '--jq', '.[]', 'repos/{owner}/{repo}/pulls?state=open&head={owner}:task/foo&base=main&per_page=100']);
+        assert.deepEqual(calls[0], ['api', '-X', 'GET', '--paginate', '--jq', '.[]', 'repos/{owner}/{repo}/pulls?state=open&head={owner}%3Atask/foo&base=main&per_page=100']);
+    } finally { setGhRunnerForTest(null); }
+});
+
+void test('forge encodes the head separator so gh cannot expand branch-name placeholder words', () => {
+    const calls: string[][] = [];
+    setGhRunnerForTest(argv => {
+        calls.push(argv);
+        return result('{"number":9,"state":"open","head":{"ref":"repo-x"},"base":{"ref":"main"}}');
+    });
+    try {
+        assert.deepEqual(lookupPRByBranch('repo-x', 'main', 'open'), { kind: 'found', number: 9 });
+        assert.deepEqual(calls[0], ['api', '-X', 'GET', '--paginate', '--jq', '.[]', 'repos/{owner}/{repo}/pulls?state=open&head={owner}%3Arepo-x&base=main&per_page=100']);
     } finally { setGhRunnerForTest(null); }
 });
 

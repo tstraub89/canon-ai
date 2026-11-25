@@ -8849,7 +8849,7 @@ function fieldString(value) {
   return typeof value === "string" && value ? value : null;
 }
 function encodeQuery(value) {
-  return encodeURIComponent(value).replace(/%2F/gi, "/").replace(/%3A/gi, ":");
+  return encodeURIComponent(value).replace(/%2F/gi, "/");
 }
 function parseAllowedMergeMethods(stdout) {
   let parsed;
@@ -8869,7 +8869,7 @@ function parseAllowedMergeMethods(stdout) {
   return { ok: true, allowed };
 }
 function lookupPRByBranch(branch, baseBranch, state) {
-  const query = `state=${state === "open" ? "open" : "closed"}&head={owner}:${encodeQuery(branch)}` + (baseBranch === null ? "" : `&base=${encodeQuery(baseBranch)}`) + "&per_page=100";
+  const query = `state=${state === "open" ? "open" : "closed"}&head={owner}%3A${encodeQuery(branch)}` + (baseBranch === null ? "" : `&base=${encodeQuery(baseBranch)}`) + "&per_page=100";
   const result = ghApi(["-X", "GET", "--paginate", "--jq", ".[]", `${REPO}/pulls?${query}`]);
   const prefix = "GitHub REST pull-request listing";
   if (!result.ok) return { kind: "unreadable", reason: result.stderr.trim() || `${prefix} (gh api) exited unsuccessfully` };

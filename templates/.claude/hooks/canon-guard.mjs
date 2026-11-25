@@ -650,12 +650,13 @@ function lookupPRHead(ref, repo, cwd) {
     return readPRHead(`repos/{owner}/{repo}/pulls/${number}`, cwd, host && ghKnowsHost(host, cwd) ? host : null);
 }
 
-// Mirrors parseRemoteHost in canon-ai's forge module; the guard is a standalone script.
+// Host normalization mirrors canon's forge behavior; this hook stays standalone.
 function normaliseGhHost(host) {
     const value = host.toLowerCase();
     return value === 'github.com' || value.endsWith('.github.com') ? 'github.com' : value;
 }
 
+// Parse supported HTTP, SSH, and scp-style remote URLs for the guard's cwd fallback.
 function parseRemoteHost(url) {
     const value = url.trim();
     if (!value) return null;

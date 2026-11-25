@@ -61,7 +61,7 @@ const MERGE_ALLOWED_FIELD: Record<ShipMergeMethod, string> = { squash: 'allow_sq
 function isMergedAt(value: unknown): boolean { return typeof value === 'string' && value.length > 0; }
 function object(value: unknown): Record<string, unknown> | null { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null; }
 function fieldString(value: unknown): string | null { return typeof value === 'string' && value ? value : null; }
-function encodeQuery(value: string): string { return encodeURIComponent(value).replace(/%2F/gi, '/').replace(/%3A/gi, ':'); }
+function encodeQuery(value: string): string { return encodeURIComponent(value).replace(/%2F/gi, '/'); }
 
 export function parseAllowedMergeMethods(stdout: string): { ok: true; allowed: Record<ShipMergeMethod, boolean> } | { ok: false } {
     let parsed: unknown;
@@ -78,7 +78,7 @@ export function parseAllowedMergeMethods(stdout: string): { ok: true; allowed: R
 }
 
 export function lookupPRByBranch(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): ExactPRLookup {
-    const query = `state=${state === 'open' ? 'open' : 'closed'}&head={owner}:${encodeQuery(branch)}` +
+    const query = `state=${state === 'open' ? 'open' : 'closed'}&head={owner}%3A${encodeQuery(branch)}` +
         (baseBranch === null ? '' : `&base=${encodeQuery(baseBranch)}`) + '&per_page=100';
     const result = ghApi(['-X', 'GET', '--paginate', '--jq', '.[]', `${REPO}/pulls?${query}`]);
     const prefix = 'GitHub REST pull-request listing';
