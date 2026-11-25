@@ -2156,6 +2156,8 @@ void test('retryAgentForPhase uses worktree cwd for reroute spec_review and REPO
             '--json',
             '-c',
             'model_reasoning_effort=high',
+            '-c',
+            'sandbox_mode="workspace-write"',
             '<prompt>',
             '-m',
             'fixture-mini',

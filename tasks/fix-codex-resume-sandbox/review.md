@@ -1,134 +1,71 @@
 # Code Review: fix-codex-resume-sandbox
 
-> Reviewer: Claude | Spec: `tasks/fix-codex-resume-sandbox/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
+> Reviewer: Claude (foreman synthesis) | Spec: `tasks/fix-codex-resume-sandbox/spec.md`
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+Inputs: anchored Claude lens, cold-Claude lens, cold-Codex findings (injected). Archive: `tasks/fix-codex-resume-sandbox/review-cold-codex-run-1.md`.
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-- [ ] Self-Check evidence in the effective record is not contradicted by the diff
+- [x] Validation Outcomes table has no `Fail` results (handoff reports `npm test` run outside the Codex sandbox; lenses did not re-run)
+- [x] Required checks were run
+- [x] No required checks skipped without justification
+- [x] Red-first evidence recorded for AC-2
+- [x] Self-Check evidence not contradicted by the diff
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | `src/orchestrator/agents/codex.ts:80-82` resume argv matches; fake-`codex` test in `tests/agent-backend.test.ts` asserts the full array |
+| AC-2 | Pass | Red-First Evidence row records the pre-fix failure (missing `-c` pair) |
+| AC-3 | Pass | Fresh, interactive, and cold-review argv untouched |
+| AC-4 | Pass | Parity, safety-scaffold fix-up, and reroute-preflight resume assertions updated |
+| AC-5 | Pass | README, `.canon/README.md` + mirror, codebase-map, both decisions passages updated |
+| AC-6 | Pass | `dist/orchestrator/run-task.js` diff matches the `codex.ts` change |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected
+- [x] Known Risks addressed
+- [x] Human Test Plan satisfiable
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
+- [x] **Pass**
+- [ ] **Fail**
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+A minimal, correct change: the resume argv gains `-c sandbox_mode="workspace-write"` before the prompt, with tests and docs aligned. No surviving code-bugs or spec-gaps.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
+(none)
 
-(none / list items)
+#### Nits (optional)
 
-#### Risk / Guardrails
-
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
-
-#### Optional Cleanup / Nit
-
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
-
-#### Spec Gaps
-
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
+- Nit (anchored): `tasks/fix-codex-resume-sandbox/handoff.md` Changes table README row still mentions removing a stale local-settings reference that the Deviations row says the operator reverted; the README diff confirms only the Trust model bullet changed.
+- Nit (anchored): `tasks/fix-codex-resume-sandbox/handoff.md` Ready for Review "deviations documented" box is unchecked although the Deviations table is filled.
+- Nit (anchored, low confidence): `tests/agent-backend.test.ts:31-60` mutates `process.env.PATH` in-process; restored in `finally` and safe under serial `node:test`.
 
 ### Dismissed Cold Findings
 
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): literal `sandbox_mode="workspace-write"` could drift from the fresh `sandboxFlags` — the spec's Judgment Calls deliberately keep the fresh flag form; the two syntaxes differ by necessity (`exec resume` has no `--sandbox`), and tests pin both.
+- Dismissed (cold-Claude): unverified that `codex exec resume` accepts `-c` at that position — spec records an executed repro on codex-cli 0.172.0 using this exact override; `--help` lists `-c`.
+- Dismissed (cold-Claude): tracked `dist/` risks drift — AC-6 requires the committed bundle to match a fresh build, and the diff matches `codex.ts` exactly.
+- Dismissed (cold-Codex): no findings reported.
 
 ## Final Verdict
 
-- [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
 - [ ] Approved
-- [ ] Approved with nits
+- [x] Approved with nits
 - [ ] Changes requested
 - [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->

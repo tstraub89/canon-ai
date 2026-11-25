@@ -3140,8 +3140,8 @@ ${renderedPrompt}`;
         text: ""
       };
     }
-    const sandboxFlags = resumeId ? [] : ["--sandbox", "workspace-write"];
-    const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
+    const sandboxFlags = ["--sandbox", "workspace-write"];
+    const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, "-c", 'sandbox_mode="workspace-write"', effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
     const displayChunks = [];
     let tokenTotal = 0;
     let sawUsage = false;

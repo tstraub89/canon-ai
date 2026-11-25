@@ -1,0 +1,1 @@
+The resume path now applies the workspace-write sandbox through a Codex config override, and the associated argv assertions and user-facing documentation are updated consistently. I found no actionable correctness issues in the diff.
