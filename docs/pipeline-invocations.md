@@ -1715,3 +1715,9 @@
 | 2026-11-20T07:28:03.685Z | canon-prune-run-lessons | code_review | claude:code-review-cold | claude-sonnet-5-5 | 1 | 13.7s | 214373 | ok | - |
 | 2026-11-20T07:28:03.690Z | canon-prune-run-lessons | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 1 | 18.9s | 238808 | ok | - |
 | 2026-11-20T07:29:38.954Z | canon-prune-run-lessons | qa | claude | claude-haiku-5-5 | 0 | 92.5s | 702036 | ok | medium |
+| 2026-11-25T06:12:21.172Z | fix-codex-resume-sandbox | implement | codex | gpt-6-luna | 0 | 445.1s | 1716513 | ok | medium |
+| 2026-11-25T06:25:51.410Z | fix-codex-resume-sandbox | code_review | codex | gpt-6-luna | 0 | 46.3s | - | ok | high |
+| 2026-11-25T06:26:33.170Z | fix-codex-resume-sandbox | code_review | claude | sonnet | 0 | 41.7s | 327391 | ok | medium |
+| 2026-11-25T06:26:33.173Z | fix-codex-resume-sandbox | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 9.4s | 197073 | ok | - |
+| 2026-11-25T06:26:33.174Z | fix-codex-resume-sandbox | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 18.3s | 220791 | ok | - |
+| 2026-11-25T06:27:32.412Z | fix-codex-resume-sandbox | qa | claude | claude-haiku-5-5 | 0 | 58.8s | 617217 | ok | medium |
