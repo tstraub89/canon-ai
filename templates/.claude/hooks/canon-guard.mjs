@@ -632,16 +632,20 @@ function findPRReference(args, initialRepo = null) {
 
 function lookupPRHead(ref, repo, cwd) {
     if (ref.includes('://')) {
-        const match = ref.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[#?].*)?$/);
+        const match = ref.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/);
         if (!match) return null;
         const [, host, owner, name, number] = match;
         return readPRHead(`repos/${owner}/${name}/pulls/${number}`, cwd, host);
     }
     if (ref.includes(':')) return ref.slice(ref.indexOf(':') + 1);
     if (!/^#?\d+$/.test(ref)) return ref;
-    const repoParts = (repo ?? '').split('/');
-    const explicitHost = repoParts.length === 3 ? repoParts[0] : null;
-    const repoPath = repoParts.length === 2 ? `repos/${repoParts[0]}/${repoParts[1]}` : 'repos/{owner}/{repo}';
+    const repoValue = (repo ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+    const repoParts = repoValue.split('/');
+    const hasHost = repoParts.length === 3;
+    const explicitHost = hasHost ? repoParts[0] : null;
+    const owner = hasHost ? repoParts[1] : repoParts[0];
+    const name = hasHost ? repoParts[2] : repoParts[1];
+    const repoPath = repoParts.length === 2 || hasHost ? `repos/${owner}/${name}` : 'repos/{owner}/{repo}';
     return readPRHead(`${repoPath}/pulls/${ref.replace(/^#/, '')}`, cwd, explicitHost);
 }
 

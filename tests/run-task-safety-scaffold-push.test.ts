@@ -188,18 +188,46 @@ for (const published of [false, true]) {
         void test(`scaffold base push: missing base published=${published} override=${override}`, () => {
             withTempDir('scaffold-missing-', dir => {
                 const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: false, baseBranch: 'feat/x' });
+                const payloadPath = path.join(dir, 'created-pr.json');
                 const tip = scaffoldGitOutput(fixture.localDir, 'rev-parse', 'feat/x').trim();
                 if (published) gitIn(fixture.localDir, 'push', 'origin', 'feat/x:refs/heads/task/task-a');
-                const result = runScaffoldFixture(fixture, dir, ['--pr', ...(override ? ['--allow-divergent-base'] : [])]);
+                const result = runScaffoldFixture(fixture, dir, ['--pr', ...(override ? ['--allow-divergent-base'] : [])], {
+                    FAKE_GH_CREATE_PAYLOAD: payloadPath,
+                });
                 // Assert the remote first: the old path can open a fake PR without creating its base.
                 assert.equal(remoteScaffoldTip(fixture, 'feat/x'), tip, combinedOutput(result));
                 assert.equal(result.status, 0, combinedOutput(result));
                 assert.match(scaffoldGhLog(dir), /^api -X POST .*pulls/m);
+                const payload = JSON.parse(fs.readFileSync(payloadPath, 'utf8')) as Record<string, unknown>;
+                assert.equal(payload.title, 'task-a');
+                assert.equal(payload.head, 'task/task-a');
+                assert.equal(payload.base, 'feat/x');
+                assert.equal(payload.draft, true);
                 if (published) assert.match(result.stdout, /Created origin\/feat\/x at/);
             });
         });
     }
 }
+
+void test('scaffold PR body falls back to the base-to-task commit subjects', () => {
+    withTempDir('scaffold-commit-subject-body-', dir => {
+        const fixture = setupFullSendTailFixture(dir, undefined, { fullSend: false, baseBranch: 'feat/x' });
+        const template = path.join(fixture.localDir, '.github', 'pull_request_template.md');
+        fs.rmSync(template, { force: true });
+        const baseCommit = scaffoldGitOutput(fixture.localDir, 'rev-parse', 'task/task-a^').trim();
+        gitIn(fixture.localDir, 'update-ref', 'refs/remotes/origin/feat/x', baseCommit);
+        const expectedBody = '- chore: add task artifacts for task-a';
+        assert.notEqual(expectedBody, '');
+        const payloadPath = path.join(dir, 'created-pr.json');
+
+        const result = runScaffoldFixture(fixture, dir, ['--pr'], { FAKE_GH_CREATE_PAYLOAD: payloadPath });
+
+        assert.equal(result.status, 0, combinedOutput(result));
+        assert.deepEqual(JSON.parse(fs.readFileSync(payloadPath, 'utf8')), {
+            title: 'task-a', head: 'task/task-a', base: 'feat/x', body: expectedBody, draft: true,
+        });
+    });
+});
 
 void test('scaffold base push: a stale origin/main outside the fetch refspec cannot hide an operator commit', () => {
     withTempDir('scaffold-stale-present-', dir => {

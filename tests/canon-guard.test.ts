@@ -330,6 +330,8 @@ void test('task PR merge rule denies every merge strategy and allows lookup fail
             ['-R=value before PR reference', 'gh pr merge -R=owner/repo 12 --squash'],
             ['joined -R after PR reference', 'gh pr merge 12 -Rowner/repo --squash'],
             ['-R=value after PR reference', 'gh pr merge 12 -R=owner/repo --squash'],
+            ['host-qualified -R repository', 'gh -R ghe.example/other/repo pr merge 12 --squash'],
+            ['URL-form -R repository', 'gh -R https://ghe.example/other/repo pr merge 12 --squash'],
         ] as const;
         const ghLogPath = path.join(fixture.root, 'gh-lookup.log');
         for (const [name, command] of repoFlagCases) {
@@ -338,7 +340,13 @@ void test('task PR merge rule denies every merge strategy and allows lookup fail
                 const result = run(command, fixture.repo, { CANON_GUARD_GH_LOG: ghLogPath });
                 assert.equal(result.denied, true, result.reason || command);
                 assert.match(result.reason, /canon run foo --ship/);
-                assert.match(fs.readFileSync(ghLogPath, 'utf8'), /repos\/owner\/repo\/pulls\/12/);
+                const log = fs.readFileSync(ghLogPath, 'utf8');
+                if (name.includes('host-qualified') || name.includes('URL-form')) {
+                    assert.match(log, /--hostname ghe\.example/);
+                    assert.match(log, /repos\/other\/repo\/pulls\/12/);
+                } else {
+                    assert.match(log, /repos\/owner\/repo\/pulls\/12/);
+                }
             });
         }
         for (const [name, command] of [
@@ -347,6 +355,8 @@ void test('task PR merge rule denies every merge strategy and allows lookup fail
             ['owner-qualified task branch', 'gh pr merge owner:task/foo --squash'],
             ['task branch ref', 'gh pr merge task/foo --squash'],
             ['enterprise PR URL', 'gh pr merge https://ghe.example/owner/repo/pull/12 --squash'],
+            ['PR URL with trailing path', 'gh pr merge https://github.com/owner/repo/pull/12/files --squash'],
+            ['PR URL with trailing slash', 'gh pr merge https://github.com/owner/repo/pull/12/ --squash'],
         ] as const) {
             await t.test(name, () => {
                 fs.rmSync(ghLogPath, { force: true });

@@ -28,7 +28,11 @@ void test('forge listing distinguishes unreadable, malformed and empty responses
 void test('forge PR state mapping requires merged_at on a closed PR', () => {
     const states = ['open', 'closed', 'closed'];
     const merged = [null, null, '2026-01-01T00:00:00Z'];
-    setGhRunnerForTest(() => result(JSON.stringify({ state: states.shift(), merged_at: merged.shift(), head: { sha: 'a'.repeat(40) }, base: { ref: 'main' }, html_url: 'https://example.test/pull/1' })));
+    const calls: string[][] = [];
+    setGhRunnerForTest(argv => {
+        calls.push(argv);
+        return result(JSON.stringify({ state: states.shift(), merged_at: merged.shift(), head: { sha: 'a'.repeat(40) }, base: { ref: 'main' }, html_url: 'https://example.test/pull/1' }));
+    });
     try {
         const open = readPR(1);
         assert.equal(open.ok ? open.pr.state : null, 'OPEN');
@@ -37,6 +41,7 @@ void test('forge PR state mapping requires merged_at on a closed PR', () => {
         const pr = readPR(1);
         assert.equal(pr.ok && pr.pr.state, 'MERGED');
         assert.deepEqual(pr.ok && pr.pr, { state: 'MERGED', headSha: 'a'.repeat(40), baseRef: 'main', url: 'https://example.test/pull/1' });
+        assert.deepEqual(calls, Array.from({ length: 3 }, () => ['api', '-X', 'GET', 'repos/{owner}/{repo}/pulls/1']));
     } finally { setGhRunnerForTest(null); }
 });
 

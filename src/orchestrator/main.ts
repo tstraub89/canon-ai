@@ -2117,7 +2117,7 @@ function establishPRHeadAncestryProof(cwd: string, prNum: number, prHead: string
     if (prHead === null) {
         return {
             proven: false,
-            reason: `headRefOid for PR #${prNum} could not be materialized locally; merge proof is unproven.`,
+            reason: `PR head SHA for PR #${prNum} could not be materialized locally; merge proof is unproven.`,
         };
     }
 
@@ -2189,7 +2189,7 @@ function assertNoOpenPRForTask(branchName: string, baseBranch: string, taskIds: 
         splitCli.die(
             `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.\n` +
             `  This can happen during gh transient hiccups. Re-run \`canon run ${taskIds.map(splitState.shellQuoteArg).join(' ')} --ship\`; if it keeps failing,\n` +
-            `  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks \`gh pr merge\` on task PRs) and re-run --ship, or fix the cause.\n` +
+            `  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks direct merges of task PRs) and re-run --ship, or fix the cause.\n` +
             `  canon merges with \`ship.merge_method\` (currently ${mergeMethod}); set it to squash, rebase, or merge in .canon/config.json.`,
         );
     }

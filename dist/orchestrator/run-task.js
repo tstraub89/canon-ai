@@ -10711,7 +10711,7 @@ function establishPRHeadAncestryProof(cwd, prNum, prHead, localTip) {
   if (prHead === null) {
     return {
       proven: false,
-      reason: `headRefOid for PR #${prNum} could not be materialized locally; merge proof is unproven.`
+      reason: `PR head SHA for PR #${prNum} could not be materialized locally; merge proof is unproven.`
     };
   }
   const ancestorCheck = gitSafeAt(cwd, "merge-base", "--is-ancestor", localTip, prHead);
@@ -10759,7 +10759,7 @@ function assertNoOpenPRForTask(branchName, baseBranch, taskIds, mergeMethod) {
     die(
       `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.
   This can happen during gh transient hiccups. Re-run \`canon run ${taskIds.map(shellQuoteArg).join(" ")} --ship\`; if it keeps failing,
-  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks \`gh pr merge\` on task PRs) and re-run --ship, or fix the cause.
+  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks direct merges of task PRs) and re-run --ship, or fix the cause.
   canon merges with \`ship.merge_method\` (currently ${mergeMethod}); set it to squash, rebase, or merge in .canon/config.json.`
     );
   }

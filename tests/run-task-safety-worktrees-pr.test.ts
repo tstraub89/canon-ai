@@ -1266,6 +1266,56 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
     });
 });
 
+for (const source of ['canon', 'qa'] as const) {
+    void test(`main --pr creates a REST draft with the ${source} PR body`, () => {
+        withTempDir(`run-task-complete-pr-body-${source}-`, dir => {
+            const tasksRoot = path.join(dir, 'tasks');
+            const worktreesRoot = path.join(dir, 'worktrees');
+            const worktreeDir = path.join(worktreesRoot, 'task-a');
+            const fakeBins = path.join(dir, 'fake-bins');
+            const fakeGitDir = path.join(fakeBins, 'git-bin');
+            fs.mkdirSync(fakeGitDir, { recursive: true });
+            fs.mkdirSync(path.join(worktreeDir, 'tasks', 'task-a'), { recursive: true });
+            setupFakeGit(fakeGitDir);
+            setupFakeCliTools(fakeBins);
+
+            const status = makeCompleteStatus('task-a', 'task/task-a');
+            status.worktree = true;
+            writeTaskStatus(tasksRoot, 'task-a', status);
+            const currentBranchPath = path.join(dir, 'current-branch.txt');
+            fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+            const payloadPath = path.join(dir, 'created-pr.json');
+            const prStateFile = path.join(dir, 'gh-pr-state.txt');
+            const body = source === 'canon' ? 'Generated for task-a — task-a' : 'QA summary for task-a';
+            if (source === 'qa') fs.writeFileSync(path.join(worktreeDir, 'tasks', 'task-a', 'pr-body.md'), body);
+
+            const result = runNodeInline([
+                "import { main } from './src/orchestrator/main.ts';",
+                "process.argv = ['node', 'canon', 'task-a', '--pr'];",
+                "main().catch(err => { console.error(err); process.exit(1); });",
+            ].join('\n'), {
+                ...process.env,
+                PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+                CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+                CANON_WORKTREES_ROOT: worktreesRoot,
+                FAKE_GIT_LOG: path.join(dir, 'git.log'),
+                FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+                FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+                FAKE_GIT_REMOTE_EXISTS: '1',
+                FAKE_GIT_TASK_BRANCH: 'task/task-a',
+                FAKE_GH_PR_STATE_FILE: prStateFile,
+                FAKE_GH_CREATE_PAYLOAD: payloadPath,
+                ...(source === 'canon' ? { CANON_PR_BODY: 'Generated for $LABEL — $TITLE' } : {}),
+            });
+
+            assert.equal(result.status, 0, result.stderr);
+            assert.deepEqual(JSON.parse(fs.readFileSync(payloadPath, 'utf8')), {
+                title: 'task-a', head: 'task/task-a', base: 'main', body, draft: true,
+            });
+        });
+    });
+}
+
 void test('main --pr at human_review is idempotent when an open PR already exists', () => {
     withTempDir('run-task-human-review-pr-', dir => {
         const tasksRoot = path.join(dir, 'tasks');
