@@ -83,11 +83,11 @@ Pre-merge checklist (items QA could not confirm):
 
 | Category | Follow-up | Tracked |
 |---|---|---|
-| nit | Orphaned comments in `src/cli/commands/upgrade.ts` after the `mergeHeaderOnly` move: the `TABLE_SEPARATOR_RE` comment ends mid-sentence, and the helper's JSDoc now sits above `printDocsRefsCutoverWarning`. No adopter-visible effect, because `tsup` strips source comments. | untracked |
-| nit | `src/orchestrator/metrics.ts` picks the header block by the first separator line, not by the `\| Timestamp \|` line. A hand-edited fragment with an earlier table-like line could have the wrong block replaced. Low risk, since fragments are machine-written. | untracked |
-| nit | On CRLF fragments, the widened header is written with LF line endings while the rows stay CRLF. Display only. | untracked |
-| risk | The real-git test (`tests/run-task-ship-docs-fold.test.ts`) covers only a telemetry doc with a mode-only change. Mode-plus-append, managed docs, and an unknown mode are covered only by pure classifier tests. This meets AC-4 as written. | untracked |
-| observation | `recordMetric` reads and then writes the fragment without a lock. Review judged this acceptable because fragments have one writer, but two concurrent writers to the same fragment could lose rows. | untracked |
+| nit | Orphaned comments in `src/cli/commands/upgrade.ts` after the `mergeHeaderOnly` move: the `TABLE_SEPARATOR_RE` comment ends mid-sentence, and the helper's JSDoc now sits above `printDocsRefsCutoverWarning`. No adopter-visible effect, because `tsup` strips source comments. | #204 |
+| nit | `src/orchestrator/metrics.ts` picks the header block by the first separator line, not by the `\| Timestamp \|` line. A hand-edited fragment with an earlier table-like line could have the wrong block replaced. Low risk, since fragments are machine-written. | #204 |
+| nit | On CRLF fragments, the widened header is written with LF line endings while the rows stay CRLF. Display only. | #204 |
+| risk | The real-git test (`tests/run-task-ship-docs-fold.test.ts`) covers only a telemetry doc with a mode-only change. Mode-plus-append, managed docs, and an unknown mode are covered only by pure classifier tests. This meets AC-4 as written. | #204 |
+| observation | `recordMetric` reads and then writes the fragment without a lock. Review judged this acceptable because fragments have one writer, but two concurrent writers to the same fragment could lose rows. | #204 |
 
 ## Quality Log
 - Spec verdict: approved
