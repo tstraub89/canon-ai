@@ -43,10 +43,12 @@ None.
 Pre-merge checklist. These items cannot be confirmed yet, so they are listed for the human:
 
 - [ ] Version correct — not decided at QA; the release step sets the version.
+  Acknowledged: version is set at release cut, not per task.
 - [ ] Changelog updated if needed — the draft is in Proposed Changelog; the release step lands it.
+  Acknowledged: CHANGELOG is written at release cut from the Proposed Changelog draft.
 - [x] PR body current — drafted in `tasks/fix-codex-resume-sandbox/pr-body.md`.
-- [ ] Final CI/CD checks green — no PR or CI run exists yet.
-- [ ] Final diff matches spec intent — code review approved with nits; the human confirms the final diff.
+- [x] Final CI/CD checks green — all 8 checks on PR #195 passed.
+- [x] Final diff matches spec intent — code review approved with nits; operator reviewed the final diff against the spec.
 
 ## Proposed Changelog
 
@@ -67,17 +69,18 @@ Pre-merge checklist. These items cannot be confirmed yet, so they are listed for
 ## Open Questions
 
 - Operators whose `~/.codex/config.toml` sets a stricter `sandbox_mode` (for example `read-only`) will now get `workspace-write` on resumed runs, as they already did on fresh runs. The spec's Known Risks accepts this, because canon's runner flags already take precedence for canon's invocations. Confirm you accept this behavior change, or ask for a different approach.
+  Resolution: accepted. `docs/decisions.md` already states canon's runner flags take precedence for canon's invocations; resumes now match fresh runs.
 
 ## Follow-ups
 
 | Category | Follow-up | Tracked |
 |---|---|---|
-| nit | The implementer's Changes table in `tasks/fix-codex-resume-sandbox/handoff.md` still lists the README stale-reference cleanup that the operator reverted. The Deviations row is the accurate record. | untracked |
-| nit | The "All deviations from plan documented" box in `tasks/fix-codex-resume-sandbox/handoff.md` Ready for Review is unchecked, though the Deviations table is filled in. | untracked |
-| nit | `tests/agent-backend.test.ts:31-60` mutates `process.env.PATH` in-process. It is restored in a `finally` block and is safe under the serial Node test runner. Low confidence; leave or tidy. | untracked |
-| observation | The three fake-binary suites (`tests/agent-backend.test.ts`, `tests/agent-prompt-argv.test.ts`, `tests/blast-radius.test.ts`) fail inside the Codex sandbox on clean `main`, because the fake binaries return empty output. Make them sandbox-safe or document that they need an unsandboxed run. | untracked |
-| observation | `npm run sync-templates:check` fails inside the Codex sandbox with `EPERM` while creating the `tsx` IPC pipe under `/tmp`. The direct `node --import tsx` form works. | untracked |
-| observation | The interactive Codex path ignores `resumeId`. This is a pre-existing quirk, excluded from this task as a Non-Goal in `tasks/fix-codex-resume-sandbox/spec.md`. | untracked |
+| nit | The implementer's Changes table in `tasks/fix-codex-resume-sandbox/handoff.md` still lists the README stale-reference cleanup that the operator reverted. The Deviations row is the accurate record. | dropped |
+| nit | The "All deviations from plan documented" box in `tasks/fix-codex-resume-sandbox/handoff.md` Ready for Review is unchecked, though the Deviations table is filled in. | dropped |
+| nit | `tests/agent-backend.test.ts:31-60` mutates `process.env.PATH` in-process. It is restored in a `finally` block and is safe under the serial Node test runner. Low confidence; leave or tidy. | dropped |
+| observation | The three fake-binary suites (`tests/agent-backend.test.ts`, `tests/agent-prompt-argv.test.ts`, `tests/blast-radius.test.ts`) fail inside the Codex sandbox on clean `main`, because the fake binaries return empty output. Make them sandbox-safe or document that they need an unsandboxed run. | #196 |
+| observation | `npm run sync-templates:check` fails inside the Codex sandbox with `EPERM` while creating the `tsx` IPC pipe under `/tmp`. The direct `node --import tsx` form works. | #196 |
+| observation | The interactive Codex path ignores `resumeId`. This is a pre-existing quirk, excluded from this task as a Non-Goal in `tasks/fix-codex-resume-sandbox/spec.md`. | dropped |
 
 ## Quality Log
 
