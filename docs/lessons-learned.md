@@ -78,27 +78,11 @@ A reroute prompt pointed the agent at the archived review (`review-prior-<n>.md`
 
 ---
 
-### A request flag one backend honors is a silent no-op on the other backend
-
-*(2026-10-30, source: claude-provider-mode)*
-
-Routing a call site to a second backend exposes every per-request flag the first backend honored. `wrapForResume` was honored only by Codex. Once Claude-held roles reached the implement reroute and the artifact fix-up, the Claude backend ignored the flag: it prepended a resume banner and stripped the commit-ownership startup. Code review caught it in round 1. Prevention: when a call site moves to another backend, list every field of the request object and confirm each backend reads it. Then test the prompt each call site actually delivers on that backend. Canonical example: `claudeBackend.run` and `runClaude` in `src/orchestrator/agents/claude.ts`, compared with `runCodex` in `src/orchestrator/agents/codex.ts`.
-
----
-
 ### Classify a table by its position or header, not by what its cells contain
 
 *(2026-11-08, source: path-scoped-pitfalls)*
 
 A parser that decides whether a markdown table is an index (a lookup of docs or sections) by sniffing its cells misclassified tables in three consecutive review rounds. Each content rule (a path token, an em dash, a heading-like cell) fixed the layout the last reviewer reported and broke one the previous rule handled, because an explanatory table inside an entry can carry the same signals as an index. The rule that settled it was positional: only tables directly under the section heading, before the first entry, are indexes; a table inside an entry is entry content. The same pattern held for choosing a row's target cell: a header hint ("Read this doc", "Section") beat any content precedence. Prevention: when a spec needs to tell two kinds of table apart, write the rule as position or header text in the spec before implementing, and pin each real layout in a test. Do not add a content heuristic to a parser already in review. Canonical example: `knownPitfallsIndexTables` in `src/orchestrator/pitfalls.ts`, with the rule stated in `tasks/_archive/path-scoped-pitfalls/spec.md` Amendment 1.
-
----
-
-### A directory-matching glob must be tested at the directory's depth, not just under its prefix
-
-*(date 2026-11-08, source: pitfalls-coverage-gaps)*
-
-When a matcher asks "could some path inside this directory match this glob," a glob with the directory's exact segment count (`src/*` against `src/a/`) matches the directory itself, not anything inside it, and a prefix-only test would say yes for every leading-wildcard glob. The implementation had to require a deeper segment, and the plan's example said the opposite. Prevention: when a matcher decides whether a glob reaches inside a directory, write a boundary case for each of: the glob equal in depth to the directory, the glob one level deeper, a `**` segment, and a sibling directory sharing a name prefix (`src/ab/**` against `src/a/`). Judge the spec's example against the boundary rule before copying it into a plan. Canonical example: `globCouldMatchInsideDir` in `src/orchestrator/pitfalls.ts`, with its `**` and sibling-prefix cases in `tests/pitfalls.test.ts`.
 
 ---
 
@@ -109,11 +93,11 @@ When a matcher asks "could some path inside this directory match this glob," a g
 The Self-Check placeholder check moved from matching the template's exact `_(` prefix to rejecting any Evidence cell that is entirely parenthesized. That also rejects real evidence written the same way, such as `(verified both entry points against the diff)`. Two cold reviewers flagged it. The spec had accepted the shape rule as a Known Risk, so it shipped with the cost. Rule of thumb: when a check moves from exact-text matching to shape matching, list the real values that share the shape (parenthesized prose, a bare `(N/A)`) in the spec, and either accept each one or keep the exact match. Canonical example: `checkSelfCheckEvidence` in `src/orchestrator/validation.ts`, with its tests in `tests/run-task-validation.test.ts`.
 
 
-<!-- Buffer swept 2026-11-19 (16 entries reviewed: 3 promoted, 12 kept in buffer, 1 pruned).
-     Promotions → AGENTS.md Code Review Rules: restatement bullet now covers relational claims and operator config-location instructions (contract-sweep-relational; recurred after message-restates-value). canon-spec skill checklist and the pipeline spec prompt checklist (src/orchestrator/prompts/index.ts): unchecked Validation Required rows are ignored, so delete inapplicable template placeholders such as <E2E> with an N/A reason. Site comment: string-built recordMetric call in tests/run-task-safety-routing.test.ts.
-     Kept in buffer: one-boundary-check — re-evaluate if a scope/boundary task hits it; overlap-winner — re-evaluate on the next adopter file-list config; round-trip-two-cycles — re-evaluate on another parse-and-rewrite cell bug; exit-handler-files — re-evaluate if crash detection is touched; message-restates-value — graft its bypass-gate check into the clause-builder pitfall if it recurs; prompt-names-file — re-evaluate if another prompt cites an artifact without a read step; backend-flag-no-op — re-evaluate when another call site changes backend; classify-table-by-position — re-evaluate if another parser churns on a content heuristic in review; shape-vs-exact-placeholder — re-evaluate if a shape check rejects real values again; directory-glob-depth — structural, stays until a test pins the equal-depth boundary; gate-every-caller — graft into patterns.md "Enumerate every writer" if another gate change breaks a salvage or recovery caller; plan-file-outside-affected-files — re-evaluate if it recurs; carrier would be the plan prompt.
-     Pruned: malformed-precondition fixture — covered by patterns.md "Prove each regression test can fail".
-     Unresolved follow-ups: the equal-depth boundary test for globCouldMatchInsideDir (src/* against src/a/) has not landed.
+<!-- Buffer swept 2026-11-25 (20 entries reviewed: 2 promoted, 15 kept in buffer, 3 pruned).
+     Promotions → docs/patterns.md: new pitfall "Every agent invocation path must carry each request flag" (backend-flag-no-op recurred as the resumed-Codex --sandbox gap). Site comment: %3A head-filter encoding in lookupPRByBranch (src/orchestrator/forge.ts).
+     Kept in buffer: one-boundary-check — re-evaluate if a scope/boundary task hits it; overlap-winner — re-evaluate on the next adopter file-list config; round-trip-two-cycles — re-evaluate on another parse-and-rewrite cell bug; exit-handler-files — re-evaluate if crash detection is touched; message-restates-value — graft its bypass-gate check into the clause-builder pitfall if it recurs; prompt-names-file — re-evaluate if another prompt cites an artifact without a read step; classify-table-by-position — re-evaluate if another parser churns on a content heuristic in review; shape-vs-exact-placeholder — re-evaluate if a shape check rejects real values again; gate-every-caller — graft into patterns.md "Enumerate every writer" if another gate change breaks a salvage or recovery caller; plan-file-outside-affected-files — re-evaluate if it recurs, carrier would be the plan prompt; skill-restated-selector, never-read-exceptions, carve-out-condition — re-evaluate if another skill restates runtime selection or carves out an exception; blank-value-chain — graft as a clause into patterns.md "Moving a cell between model tiers" if it recurs; metadata-only-clean — graft into patterns.md "Write-safety guards must fail closed" if another content-only gate misses git state.
+     Pruned: directory-glob-depth — its boundary test landed (#201); sandbox-only-failures — root cause owned by #196 and the environment sets Codex network_access; gh-host-per-subcommand — covered by the site comment above ghApi in src/orchestrator/forge.ts.
+     Unresolved follow-ups: #196 (unit suite inside the Codex sandbox).
      Prior entries are in git history. -->
 
 ---
@@ -155,28 +139,6 @@ The prune spec said canon-managed files are never read. The skill still told the
 *(date 2026-11-20, source: canon-prune-run-lessons)*
 
 A docs-audit carve-out said the "describes a canon mechanism" delete rule does not apply "when pruning canon-ai's own root docs with `/canon-prune`." The rows it covers are canon-managed root copies, and `/canon-prune` excludes canon-managed files from its input, so the condition could never be true for them. Two cold reviewers flagged it as unreachable. Prevention: when a carve-out covers a set of files, state the exception unconditionally for those rows and say why it applies. Do not condition it on a run of another skill that never touches those files. Before writing the wording, check the other skill's input rule for those same files. Canonical example: the docs-audit prune row in `.claude/skills/docs-audit/SKILL.md` (line 26), against the exclusion in `.claude/skills/canon-prune/SKILL.md`.
-
----
-
-### When a suite fails only inside the agent sandbox, reproduce on clean main before calling it a regression
-
-*(2026-11-25, source: fix-codex-resume-sandbox)*
-
-Three test files (`tests/agent-backend.test.ts`, `tests/agent-prompt-argv.test.ts`, `tests/blast-radius.test.ts`) use fake `claude` and `codex` binaries. Inside the Codex Linux sandbox those fakes return empty output, so six checks fail, and the same failures reproduce on clean `main`. The implementer had to note that the `npm test` failure was environmental, and the operator had to re-run the suite outside the sandbox before accepting the work. Prevention: when a suite fails only under the agent's sandbox, run the same command on the base branch in the same sandbox, and then outside it, before treating the failure as a regression or as a reason to edit tests. Record both results in the Validation Outcomes table. The fake-binary tests are the usual case, because they spawn child processes that the sandbox constrains.
-
----
-
-### Pass gh api an owner-qualified filter that no gh placeholder can reach
-
-*(2026-11-25, source: rest-forge-pr-calls)*
-
-`gh api` expands `{owner}` and `{repo}`, and the legacy `:owner`, `:repo` and `:branch` placeholders, anywhere in the endpoint, query string included. A branch whose name starts with one of those words (for example `repo-x`) had its separator replaced, so the `head=` filter stopped being exact. The result was not wrong, because the code still checked `head.ref`, but the lookup paged through every PR in the repo. Prevention: percent-encode the separator in any query filter built from a user-controlled name (`%3A` for `:`), pin the exact argv for a branch with a placeholder-like prefix, and do not rely on a fake gh to show the encoding is needed, because it does not expand placeholders. Canonical example: `lookupPRByBranch` in `src/orchestrator/forge.ts`.
-
-### Check the API host for each gh subcommand separately
-
-*(2026-11-25, source: rest-forge-pr-calls)*
-
-`gh api` and `gh pr` do not share a host. With an Enterprise `origin` and a github.com login, `gh api` sent requests to api.github.com while `gh pr` used the Enterprise host. `gh api --hostname` also does no normalization: `ssh.github.com` and SSH host aliases such as `git@github-work:` failed. Prevention: before writing a rule that picks an API host, run each gh subcommand with `GH_DEBUG=api` and compare the logged request URLs, and gate any `--hostname` on an offline check such as `gh auth token --hostname`. Canonical example: the host selection in `src/orchestrator/forge.ts`, and the same rule in `.claude/hooks/canon-guard.mjs`.
 
 ---
 

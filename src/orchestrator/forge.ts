@@ -78,6 +78,7 @@ export function parseAllowedMergeMethods(stdout: string): { ok: true; allowed: R
 }
 
 export function lookupPRByBranch(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): ExactPRLookup {
+    // %3A, not ':': gh api expands :owner/:repo/:branch anywhere in the endpoint, so a branch like `repo-x` would rewrite the filter.
     const query = `state=${state === 'open' ? 'open' : 'closed'}&head={owner}%3A${encodeQuery(branch)}` +
         (baseBranch === null ? '' : `&base=${encodeQuery(baseBranch)}`) + '&per_page=100';
     const result = ghApi(['-X', 'GET', '--paginate', '--jq', '.[]', `${REPO}/pulls?${query}`]);
