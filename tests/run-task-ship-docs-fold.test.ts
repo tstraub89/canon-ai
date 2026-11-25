@@ -48,6 +48,25 @@ void test('allowed merge-method response requires all three boolean fields', () 
     assert.deepEqual(parseAllowedMergeMethods('not json'), { ok: false });
 });
 
+void test('ship aborts on a mode-only telemetry doc change', { skip: process.platform === 'win32' ? 'POSIX file modes unavailable' : false }, () => {
+    withTempDir('ship-mode-only-doc-', dir => {
+        const doc = 'docs/pipeline-invocations.md';
+        const { localDir } = makeGitFixture(dir, { [doc]: `${METRICS_SKELETON}` });
+        gitIn(localDir, 'config', 'core.fileMode', 'true');
+        const target = path.join(localDir, doc);
+        const content = fs.readFileSync(target, 'utf8');
+        fs.chmodSync(target, 0o755);
+        const result = spawnSync(process.execPath, ['--import', MD_LOADER, '--import', TSX_LOADER, '-e',
+            `import(${JSON.stringify(MAIN_HREF)}).then(m => m.classifyAndPreserveSharedDocDirt());`,
+        ], { cwd: localDir, encoding: 'utf8' });
+        assert.notEqual(result.status, 0, result.stderr);
+        assert.match(result.stderr, /^.*--ship aborted: uncommitted shared-doc edits/m);
+        assert.match(result.stderr, /docs\/pipeline-invocations\.md: has an uncommitted file-mode change/);
+        assert.equal(fs.readFileSync(target, 'utf8'), content);
+        assert.equal(fs.statSync(target).mode & 0o777, 0o755);
+    });
+});
+
 function doneWithFollowups(rows: string): string {
     return `# QA Summary\n\n## Follow-ups\n\n| Category | Follow-up | Tracked |\n|---|---|---|\n${rows}`;
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { warn } from './cli.js';
 import { REPO_ROOT } from './env.js';
+import { mergeHeaderOnly } from '../lib/markdown-table.js';
 import type { MetricEntry } from './types.js';
 
 export const METRICS_SKELETON = [
@@ -37,6 +38,16 @@ export function recordMetric(entry: MetricEntry): void {
         const metricsFile = getMetricsFile(entry.taskId, entry.activeCwd);
         if (!process.env.CANON_METRICS_FILE_OVERRIDE) fs.mkdirSync(path.dirname(metricsFile), { recursive: true });
         if (!fs.existsSync(metricsFile)) fs.writeFileSync(metricsFile, METRICS_SKELETON);
+        else {
+            const existing = fs.readFileSync(metricsFile, 'utf8');
+            const currentHeader = /\| Timestamp \|[^\r\n]*/.exec(existing)?.[0];
+            const skeletonHeader = /\| Timestamp \|[^\r\n]*/.exec(METRICS_SKELETON)?.[0];
+            const cells = (header: string) => header.split('|').length - 2;
+            if (currentHeader && skeletonHeader && cells(currentHeader) < cells(skeletonHeader)) {
+                const widened = mergeHeaderOnly(METRICS_SKELETON, existing);
+                if (widened !== null) fs.writeFileSync(metricsFile, widened);
+            }
+        }
         const safeCell = (v: string) => v.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
         const dur = (entry.durationMs / 1000).toFixed(1) + 's';
         const tok = entry.tokens != null ? String(entry.tokens) : '-';

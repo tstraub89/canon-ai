@@ -2585,6 +2585,19 @@ import fs10 from "fs";
 // src/orchestrator/metrics.ts
 import fs9 from "fs";
 import path8 from "path";
+
+// src/lib/markdown-table.ts
+var TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
+function mergeHeaderOnly(templateContent, projectContent) {
+  const projectMatch = TABLE_SEPARATOR_RE.exec(projectContent);
+  const templateMatch = TABLE_SEPARATOR_RE.exec(templateContent);
+  if (!projectMatch || !templateMatch) return null;
+  const templateSepEnd = (templateMatch.index ?? 0) + templateMatch[0].length;
+  const projectSepEnd = (projectMatch.index ?? 0) + projectMatch[0].length;
+  return templateContent.slice(0, templateSepEnd) + projectContent.slice(projectSepEnd);
+}
+
+// src/orchestrator/metrics.ts
 var METRICS_SKELETON = [
   "# Workflow Metrics",
   "",
@@ -2615,6 +2628,16 @@ function recordMetric(entry) {
     const metricsFile = getMetricsFile(entry.taskId, entry.activeCwd);
     if (!process.env.CANON_METRICS_FILE_OVERRIDE) fs9.mkdirSync(path8.dirname(metricsFile), { recursive: true });
     if (!fs9.existsSync(metricsFile)) fs9.writeFileSync(metricsFile, METRICS_SKELETON);
+    else {
+      const existing = fs9.readFileSync(metricsFile, "utf8");
+      const currentHeader = /\| Timestamp \|[^\r\n]*/.exec(existing)?.[0];
+      const skeletonHeader = /\| Timestamp \|[^\r\n]*/.exec(METRICS_SKELETON)?.[0];
+      const cells = (header) => header.split("|").length - 2;
+      if (currentHeader && skeletonHeader && cells(currentHeader) < cells(skeletonHeader)) {
+        const widened = mergeHeaderOnly(METRICS_SKELETON, existing);
+        if (widened !== null) fs9.writeFileSync(metricsFile, widened);
+      }
+    }
     const safeCell = (v) => v.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
     const dur = (entry.durationMs / 1e3).toFixed(1) + "s";
     const tok = entry.tokens != null ? String(entry.tokens) : "-";
@@ -4963,10 +4986,12 @@ function verifyBaseDivergence(baseBranch, cwd, options = {}) {
   }
   return { commits: result.commits, ok: true, stderr: "", fetchFailed: false };
 }
-function classifySharedDocDirtFromData(docClass, porcelainCode, headContent, workingContent) {
+function classifySharedDocDirtFromData(docClass, porcelainCode, headContent, workingContent, mode = "unchanged") {
   if (porcelainCode === null) {
     return { verdict: "clean" };
   }
+  if (mode === "changed") return { verdict: "abort", reason: "has an uncommitted file-mode change; commit or revert it" };
+  if (mode === "unknown") return { verdict: "abort", reason: "file mode could not be checked" };
   if (porcelainCode !== " M") {
     return {
       verdict: "abort",
@@ -5010,7 +5035,8 @@ function classifySharedDocSetFromData(entries) {
       entry.docClass,
       entry.porcelainCode,
       entry.headContent,
-      entry.workingContent
+      entry.workingContent,
+      entry.mode
     );
     if (result.verdict === "abort") {
       abortedFiles.push({ relPath: entry.relPath, reason: result.reason });
@@ -10921,12 +10947,31 @@ function classifyAndPreserveSharedDocDirt() {
   }
   const dirty = sharedDocs.filter((relPath) => porcelainByPath.has(relPath.normalize("NFC")));
   if (dirty.length === 0) return [];
+  const modeResult = gitSafeAtRaw(REPO_ROOT2, "diff", "--raw", "-z", "--", ...dirty);
+  const modeByPath = /* @__PURE__ */ new Map();
+  let modeProbeValid = modeResult.ok;
+  if (modeResult.ok) {
+    const records = modeResult.stdout.split("\0");
+    if (records.at(-1) === "") records.pop();
+    if (records.length % 2 !== 0) modeProbeValid = false;
+    for (let index = 0; modeProbeValid && index < records.length; index += 2) {
+      const header = records[index];
+      const relPath = records[index + 1];
+      const match = /^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ [A-Z][0-9]*$/.exec(header);
+      if (!match || !relPath) {
+        modeProbeValid = false;
+        break;
+      }
+      if (match[1] !== match[2]) modeByPath.set(normalizeGitPath(relPath), "changed");
+    }
+  }
   const managedDocs = configured;
   const entries = dirty.map((relPath) => {
     const docClass = managedDocs.includes(relPath) ? "managed" : "telemetry";
     const porcelainCode = porcelainByPath.get(relPath.normalize("NFC")) ?? null;
+    const mode = !modeProbeValid ? "unknown" : modeByPath.get(relPath.normalize("NFC")) ?? "unchanged";
     if (porcelainCode !== " M") {
-      return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
+      return { relPath, docClass, porcelainCode, headContent: null, workingContent: null, mode };
     }
     const workingContent = fs28.readFileSync(path26.join(REPO_ROOT2, relPath), "utf8");
     const headResult = gitSafeAtRaw(REPO_ROOT2, "show", `HEAD:${relPath}`);
@@ -10935,7 +10980,8 @@ function classifyAndPreserveSharedDocDirt() {
       docClass,
       porcelainCode,
       headContent: headResult.ok ? headResult.stdout : null,
-      workingContent
+      workingContent,
+      mode
     };
   });
   const verdict = classifySharedDocSetFromData(entries);

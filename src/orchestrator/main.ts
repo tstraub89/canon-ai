@@ -2389,12 +2389,29 @@ export function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
     const dirty = sharedDocs.filter(relPath => porcelainByPath.has(relPath.normalize('NFC')));
     if (dirty.length === 0) return [];
 
+    const modeResult = splitGit.gitSafeAtRaw(REPO_ROOT, 'diff', '--raw', '-z', '--', ...dirty);
+    const modeByPath = new Map<string, splitValidation.SharedDocModeState>();
+    let modeProbeValid = modeResult.ok;
+    if (modeResult.ok) {
+        const records = modeResult.stdout.split('\0');
+        if (records.at(-1) === '') records.pop();
+        if (records.length % 2 !== 0) modeProbeValid = false;
+        for (let index = 0; modeProbeValid && index < records.length; index += 2) {
+            const header = records[index];
+            const relPath = records[index + 1];
+            const match = /^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ [A-Z][0-9]*$/.exec(header);
+            if (!match || !relPath) { modeProbeValid = false; break; }
+            if (match[1] !== match[2]) modeByPath.set(normalizeGitPath(relPath), 'changed');
+        }
+    }
+
     const managedDocs: readonly string[] = configured;
     const entries = dirty.map(relPath => {
         const docClass: splitValidation.SharedDocClass = managedDocs.includes(relPath) ? 'managed' : 'telemetry';
         const porcelainCode = porcelainByPath.get(relPath.normalize('NFC')) ?? null;
+        const mode = !modeProbeValid ? 'unknown' : modeByPath.get(relPath.normalize('NFC')) ?? 'unchanged';
         if (porcelainCode !== ' M') {
-            return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
+            return { relPath, docClass, porcelainCode, headContent: null, workingContent: null, mode };
         }
         const workingContent = fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
         const headResult = splitGit.gitSafeAtRaw(REPO_ROOT, 'show', `HEAD:${relPath}`);
@@ -2404,6 +2421,7 @@ export function classifyAndPreserveSharedDocDirt(): PreservedTelemetryEntry[] {
             porcelainCode,
             headContent: headResult.ok ? headResult.stdout : null,
             workingContent,
+            mode,
         };
     });
 
