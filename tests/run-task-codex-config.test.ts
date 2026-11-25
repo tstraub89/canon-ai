@@ -11,6 +11,19 @@ const backendHref = pathToFileURL(path.resolve('src/orchestrator/agents/codex.ts
 const docsHref = pathToFileURL(path.resolve('src/orchestrator/docs-freshness.ts')).href;
 const cleanEnv = { ...process.env, CODEX_MODEL_MINI: undefined, CODEX_MODEL_DEFAULT: undefined, CODEX_MODEL_FULL: undefined, CODEX_MODEL_DELICATE: undefined };
 
+void test('blank Codex environment models fall through to config models', () => {
+    withTempDir('codex-blank-env-', root => {
+        writeRel(root, '.canon/config.json', JSON.stringify({ codex: { models: { mini: 'config-mini', full: 'config-full' } } }));
+        const result = runNodeInline(`
+            import { getCodexConfig } from ${JSON.stringify(policyHref)};
+            const tasks = [{ status: { task_size: 'M' } }];
+            console.log(JSON.stringify([getCodexConfig('implement', tasks).model, getCodexConfig('code_review', [{ status: { task_size: 'XL' } }]).model]));
+        `, { ...cleanEnv, CODEX_MODEL_MINI: '', CODEX_MODEL_FULL: '' }, root);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(JSON.parse(result.stdout.trim()), ['config-mini', 'config-full']);
+    });
+});
+
 void test('worktree implement resolution uses main policy, rereads edits and ignores invalid worktree section', () => {
     withTempDir('codex-root-', dir => {
         const taskId = 'codex-root';

@@ -23,6 +23,10 @@ export function parseMaxReviewLoops(raw: string | undefined): number | null {
     return parsed;
 }
 
+export function envModel(name: string): string | null {
+    return process.env[name]?.trim() || null;
+}
+
 // Supervising main checkout, frozen at import; per-task routing stays in resolveTaskCwd().
 export const REPO_ROOT = resolveProjectRoot();
 export const TASKS_DIR = path.join(REPO_ROOT, 'tasks');
@@ -51,7 +55,7 @@ export const LEGACY_IGNORED_ENV_VARS: Array<{ old: string; reason: string }> = [
 
 export function warnLegacyEnvVars(): void {
     for (const { old, replacement } of LEGACY_FALLBACK_ENV_VARS) {
-        if (process.env[old]) {
+        if (envModel(old) !== null) {
             console.error(`⚠️  ${old} is deprecated — use ${replacement}. Current run still honors it.`);
         }
     }

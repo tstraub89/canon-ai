@@ -300,6 +300,8 @@ Claude phase budgets scale with task size. `spec`/`plan`/`qa` are single-pass Cl
 
 ## Environment Variables
 
+An empty or whitespace-only model variable counts as unset, and non-empty values are trimmed.
+
 Claude uses the light model class for XS/S spec, plan, code review, and (in Claude mode) spec_review and implement. QA uses its own default model. M and above use the strong model class for those phases. A phase pin changes only the model; effort comes from the matrix.
 
 | Variable | Default | Purpose |
