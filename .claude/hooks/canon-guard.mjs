@@ -639,14 +639,63 @@ function lookupPRHead(ref, repo, cwd) {
     }
     if (ref.includes(':')) return ref.slice(ref.indexOf(':') + 1);
     if (!/^#?\d+$/.test(ref)) return ref;
-    const repoValue = (repo ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-    const repoParts = repoValue.split('/');
-    const hasHost = repoParts.length === 3;
-    const explicitHost = hasHost ? repoParts[0] : null;
-    const owner = hasHost ? repoParts[1] : repoParts[0];
-    const name = hasHost ? repoParts[2] : repoParts[1];
-    const repoPath = repoParts.length === 2 || hasHost ? `repos/${owner}/${name}` : 'repos/{owner}/{repo}';
-    return readPRHead(`${repoPath}/pulls/${ref.replace(/^#/, '')}`, cwd, explicitHost);
+    const number = ref.replace(/^#/, '');
+    if (typeof repo === 'string' && repo.trim() !== '') {
+        const parsed = parseRepoValue(repo);
+        if (!parsed) return null;
+        return readPRHead(`repos/${parsed.owner}/${parsed.name}/pulls/${number}`, cwd, parsed.host);
+    }
+    return readPRHead(`repos/{owner}/{repo}/pulls/${number}`, cwd, lookupOriginHost(cwd));
+}
+
+// Mirrors parseRemoteHost in canon-ai's forge module; the guard is a standalone script.
+function parseRemoteHost(url) {
+    const value = url.trim();
+    if (!value) return null;
+    const scheme = value.match(/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:?#]+)(?::\d*)?(?:[/?#]|$)/i);
+    if (scheme?.[1]) return scheme[1].toLowerCase();
+    if (value.includes('://')) return null;
+    const scp = value.match(/^(?:[^@/:]+@)?([^/:]+):(?!\/)/);
+    return scp?.[1] ? scp[1].toLowerCase() : null;
+}
+
+function lookupOriginHost(cwd) {
+    const result = spawnSync('git', ['remote', 'get-url', 'origin'], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 3000,
+    });
+    if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
+    return parseRemoteHost(result.stdout);
+}
+
+function parseRepoValue(value) {
+    const source = value.trim();
+    if (!source) return null;
+    let host = null;
+    let rest = source;
+    if (source.includes('://')) {
+        const match = source.match(/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:]+)(?::\d*)?\/(.*)$/i);
+        if (!match) return null;
+        host = match[1].toLowerCase();
+        rest = match[2];
+    } else {
+        const scp = source.match(/^(?:[^@/:]+@)?([^/:]+):([^/].*)$/);
+        if (scp) {
+            host = scp[1].toLowerCase();
+            rest = scp[2];
+        }
+    }
+    rest = rest.replace(/\/+$/, '').replace(/\.git$/, '');
+    const parts = rest.split('/');
+    if (parts.some(part => part === '')) return null;
+    if (host !== null) {
+        return parts.length === 2 ? { host, owner: parts[0], name: parts[1] } : null;
+    }
+    if (parts.length === 2) return { host: null, owner: parts[0], name: parts[1] };
+    if (parts.length === 3) return { host: parts[0].toLowerCase(), owner: parts[1], name: parts[2] };
+    return null;
 }
 
 function readPRHead(endpoint, cwd, host) {

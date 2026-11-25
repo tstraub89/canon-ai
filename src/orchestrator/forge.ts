@@ -9,14 +9,36 @@ export type ExactPRLookup = { kind: 'found'; number: number } | { kind: 'none' }
 export type PRFields = { state: 'OPEN' | 'CLOSED' | 'MERGED' | null; headSha: string | null; baseRef: string | null; url: string | null };
 export type GhRunner = (argv: string[]) => CommandResult;
 export type GitLogRunner = (...args: string[]) => CommandResult;
+export type OriginUrlReader = () => CommandResult;
 const defaultRunner: GhRunner = argv => splitGit.runCommand('gh', argv);
 const defaultGitLogRunner: GitLogRunner = (...args) => splitGit.gitSafe(...args);
+const defaultOriginUrlReader: OriginUrlReader = () => splitGit.gitSafe('remote', 'get-url', 'origin');
 let runner = defaultRunner;
 let gitLogRunner = defaultGitLogRunner;
+let originUrlReader = defaultOriginUrlReader;
 
 export function setGhRunnerForTest(next: GhRunner | null): void { runner = next ?? defaultRunner; }
 export function setGitLogRunnerForTest(next: GitLogRunner | null): void { gitLogRunner = next ?? defaultGitLogRunner; }
-function ghApi(argv: string[]): CommandResult { return runner(['api', ...argv]); }
+export function setOriginUrlReaderForTest(next: OriginUrlReader | null): void { originUrlReader = next ?? defaultOriginUrlReader; }
+export function parseRemoteHost(url: string): string | null {
+    const value = url.trim();
+    if (!value) return null;
+    const scheme = value.match(/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:?#]+)(?::\d*)?(?:[/?#]|$)/i);
+    if (scheme?.[1]) return scheme[1].toLowerCase();
+    if (value.includes('://')) return null;
+    const scp = value.match(/^(?:[^@/:]+@)?([^/:]+):(?!\/)/);
+    return scp?.[1] ? scp[1].toLowerCase() : null;
+}
+function originHost(): string | null {
+    const result = originUrlReader();
+    return result.ok ? parseRemoteHost(result.stdout) : null;
+}
+// gh resolves {owner}/{repo} from its base-repo selection, but its API host defaults independently.
+// Pin the host to origin so REST calls follow the remote canon pushes task branches to.
+function ghApi(argv: string[]): CommandResult {
+    const host = originHost();
+    return runner(['api', ...(host ? ['--hostname', host] : []), ...argv]);
+}
 const REPO = 'repos/{owner}/{repo}';
 const MERGE_ALLOWED_FIELD: Record<ShipMergeMethod, string> = { squash: 'allow_squash_merge', rebase: 'allow_rebase_merge', merge: 'allow_merge_commit' };
 function isMergedAt(value: unknown): boolean { return typeof value === 'string' && value.length > 0; }

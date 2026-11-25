@@ -1,10 +1,18 @@
 import test from 'node:test';
+import { afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { lookupPRByBranch, readPR, mergePR, readAllowedMergeMethods, parseAllowedMergeMethods, createDraftPR, commitSubjectsBody, setGhRunnerForTest, setGitLogRunnerForTest } from '../src/orchestrator/forge.js';
+import { lookupPRByBranch, readPR, mergePR, readAllowedMergeMethods, parseAllowedMergeMethods, createDraftPR, commitSubjectsBody, parseRemoteHost, setGhRunnerForTest, setGitLogRunnerForTest, setOriginUrlReaderForTest } from '../src/orchestrator/forge.js';
 import type { CommandResult } from '../src/orchestrator/types.js';
 
 function result(stdout: string, ok = true, stderr = ''): CommandResult { return { ok, stdout, stderr }; }
+
+beforeEach(() => setOriginUrlReaderForTest(() => result('', false, 'no origin')));
+afterEach(() => {
+    setGhRunnerForTest(null);
+    setGitLogRunnerForTest(null);
+    setOriginUrlReaderForTest(null);
+});
 
 void test('forge lists every REST page and filters an exact head and base', () => {
     const calls: string[][] = [];
@@ -79,5 +87,50 @@ void test('commit-subject body fallback lists origin/base..branch and pins the b
         assert.deepEqual(commitSubjectsBody('task/example', 'main'), { ok: true, body: '- first change\n- second change' });
         assert.deepEqual(args, ['log', '--reverse', '--format=%s', 'origin/main..task/example']);
     } finally { setGitLogRunnerForTest(null); }
+});
+
+void test('parseRemoteHost accepts supported remote URL forms and rejects local paths', async t => {
+    for (const [url, expected] of [
+        ['HTTPS://GHE.Example/o/r', 'ghe.example'],
+        ['http://user:pw@h:8080/o/r', 'h'],
+        ['ssh://git@ghe.example:2222/o/r', 'ghe.example'],
+        ['git@GHE.Example:o/r.git', 'ghe.example'],
+        ['', null], ['  ', null], ['file:///tmp/origin.git', null], ['/abs/path', null], ['rel/path', null],
+    ] as const) await t.test(url || 'empty URL', () => assert.equal(parseRemoteHost(url), expected, url));
+});
+
+void test('forge passes the parsed origin host to every REST call', async t => {
+    const cases = [
+        ['https://github.com/o/r.git', 'github.com'],
+        ['git@ghe.example:o/r.git', 'ghe.example'],
+        ['ssh://git@ghe.example:2222/o/r', 'ghe.example'],
+        ['/tmp/local/origin.git', null],
+    ] as const;
+    for (const [origin, expectedHost] of cases) await t.test(origin, () => {
+        const calls: string[][] = [];
+        setOriginUrlReaderForTest(() => result(origin));
+        setGhRunnerForTest(argv => {
+            calls.push(argv);
+            if (argv.includes('/pulls?')) return result('[[]]');
+            if (argv.includes('/pulls/7')) return result('{"state":"open","head":{"sha":"abc"},"base":{"ref":"main"}}');
+            if (argv.includes('/merge')) return result('{}');
+            if (argv.at(-1) === 'repos/{owner}/{repo}') return result('{"allow_squash_merge":true,"allow_rebase_merge":true,"allow_merge_commit":true}');
+            return result('{"number":7,"html_url":"https://example.test/pull/7"}');
+        });
+        lookupPRByBranch('task/x', 'main', 'open');
+        readPR(7);
+        mergePR(7, 'squash');
+        readAllowedMergeMethods();
+        createDraftPR({ base: 'main', head: 'task/x', title: 'Task', body: 'Body' });
+        assert.equal(calls.length, 5);
+        if (expectedHost) {
+            assert.ok(calls.every(argv => argv[0] === 'api' && argv[1] === '--hostname' && argv[2] === expectedHost), origin);
+        } else {
+            assert.ok(calls.every(argv => argv[0] === 'api' && argv[1] !== '--hostname'), origin);
+        }
+        if (origin.startsWith('git@')) {
+            assert.deepEqual(calls[1], ['api', '--hostname', 'ghe.example', '-X', 'GET', 'repos/{owner}/{repo}/pulls/7']);
+        }
+    });
 });
 

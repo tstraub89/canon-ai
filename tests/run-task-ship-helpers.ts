@@ -72,7 +72,7 @@ export function setupFakeTools(scriptDir: string): void {
         `node - "$@" <<'NODE'`,
         'const fs=require("fs"),cp=require("child_process"),a=process.argv.slice(2),e=process.env;',
         'let method="GET",input="",endpoint="",mergeMethod="";',
-        'for(let i=1;i<a.length;i++){if(a[i]==="-X")method=a[++i];else if(a[i]==="--input")input=a[++i];else if(a[i]==="-f")mergeMethod=a[++i];else if(a[i]==="--paginate"||a[i]==="--slurp"){}else endpoint=a[i];}',
+        'for(let i=1;i<a.length;i++){if(a[i]==="-X")method=a[++i];else if(a[i]==="--hostname")i++;else if(a[i]==="--input")input=a[++i];else if(a[i]==="-f")mergeMethod=a[++i];else if(a[i]==="--paginate"||a[i]==="--slurp"){}else endpoint=a[i];}',
         'const u=new URL(endpoint,"https://x.invalid"),q=u.searchParams;let path=decodeURIComponent(u.pathname);if(path.startsWith("/repos/{owner}/{repo}"))path=path.slice("/repos/{owner}/{repo}".length);const stateFile=e.FAKE_GH_STATE_FILE||"";',
         'let state={};try{if(stateFile&&fs.existsSync(stateFile))state=Object.fromEntries(fs.readFileSync(stateFile,"utf8").trim().split("|").map((v,i)=>["number url base head status".split(" ")[i],v]));}catch{}',
         'const fail=(s)=>{process.stderr.write(s+"\\n");process.exit(1)},out=(s)=>process.stdout.write(s+"\\n"),truth=(name)=>e[name]==="1";',

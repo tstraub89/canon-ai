@@ -8800,10 +8800,26 @@ import os from "os";
 import path23 from "path";
 var defaultRunner = (argv) => runCommand("gh", argv);
 var defaultGitLogRunner = (...args) => gitSafe(...args);
+var defaultOriginUrlReader = () => gitSafe("remote", "get-url", "origin");
 var runner = defaultRunner;
 var gitLogRunner = defaultGitLogRunner;
+var originUrlReader = defaultOriginUrlReader;
+function parseRemoteHost(url) {
+  const value = url.trim();
+  if (!value) return null;
+  const scheme = value.match(/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:?#]+)(?::\d*)?(?:[/?#]|$)/i);
+  if (scheme?.[1]) return scheme[1].toLowerCase();
+  if (value.includes("://")) return null;
+  const scp = value.match(/^(?:[^@/:]+@)?([^/:]+):(?!\/)/);
+  return scp?.[1] ? scp[1].toLowerCase() : null;
+}
+function originHost() {
+  const result = originUrlReader();
+  return result.ok ? parseRemoteHost(result.stdout) : null;
+}
 function ghApi(argv) {
-  return runner(["api", ...argv]);
+  const host = originHost();
+  return runner(["api", ...host ? ["--hostname", host] : [], ...argv]);
 }
 var REPO = "repos/{owner}/{repo}";
 var MERGE_ALLOWED_FIELD = { squash: "allow_squash_merge", rebase: "allow_rebase_merge", merge: "allow_merge_commit" };
