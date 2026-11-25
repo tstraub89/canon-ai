@@ -16,10 +16,11 @@ const defaultOriginUrlReader: OriginUrlReader = () => splitGit.gitSafe('remote',
 let runner = defaultRunner;
 let gitLogRunner = defaultGitLogRunner;
 let originUrlReader = defaultOriginUrlReader;
+const ghHostKnown = new Map<string, boolean>();
 
-export function setGhRunnerForTest(next: GhRunner | null): void { runner = next ?? defaultRunner; }
+export function setGhRunnerForTest(next: GhRunner | null): void { runner = next ?? defaultRunner; ghHostKnown.clear(); }
 export function setGitLogRunnerForTest(next: GitLogRunner | null): void { gitLogRunner = next ?? defaultGitLogRunner; }
-export function setOriginUrlReaderForTest(next: OriginUrlReader | null): void { originUrlReader = next ?? defaultOriginUrlReader; }
+export function setOriginUrlReaderForTest(next: OriginUrlReader | null): void { originUrlReader = next ?? defaultOriginUrlReader; ghHostKnown.clear(); }
 export function parseRemoteHost(url: string): string | null {
     const value = url.trim();
     if (!value) return null;
@@ -33,10 +34,26 @@ function originHost(): string | null {
     const result = originUrlReader();
     return result.ok ? parseRemoteHost(result.stdout) : null;
 }
+function normaliseGhHost(host: string): string {
+    const value = host.toLowerCase();
+    return value === 'github.com' || value.endsWith('.github.com') ? 'github.com' : value;
+}
+function apiHost(): string | null {
+    const raw = originHost();
+    if (!raw) return null;
+    const host = normaliseGhHost(raw);
+    let known = ghHostKnown.get(host);
+    if (known === undefined) {
+        // gh auth token is an offline credential probe; discard both token output and errors.
+        known = runner(['auth', 'token', '--hostname', host]).ok;
+        ghHostKnown.set(host, known);
+    }
+    return known ? host : null;
+}
 // gh resolves {owner}/{repo} from its base-repo selection, but its API host defaults independently.
-// Pin the host to origin so REST calls follow the remote canon pushes task branches to.
+// Normalise github.com subdomains and pin origin's host only when gh auth recognises it.
 function ghApi(argv: string[]): CommandResult {
-    const host = originHost();
+    const host = apiHost();
     return runner(['api', ...(host ? ['--hostname', host] : []), ...argv]);
 }
 const REPO = 'repos/{owner}/{repo}';

@@ -635,7 +635,7 @@ function lookupPRHead(ref, repo, cwd) {
         const match = ref.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/);
         if (!match) return null;
         const [, host, owner, name, number] = match;
-        return readPRHead(`repos/${owner}/${name}/pulls/${number}`, cwd, host);
+        return readPRHead(`repos/${owner}/${name}/pulls/${number}`, cwd, normaliseGhHost(host));
     }
     if (ref.includes(':')) return ref.slice(ref.indexOf(':') + 1);
     if (!/^#?\d+$/.test(ref)) return ref;
@@ -643,12 +643,19 @@ function lookupPRHead(ref, repo, cwd) {
     if (typeof repo === 'string' && repo.trim() !== '') {
         const parsed = parseRepoValue(repo);
         if (!parsed) return null;
-        return readPRHead(`repos/${parsed.owner}/${parsed.name}/pulls/${number}`, cwd, parsed.host);
+        return readPRHead(`repos/${parsed.owner}/${parsed.name}/pulls/${number}`, cwd, parsed.host ? normaliseGhHost(parsed.host) : null);
     }
-    return readPRHead(`repos/{owner}/{repo}/pulls/${number}`, cwd, lookupOriginHost(cwd));
+    const origin = lookupOriginHost(cwd);
+    const host = origin ? normaliseGhHost(origin) : null;
+    return readPRHead(`repos/{owner}/{repo}/pulls/${number}`, cwd, host && ghKnowsHost(host, cwd) ? host : null);
 }
 
 // Mirrors parseRemoteHost in canon-ai's forge module; the guard is a standalone script.
+function normaliseGhHost(host) {
+    const value = host.toLowerCase();
+    return value === 'github.com' || value.endsWith('.github.com') ? 'github.com' : value;
+}
+
 function parseRemoteHost(url) {
     const value = url.trim();
     if (!value) return null;
@@ -668,6 +675,15 @@ function lookupOriginHost(cwd) {
     });
     if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
     return parseRemoteHost(result.stdout);
+}
+
+function ghKnowsHost(host, cwd) {
+    const result = spawnSync('gh', ['auth', 'token', '--hostname', host], {
+        cwd,
+        stdio: 'ignore',
+        timeout: GH_TIMEOUT_MS,
+    });
+    return !result.error && result.status === 0;
 }
 
 function parseRepoValue(value) {

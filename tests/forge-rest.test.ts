@@ -7,6 +7,36 @@ import type { CommandResult } from '../src/orchestrator/types.js';
 
 function result(stdout: string, ok = true, stderr = ''): CommandResult { return { ok, stdout, stderr }; }
 
+const FAKE_TOKEN = 'gho_FAKE_TOKEN_SHOULD_NOT_LEAK';
+
+function stubGh(authHosts: string[], apiOk = true): { apiCalls: string[][]; authCalls: string[][] } {
+    const apiCalls: string[][] = [];
+    const authCalls: string[][] = [];
+    setGhRunnerForTest(argv => {
+        if (argv[0] === 'auth') {
+            authCalls.push(argv);
+            return authHosts.includes(argv[3] ?? '') ? result(FAKE_TOKEN) : result('', false, 'not logged in');
+        }
+        apiCalls.push(argv);
+        if (!apiOk) return result('', false, 'HTTP 502');
+        const endpoint = argv.at(-1) ?? '';
+        if (endpoint.includes('/pulls?')) return result('{"number":7,"state":"open","head":{"ref":"task/x"},"base":{"ref":"main"}}');
+        if (endpoint.endsWith('/pulls/7')) return result('{"state":"open","head":{"sha":"abc"},"base":{"ref":"main"}}');
+        if (endpoint === 'repos/{owner}/{repo}') return result('{"allow_squash_merge":true,"allow_rebase_merge":true,"allow_merge_commit":true}');
+        if (endpoint.endsWith('/merge')) return result('{}');
+        return result('{"number":7,"html_url":"https://example.test/pull/7"}');
+    });
+    return { apiCalls, authCalls };
+}
+
+function exerciseForgeCalls(): void {
+    lookupPRByBranch('task/x', 'main', 'open');
+    readPR(7);
+    mergePR(7, 'squash');
+    readAllowedMergeMethods();
+    createDraftPR({ base: 'main', head: 'task/x', title: 'Task', body: 'Body' });
+}
+
 beforeEach(() => setOriginUrlReaderForTest(() => result('', false, 'no origin')));
 afterEach(() => {
     setGhRunnerForTest(null);
@@ -109,30 +139,61 @@ void test('forge passes the parsed origin host to every REST call', async t => {
         ['/tmp/local/origin.git', null],
     ] as const;
     for (const [origin, expectedHost] of cases) await t.test(origin, () => {
-        const calls: string[][] = [];
         setOriginUrlReaderForTest(() => result(origin));
-        setGhRunnerForTest(argv => {
-            calls.push(argv);
-            if (argv.includes('/pulls?')) return result('[[]]');
-            if (argv.includes('/pulls/7')) return result('{"state":"open","head":{"sha":"abc"},"base":{"ref":"main"}}');
-            if (argv.includes('/merge')) return result('{}');
-            if (argv.at(-1) === 'repos/{owner}/{repo}') return result('{"allow_squash_merge":true,"allow_rebase_merge":true,"allow_merge_commit":true}');
-            return result('{"number":7,"html_url":"https://example.test/pull/7"}');
-        });
-        lookupPRByBranch('task/x', 'main', 'open');
-        readPR(7);
-        mergePR(7, 'squash');
-        readAllowedMergeMethods();
-        createDraftPR({ base: 'main', head: 'task/x', title: 'Task', body: 'Body' });
-        assert.equal(calls.length, 5);
+        const { apiCalls, authCalls } = stubGh(['github.com', 'ghe.example']);
+        exerciseForgeCalls();
+        assert.equal(apiCalls.length, 5);
         if (expectedHost) {
-            assert.ok(calls.every(argv => argv[0] === 'api' && argv[1] === '--hostname' && argv[2] === expectedHost), origin);
+            assert.ok(apiCalls.every(argv => argv[0] === 'api' && argv[1] === '--hostname' && argv[2] === expectedHost), origin);
+            assert.deepEqual(authCalls, [['auth', 'token', '--hostname', expectedHost]]);
         } else {
-            assert.ok(calls.every(argv => argv[0] === 'api' && argv[1] !== '--hostname'), origin);
+            assert.ok(apiCalls.every(argv => argv[0] === 'api' && argv[1] !== '--hostname'), origin);
+            assert.deepEqual(authCalls, []);
         }
         if (origin.startsWith('git@')) {
-            assert.deepEqual(calls[1], ['api', '--hostname', 'ghe.example', '-X', 'GET', 'repos/{owner}/{repo}/pulls/7']);
+            assert.deepEqual(apiCalls[1], ['api', '--hostname', 'ghe.example', '-X', 'GET', 'repos/{owner}/{repo}/pulls/7']);
         }
     });
+});
+
+void test('forge gates --hostname on gh auth and normalises github.com subdomains', async t => {
+    const cases = [
+        ['git@github-work:o/r.git', ['github.com'], null, 'github-work'],
+        ['ssh://git@ssh.github.com:443/o/r.git', ['github.com'], 'github.com', 'github.com'],
+        ['https://ghe.example/o/r.git', ['ghe.example'], 'ghe.example', 'ghe.example'],
+        ['https://ghe.example/o/r.git', [], null, 'ghe.example'],
+        ['https://api.github.com/o/r', ['github.com'], 'github.com', 'github.com'],
+        ['https://notgithub.com/o/r', ['notgithub.com'], 'notgithub.com', 'notgithub.com'],
+    ] as const;
+    for (const [origin, authHosts, expectedHost, probeHost] of cases) await t.test(origin + ` (${expectedHost ?? 'default'})`, () => {
+        setOriginUrlReaderForTest(() => result(origin));
+        const { apiCalls, authCalls } = stubGh([...authHosts]);
+        exerciseForgeCalls();
+        assert.equal(apiCalls.length, 5);
+        for (const argv of apiCalls) {
+            if (expectedHost) assert.deepEqual(argv.slice(0, 3), ['api', '--hostname', expectedHost], origin);
+            else assert.ok(argv[0] === 'api' && !argv.includes('--hostname'), origin);
+        }
+        assert.deepEqual(authCalls, [['auth', 'token', '--hostname', probeHost]]);
+        if (origin.includes('ssh.github.com')) {
+            assert.deepEqual(apiCalls[1], ['api', '--hostname', 'github.com', '-X', 'GET', 'repos/{owner}/{repo}/pulls/7']);
+        }
+    });
+});
+
+void test('forge host probe never exposes the auth token in results or output', t => {
+    setOriginUrlReaderForTest(() => result('https://ghe.example/o/r.git'));
+    const { apiCalls, authCalls } = stubGh(['ghe.example'], false);
+    let consoleOutput = '';
+    const captures = ['log', 'warn', 'error'].map(method => t.mock.method(console, method as 'log' | 'warn' | 'error', (...args: unknown[]) => { consoleOutput += args.join(' '); }));
+    const lookup = lookupPRByBranch('task/x', 'main', 'open');
+    const read = readPR(7);
+    const merge = mergePR(7, 'squash');
+    const settings = readAllowedMergeMethods();
+    const created = createDraftPR({ base: 'main', head: 'task/x', title: 'Task', body: 'Body' });
+    const exposed = JSON.stringify({ apiCalls, lookup, read, merge, settings, created, consoleOutput });
+    assert.deepEqual(authCalls, [['auth', 'token', '--hostname', 'ghe.example']]);
+    assert.equal(exposed.includes(FAKE_TOKEN), false);
+    for (const capture of captures) capture.mock.restore();
 });
 

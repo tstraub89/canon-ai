@@ -112,6 +112,7 @@ function writeExecutable(dir: string, name: string, lines: string[]): string {
 function makeGhShim(binDir: string): void {
     writeExecutable(binDir, 'gh', [
         'if [ -n "${CANON_GUARD_GH_LOG-}" ]; then printf "%s\\n" "$*" >> "$CANON_GUARD_GH_LOG"; fi',
+        'if [ "${1:-}" = auth ] && [ "${2:-}" = token ]; then host="${4:-}"; case " ${CANON_GUARD_GH_AUTH_HOSTS-} " in *" $host "*) printf "%s\\n" "gho_FAKE_TOKEN_SHOULD_NOT_LEAK"; exit 0 ;; *) exit 1 ;; esac; fi',
         'if [ "${1:-}" != "api" ]; then printf "%s\\n" "HTTP 403: GitHub GraphQL is not available" >&2; exit 1; fi',
         'endpoint=""; while [ $# -gt 0 ]; do case "$1" in api|-X|--hostname) shift 2 ;; GET) shift ;; *) endpoint="$1"; shift ;; esac; done',
         'case "$endpoint" in',
@@ -427,32 +428,50 @@ void test('task PR REST lookup follows origin host and rejects unparseable repo 
         makeGhShim(binDir);
         const pathEnv = `${binDir}${path.delimiter}${process.env.PATH ?? ''}`;
         const logPath = path.join(fixture.root, 'gh-lookup.log');
-        const runLogged = (command: string) => {
+        const runLogged = (command: string, authHosts = '') => {
             fs.rmSync(logPath, { force: true });
             const result = runGuard({ tool_name: 'Bash', tool_input: { command }, cwd: fixture.repo }, {
                 cwd: fixture.repo,
-                env: { PATH: pathEnv, CANON_GUARD_GH_LOG: logPath },
+                env: { PATH: pathEnv, CANON_GUARD_GH_LOG: logPath, CANON_GUARD_GH_AUTH_HOSTS: authHosts },
             });
             const lines = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').trim().split('\n') : [];
             return { result, lines };
         };
-        const assertLogged = (command: string, expected: string) => {
-            const { result, lines } = runLogged(command);
+        const assertLogged = (command: string, expected: string, authHosts = '') => {
+            const { result, lines } = runLogged(command, authHosts);
             assert.equal(result.denied, true, result.reason || command);
-            assert.deepEqual(lines, [expected], command);
+            assert.deepEqual(lines, expected.split('\n'), command);
+            assert.equal(JSON.stringify({ result, lines }).includes('gho_FAKE_TOKEN_SHOULD_NOT_LEAK'), false, command);
+        };
+        const setOrigin = (url: string) => {
+            const exists = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd: fixture.repo, stdio: 'ignore' }).status === 0;
+            execFileSync('git', ['remote', exists ? 'set-url' : 'add', 'origin', url], { cwd: fixture.repo });
         };
 
         await t.test('cwd fallback uses https origin host', () => {
             execFileSync('git', ['remote', 'add', 'origin', 'https://ghe.example/o/r.git'], { cwd: fixture.repo });
-            assertLogged('gh pr merge 12', 'api -X GET --hostname ghe.example repos/{owner}/{repo}/pulls/12');
+            assertLogged('gh pr merge 12', 'auth token --hostname ghe.example\napi -X GET --hostname ghe.example repos/{owner}/{repo}/pulls/12', 'ghe.example');
         });
         await t.test('cwd fallback accepts scp origin and lowercases host', () => {
             execFileSync('git', ['remote', 'set-url', 'origin', 'git@GHE.example:o/r.git'], { cwd: fixture.repo });
-            assertLogged('gh pr merge 12', 'api -X GET --hostname ghe.example repos/{owner}/{repo}/pulls/12');
+            assertLogged('gh pr merge 12', 'auth token --hostname ghe.example\napi -X GET --hostname ghe.example repos/{owner}/{repo}/pulls/12', 'ghe.example');
         });
         await t.test('cwd fallback omits hostname when origin is missing', () => {
             execFileSync('git', ['remote', 'remove', 'origin'], { cwd: fixture.repo });
             assertLogged('gh pr merge 12', 'api -X GET repos/{owner}/{repo}/pulls/12');
+        });
+
+        await t.test('cwd fallback skips SSH alias host when gh auth does not know it', () => {
+            setOrigin('git@github-work:o/r.git');
+            assertLogged('gh pr merge 12', 'auth token --hostname github-work\napi -X GET repos/{owner}/{repo}/pulls/12', 'github.com');
+        });
+        await t.test('cwd fallback normalises ssh.github.com and gates github.com', () => {
+            setOrigin('ssh://git@ssh.github.com:443/o/r.git');
+            assertLogged('gh pr merge 12', 'auth token --hostname github.com\napi -X GET --hostname github.com repos/{owner}/{repo}/pulls/12', 'github.com');
+        });
+        await t.test('cwd fallback omits Enterprise host when gh auth does not know it', () => {
+            setOrigin('https://ghe.example/o/r.git');
+            assertLogged('gh pr merge 12', 'auth token --hostname ghe.example\napi -X GET repos/{owner}/{repo}/pulls/12');
         });
 
         for (const [name, value] of [
@@ -465,8 +484,20 @@ void test('task PR REST lookup follows origin host and rejects unparseable repo 
         ] as const) {
             await t.test(`-R parses ${name}`, () => assertLogged(`gh -R '${value}' pr merge 12`, 'api -X GET --hostname ghe.example repos/o/r/pulls/12'));
         }
+        await t.test('-R normalises explicit github subdomain without probing auth', () => {
+            assertLogged('gh -R api.github.com/o/r pr merge 12', 'api -X GET --hostname github.com repos/o/r/pulls/12');
+        });
+        await t.test('PR URL normalises explicit github subdomain without probing auth', () => {
+            assertLogged('gh pr merge https://api.github.com/o/r/pull/12', 'api -X GET --hostname github.com repos/o/r/pulls/12');
+        });
+        await t.test('explicit Enterprise host is not gated by cwd auth state', () => {
+            assertLogged('gh -R https://ghe.example/o/r.git pr merge 12', 'api -X GET --hostname ghe.example repos/o/r/pulls/12');
+        });
         await t.test('-R OWNER/REPO uses the default host', () => assertLogged('gh -R o/r.git pr merge 12', 'api -X GET repos/o/r/pulls/12'));
-        await t.test('empty -R is treated as absent and uses the cwd repo', () => assertLogged("gh -R '' pr merge 12", 'api -X GET repos/{owner}/{repo}/pulls/12'));
+        await t.test('empty -R is treated as absent and uses the cwd repo', () => {
+            execFileSync('git', ['remote', 'remove', 'origin'], { cwd: fixture.repo });
+            assertLogged("gh -R '' pr merge 12", 'api -X GET repos/{owner}/{repo}/pulls/12');
+        });
         for (const value of ['only', 'a/b/c/d', 'a/b/c/d/e', 'https://ghe.example/o/r/tree/main', 'ghe.example:', 'o//r', '/r', 'o/']) {
             await t.test(`unparseable -R skips lookup: ${value}`, () => {
                 const { result, lines } = runLogged(`gh -R '${value}' pr merge 12`);

@@ -8804,6 +8804,7 @@ var defaultOriginUrlReader = () => gitSafe("remote", "get-url", "origin");
 var runner = defaultRunner;
 var gitLogRunner = defaultGitLogRunner;
 var originUrlReader = defaultOriginUrlReader;
+var ghHostKnown = /* @__PURE__ */ new Map();
 function parseRemoteHost(url) {
   const value = url.trim();
   if (!value) return null;
@@ -8817,8 +8818,23 @@ function originHost() {
   const result = originUrlReader();
   return result.ok ? parseRemoteHost(result.stdout) : null;
 }
+function normaliseGhHost(host) {
+  const value = host.toLowerCase();
+  return value === "github.com" || value.endsWith(".github.com") ? "github.com" : value;
+}
+function apiHost() {
+  const raw = originHost();
+  if (!raw) return null;
+  const host = normaliseGhHost(raw);
+  let known = ghHostKnown.get(host);
+  if (known === void 0) {
+    known = runner(["auth", "token", "--hostname", host]).ok;
+    ghHostKnown.set(host, known);
+  }
+  return known ? host : null;
+}
 function ghApi(argv) {
-  const host = originHost();
+  const host = apiHost();
   return runner(["api", ...host ? ["--hostname", host] : [], ...argv]);
 }
 var REPO = "repos/{owner}/{repo}";
