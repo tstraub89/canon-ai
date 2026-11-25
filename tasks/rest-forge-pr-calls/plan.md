@@ -289,3 +289,247 @@ Commit the rebuilt `dist/orchestrator/run-task.js` and `dist/cli/index.js` (AC-1
 ## Questions recorded (unattended session)
 
 - The CLAUDE.md norm "ask before committing" doesn't apply to this phase: the plan commits nothing, and implement commits are orchestrator-owned.
+
+## Reroute Plan
+
+### Round Scope
+
+This round covers Amendment 1 (AC-13, AC-14, AC-15) and nothing else. AC-1 through AC-12 are implemented at HEAD `bd37a01` (two implement iterations). Code review round 2 marked them Met, and the full suite passed (2268/0/0). Do not re-plan or re-touch them.
+
+Archived review (`review-prior-1.md`) disposition:
+- F1–F5 and R1: resolved in iteration 2, and confirmed in round 2. No work.
+- S1 (spec gap, host addressing): Amendment 1 supersedes it. That is this round's main work (AC-13, AC-14 first bullet).
+- N1 (`-R` forms resolve to the wrong repo or fall back to cwd): Amendment 1 promotes it to AC-14. In scope.
+- N2 (`GH_REPO`/`GH_HOST` env prefixes): Amendment 1 makes it a Non-Goal. No work.
+- Round-2 nits (the no-op `notEqual`, the stub reset outside `try/finally`, `--slurp` min version, dropped `errors[]`, "gh api exited" wording): optional. Not in scope. If Step 3 rewrites the forge test setup, the stub reset moves into hooks anyway.
+- Spec-review nit (malformed-origin argv case): cheap and pins the stated Decision, so Step 3 includes it.
+
+Feasibility:
+- **Exists:** found by grep. `ghApi` (`src/orchestrator/forge.ts:19`) is the single gh entry point, and every forge export (`lookupPRByBranch`:44, `readPR`:64, `mergePR`:75, `readAllowedMergeMethods`:77, `createDraftPR`:86) goes through it. The test seams `setGhRunnerForTest`/`setGitLogRunnerForTest` are at forge.ts:17–18. `splitGit.gitSafe` is at `src/orchestrator/git.ts:39` (cwd `REPO_ROOT`). In the guard: `lookupPRHead` is at `.claude/hooks/canon-guard.mjs:633`, `readPRHead` (already takes `host`) at :652, and `spawnSync` is imported at :4. In the tests: `makeGhShim` is at `tests/canon-guard.test.ts:112` (it already skips `--hostname`) and the `repoFlagCases` loop at :315–355. The ship/safety fakes parse `api` args at `tests/run-task-ship-helpers.ts:75` and `tests/run-task-safety-helpers.ts:246`; neither names `--hostname` today. `main.ts:1343` `parseOriginRepoSlug` is github.com-only and is used only for the URL fallback. It is out of scope and must not be reused for the host.
+- **Real path:** every `--pr`/`--ship` forge call runs `main.ts` wrapper → forge export → `ghApi` → `runner(['api', …])` → `splitGit.runCommand('gh', …)` in `REPO_ROOT`. Adding the host inside `ghApi` covers all of them. Nothing on this path passes `--hostname` today. The guard's number-ref path is `mergeRule` (:526) → `lookupPRHead` → `readPRHead`. The URL-ref branch already passes the URL's host. The `-R` branch (:640–648) does the broken parsing that AC-14 replaces.
+- **Callers:** `ghApi`'s callers are the five forge exports above. None of their return contracts change; only argv gains `--hostname`. `lookupPRHead`'s only caller is `mergeRule`, whose contract (string head or `null` = fail open) is unchanged. The new "unparseable `-R` → `null`" is already the fail-open value.
+- **Tests that can fail:** see Step 3 and Step 5. Forge: an Enterprise origin stubbed through the origin-reader seam. At `bd37a01` `ghApi` never adds `--hostname`, so the exact-argv `deepEqual` fails. Guard: the fixture repo gets `git remote add origin https://ghe.example/o/r.git`. The old code passes no `--hostname` on the cwd fallback, emits `repos/o/r.git/…` for a `.git` `-R`, emits `repos/git@ghe.example:o/r/…` for the scp form, and does a cwd read for `-R a/b/c/d`. Each assertion is on the exact logged argv line, or on the log being absent.
+- **Predicates:** origin-host parse and `-R` parse. Boundary values are listed in Steps 1 and 4: empty or whitespace URL, a local path or `file://` origin (no host → null), port, userinfo, uppercase scheme or host, trailing `/` then `.git`, empty owner/repo segments, 1/4/5 segments, and `-R ""`.
+- **Scope:** forge.ts, `tests/forge-rest.test.ts`, the guard and its mirror, `tests/canon-guard.test.ts` and `dist/` are in Amendment 1's Affected Files. The two fake-gh helpers (Step 2) are in the original Affected Files. The amendment's AC-13 says "the fake tolerates `--hostname`". No docs change: grep found no doc that claims how `gh api` picks its host (`docs/pipeline-orchestrator.md:602` says only "through GitHub REST using `gh api`"). The AC-13/AC-14 rules are therefore not restated anywhere.
+- **Async/stateful:** N/A. Synchronous `spawnSync`. The origin host is read on every `ghApi` call, as the amendment says ("once per call"), with no memoization, so there is no stale state. The test seam is module-global and must be reset in `afterEach`.
+
+### Step 1: Origin host in the forge module (AC-13)
+
+File: `src/orchestrator/forge.ts`
+
+- Add `export function parseRemoteHost(url: string): string | null`:
+  - `const s = url.trim(); if (!s) return null;`
+  - Scheme form: `/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:?#]+)(?::\d*)?(?:[/?#]|$)/i`. This drops userinfo and port. `git://`, `file://`, and any other scheme return null (only the forms in the amendment's Decision are accepted).
+  - scp form, tried only when `s` has no `://`: `/^(?:[^@/:]+@)?([^/:]+):(?!\/)/`. A plain local path (`/tmp/origin.git`, `../o.git`) has no `host:` prefix and returns null.
+  - Return the host lowercased. An empty capture returns null.
+- Add an origin-reader seam next to the existing ones:
+  ```ts
+  export type OriginUrlReader = () => CommandResult;
+  const defaultOriginUrlReader: OriginUrlReader = () => splitGit.gitSafe('remote', 'get-url', 'origin');
+  let originUrlReader = defaultOriginUrlReader;
+  export function setOriginUrlReaderForTest(next: OriginUrlReader | null): void { originUrlReader = next ?? defaultOriginUrlReader; }
+  function originHost(): string | null { const r = originUrlReader(); return r.ok ? parseRemoteHost(r.stdout) : null; }
+  ```
+  Keep this separate from `gitLogRunner`. Existing tests stub that runner for `git log` only, and sharing it would feed them `remote get-url` calls.
+- Change `ghApi`: `const host = originHost(); return runner(['api', ...(host ? ['--hostname', host] : []), ...argv]);`. `--hostname` goes directly after `api`, which is the shape the forge tests pin. The `{owner}/{repo}` placeholders stay unchanged.
+- AC-1/AC-2 still hold: `git remote get-url` goes through `gitSafe`, not `runCommand('gh'`. Re-run `grep -rn "runCommand('gh'" src` and expect one hit.
+- Add a short comment above `ghApi`: gh fills `{owner}/{repo}` from its base-repo resolution but takes the API host from `--hostname`/`GH_HOST`, so the host is pinned to `origin`.
+
+### Step 2: Fakes tolerate `--hostname` explicitly
+
+Files: `tests/run-task-ship-helpers.ts:75`, `tests/run-task-safety-helpers.ts:246`
+
+In each inline node arg loop, add `else if(a[i]==="--hostname"){i++;}` before the endpoint fallthrough. The ship/safety fixtures use a local bare `origin.git` path, so `parseRemoteHost` returns null and no `--hostname` is sent today. This is robustness only, and AC-13 requires that the fake tolerates the flag. No test-body changes are expected; the existing suites must stay green unmodified.
+
+### Step 3: Forge unit tests (AC-13, red-first)
+
+File: `tests/forge-rest.test.ts`
+
+- Add top-level `beforeEach(() => setOriginUrlReaderForTest(() => ({ ok: false, stdout: '', stderr: 'no origin' })))` and an `afterEach` that resets all three seams (`setGhRunnerForTest(null)`, `setGitLogRunnerForTest(null)`, `setOriginUrlReaderForTest(null)`). Every existing argv pin then stays host-less and doesn't depend on the worktree's real `origin`. Without this, those pins would pick up `--hostname github.com` from canon-ai's own remote.
+- New test `forge passes --hostname from origin on every gh api call`. For each origin case, stub the reader, record argv from one call of each of `lookupPRByBranch`, `readPR`, `mergePR`, `readAllowedMergeMethods` and `createDraftPR`, and assert `argv.slice(0, 3)`:
+  - `https://github.com/o/r.git` → `['api', '--hostname', 'github.com']`
+  - `git@ghe.example:o/r.git` → `['api', '--hostname', 'ghe.example']`
+  - `ssh://git@ghe.example:2222/o/r` → `['api', '--hostname', 'ghe.example']`
+  - no origin (`ok: false`) → `argv[1]` is `'-X'` (no flag)
+  - unparseable origin (`ok: true`, stdout `/tmp/local/origin.git`) → no flag (spec-review nit)
+  Also pin one complete argv for the Enterprise case, e.g. `['api', '--hostname', 'ghe.example', '-X', 'GET', 'repos/{owner}/{repo}/pulls/7']`.
+- Add a direct `parseRemoteHost` table: uppercase `HTTPS://GHE.Example/o/r` → `ghe.example`; `http://user:pw@h:8080/o/r` → `h`; `''`, whitespace, `file:///x`, `/abs/path` and `rel/path` → null.
+- **Red-first (AC-15):** write these tests first. The seam export doesn't exist at `bd37a01`, so a straight run would fail on import and not for the stated reason. Create a scratch checkout of `bd37a01` (same method as iteration 2's red-first, outside the worktree) and add only a **seam-only stub**: `setOriginUrlReaderForTest` stores the reader, `ghApi` never consults it, and `parseRemoteHost` returns null. That is the pre-fix behavior plus test plumbing. Run the forge test file there. The Enterprise and github.com cases must fail on the missing `--hostname` in the argv `deepEqual`; the parse-table cases fail on null. Record the stub in the Red-First row so the reviewer can see exactly what the "pre-fix" tree contained. Then implement Step 1 and re-run.
+
+### Step 4: Guard host and `-R` parsing (AC-14)
+
+Files: `.claude/hooks/canon-guard.mjs`, then `npm run sync-templates` for `templates/.claude/hooks/canon-guard.mjs`
+
+- Add `parseRemoteHost(url)`, the same rules as Step 1, duplicated because the guard can't import `src/` (spec, Interaction Dependencies). Add a comment that it mirrors `parseRemoteHost` in canon-ai's forge module. Code comments are exempt from the adopter-scope rule.
+- Add `lookupOriginHost(cwd)`: `spawnSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', stdio: ['ignore','pipe','ignore'], timeout: 3000 })`. Return null on error, non-zero exit or non-string stdout; otherwise return `parseRemoteHost(stdout)`. Use the same shape as `lookupCurrentBranch`.
+- Add `parseRepoValue(value)`, which returns `{ host: string|null, owner, name }` or `null`:
+  1. `s = value.trim()`. A scheme form `/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:]+)(?::\d*)?\/(.*)$/i` gives host = lowercased m[1] and rest = m[2].
+  2. Otherwise, if `s` has no `://` and matches scp `/^(?:[^@/:]+@)?([^/:]+):([^/].*)$/`, host = lowercased m[1] and rest = m[2].
+  3. Otherwise host = undefined and rest = `s`.
+  4. `rest = rest.replace(/\/+$/, '').replace(/\.git$/, '')`. Strip trailing slashes first, then `.git` (`o/r.git/` → `o/r`).
+  5. `parts = rest.split('/')`. Any empty part returns null.
+  6. Host from step 1/2: exactly 2 parts gives `{host, owner, name}`; anything else returns null (URL with extra path segments → fail open).
+  7. No host: 2 parts → `{host: null, …}`; 3 parts → `{host: parts[0].toLowerCase(), owner: parts[1], name: parts[2]}`; anything else returns null.
+- Rewrite the number branch of `lookupPRHead`. The URL, `owner:branch` and branch branches are unchanged.
+  ```js
+  const number = ref.replace(/^#/, '');
+  if (typeof repo === 'string' && repo.trim() !== '') {
+      const parsed = parseRepoValue(repo);
+      if (!parsed) return null;                       // fail open, no cwd fallback (AC-14)
+      return readPRHead(`repos/${parsed.owner}/${parsed.name}/pulls/${number}`, cwd, parsed.host);
+  }
+  return readPRHead(`repos/{owner}/{repo}/pulls/${number}`, cwd, lookupOriginHost(cwd));
+  ```
+- **Interpretation (recorded in notes.md):** `-R OWNER/REPO` with no host passes no `--hostname`. That matches gh's own `-R OWNER/REPO` semantics (default host / `GH_HOST`) and the AC-14 text, which applies the origin host only to the cwd fallback. A whitespace-only `-R` counts as absent and uses the cwd fallback ("non-empty" in AC-14). The PR-URL branch keeps its URL host as written; it is not lowercased, since AC-14 doesn't ask for it and it already works.
+
+### Step 5: Guard tests (AC-14, red-first)
+
+File: `tests/canon-guard.test.ts`
+
+Inside `task PR merge rule denies every merge strategy…`, or in a new sibling test using `withCanonRepo` + `makeGhShim`, so the shim's `*/12` → `task/foo` still applies. Read the log as lines, and assert on an exact line or on its absence. A substring regex would let `repos/o/r.git/pulls/12` satisfy `repos/o/r`.
+
+- **Enterprise origin cwd fallback:** `git -C fixture.repo remote add origin https://ghe.example/o/r.git` (remove it afterwards, or use a dedicated fixture, so earlier cases keep no origin). Run `gh pr merge 12`. Expect a deny and the log line `api -X GET --hostname ghe.example repos/{owner}/{repo}/pulls/12`.
+- **scp-form origin:** set the origin to `git@GHE.example:o/r.git`. Expect `--hostname ghe.example`.
+- **No origin:** the existing fixture. `gh pr merge 12` logs `api -X GET repos/{owner}/{repo}/pulls/12`.
+- **`-R` cases** (each denied, exact line asserted):
+  - `-R https://ghe.example/o/r.git` → `api -X GET --hostname ghe.example repos/o/r/pulls/12`
+  - `-R HTTPS://ghe.example/o/r/` → the same
+  - `-R git@ghe.example:o/r` → the same
+  - `-R ssh://git@ghe.example:2222/o/r.git` → the same
+  - `-R ghe.example/o/r.git` → the same
+  - `-R o/r.git` → `api -X GET repos/o/r/pulls/12`
+- **Unparseable `-R`** (fail open, no read): `-R a/b/c/d`, `-R https://ghe.example/o/r/tree/main` and `-R ghe.example:` → `denied === false`, and the gh log file does not exist (no `gh api` call at all; this pins "no cwd fallback").
+- The existing `repoFlagCases` assertions stay. Tighten the two host-qualified ones to exact lines only if they already pass unchanged.
+- **Red-first (AC-15):** before Step 4, run the new cases against the `bd37a01` guard. No seam is needed; the test drives the real script. Expected failures: no `--hostname` on the Enterprise cwd fallback; `repos/o/r.git/…` for `.git`; `repos/git@ghe.example:o/r/…` for scp; a cwd read (deny + log) for `-R a/b/c/d`. Record the exact failing subtests, then implement and re-run.
+
+### Step 6: Mirror, rebuild, validate, handoff
+
+- `npm run sync-templates`, then `npm run sync-templates:check`.
+- `npm run build`, and commit `dist/` only if it changed. `forge.ts` is bundled into `dist/orchestrator/run-task.js`, so it will.
+- Run in full: `npm run lint && npm run type-check && npm test && npm run sync-templates:check && npm run docs-refs-check`. Report any check that fails or can't run as exactly that.
+- `grep -rn "runCommand('gh'" src` must return exactly the forge helper (AC-1 regression check).
+- Handoff: append `## Iteration 3 — Amendment 1` with an AC delta table (AC-13, AC-14, AC-15) and a Red-First Evidence table with two rows. The forge row names the seam-only stub on `bd37a01`; the guard row is the plain `bd37a01` guard. Each row gives the command, the failing subtests and reasons, and the post-fix result. Record the Step 4 interpretations there as deviations or interpretations.
+
+### Questions recorded (unattended)
+
+- The amendment adds no docs row. No doc restates the host rule (grep above), so this round has no docs change. QA may consider one sentence in `docs/pipeline-orchestrator.md` near line 602, "the API host follows `origin`". That is not done here, to stay inside the amendment's Affected Files.
+- `main.ts` `parseOriginRepoSlug` (URL fallback, github.com-only) still builds a github.com URL for an Enterprise origin when the REST read fails. It predates this task and is outside the amendment. Logged for QA as a follow-up candidate.
+
+## Reroute Plan Round 2
+
+### Round Scope
+
+This round covers Amendment Round 2 (AC-16, AC-17) and nothing else. Amendment Round 1 (AC-13–AC-15) and AC-1–AC-12 are implemented at HEAD `389251c`, and the worktree holds no uncommitted `src/`, `tests/`, guard or `dist/` changes. Do not re-plan or re-touch them, except where the steps below edit the Amendment-1 host code and tests in place.
+
+Archived review (`review-prior-2.md`) disposition:
+- C1 (merge-fail-but-merged ship test) and C2 (`--slurp`): fixed in iteration 2, and confirmed in review round 2. No work.
+- SG1 (literal origin host breaks SSH aliases and `ssh.github.com`): Amendment Round 2 resolves it. This is the round's work.
+- N1–N10 and R2-N1–R2-N6: optional nits. Not in scope. N3 (PR-URL regex lacks `i`; a URL port reaches `--hostname`) and N9 (docs don't say the host follows `origin`) are untouched. Step 3 lowercases and normalises the URL host only because Amendment 2 requires normalising explicit hosts.
+- Spec-review nit (Amendment Round 2): pin an explicit `-R` or PR-URL host such as `api.github.com` → `--hostname github.com`. It's cheap and pins the amendment's "normalise explicit hosts" row, so Step 4 includes it.
+
+Feasibility:
+- **Exists:** found by grep. `src/orchestrator/forge.ts`: `parseRemoteHost`:23, `originHost`:32, `ghApi`:38, the seams `setGhRunnerForTest`/`setOriginUrlReaderForTest`:20/22, and `defaultRunner`:13, the only `runCommand('gh'` in `src`. `.claude/hooks/canon-guard.mjs`: `lookupPRHead`:633 (URL branch :634–638, `-R` branch :643–646, cwd fallback :648), `lookupOriginHost`:662, `parseRepoValue`:673, `readPRHead`:701, `GH_TIMEOUT_MS`:12. Tests: `makeGhShim` at `tests/canon-guard.test.ts:112`. Its line 115 exits 1 for any non-`api` argv, so it must learn `auth token`. The Amendment-1 host block is at :425–476. The forge host test is at `tests/forge-rest.test.ts:104`, with `beforeEach`/`afterEach` seam resets at :10–15.
+- **Real path:** forge: every export → `ghApi` → `originHost()` → `runner(['api', …])`. The host gate goes inside `ghApi`, between `originHost()` and building the argv, so all five exports get it. Guard: `mergeRule` (:526) → `lookupPRHead` → `readPRHead(endpoint, cwd, host)`. Only the cwd fallback (:648) is gated. The `-R` host (:646) and the URL host (:638) are normalised only.
+- **Callers:** `ghApi` is private, and its five callers' return contracts are unchanged. `setGhRunnerForTest`/`setOriginUrlReaderForTest` are used only in `tests/forge-rest.test.ts` (grep). They gain a cache-clear side effect. `lookupPRHead` has one caller (`mergeRule`), and its contract (head string, or `null` = fail open) is unchanged. The ship/safety fake gh helpers (`tests/run-task-ship-helpers.ts:71`, `tests/run-task-safety-helpers.ts:243`) exit 1 for non-`api` argv. Their fixtures use a local bare-path `origin`, so `parseRemoteHost` returns null, no auth probe runs, and they need no change.
+- **Tests that can fail:** forge: at HEAD, `ghApi` passes the raw parsed host, so the alias origin sends `--hostname github-work` (the test expects none), `ssh.github.com` sends `--hostname ssh.github.com` (the test expects `github.com`), and the Enterprise-with-auth-failing case sends `--hostname ghe.example` (the test expects none). Guard: at HEAD, the alias origin logs one line, `api -X GET --hostname github-work …`, where the test expects the two-line sequence in Step 4. The `-R`/URL `api.github.com` cases log `--hostname api.github.com` where the test expects `github.com`. The new tests use only exports that exist at HEAD, so they fail on the assertion and not on import.
+- **Predicates:** `normaliseGhHost(h)`: `github.com` → `github.com`; `ssh.github.com` and `api.github.com` → `github.com`. `notgithub.com` and `github.com.evil.example` are unchanged, because the check is exact-equal or `endsWith('.github.com')` and never `includes`. The input is already lowercased, but normalise lowercases again so an explicit host such as `GitHub.com` can't slip through. Auth gate: "known" only when the probe exits with status exactly 0. A spawn error (gh missing), a non-zero exit and a timeout (status `null`) all mean "not known", so no `--hostname` is passed. A null or empty parsed host means no probe and no flag.
+- **Scope:** `forge.ts`, `tests/forge-rest.test.ts`, the guard and its mirror, `tests/canon-guard.test.ts` and `dist/` are all in Amendment 2's Affected Files. No other file changes.
+- **Async/stateful:** forge has a process-lifetime cache `Map<string, boolean>` keyed by the normalised host, which the amendment allows ("may be cached for the process"). Stale state: a login made mid-run isn't seen until the next process, which is acceptable for a single `canon run`. Ownership: module-global, so both test setters clear it, or test order would leak results. The guard is one process per hook call, so it gets no cache. Everything is synchronous `spawnSync`, so re-entry and cancellation are N/A.
+
+**Contradiction (recorded in notes.md, `[plan]`):** AC-1 says every `gh` call goes through one helper that "always passes `api` as the first argument". Amendment 2 mandates a `gh auth token --hostname` probe. The newest amendment wins. The probe goes through the same `runner` seam (`defaultRunner` → the single `runCommand('gh'`), so the AC-1/AC-2 grep still finds exactly one hit. Every forge call that reaches GitHub's API is still `gh api`. `gh auth token` is a local, offline credential read, not porcelain, so AC-1's intent (no GraphQL porcelain) holds. The spec is not edited.
+
+### Step 1: Host normalisation and auth gate in the forge (AC-16)
+
+File: `src/orchestrator/forge.ts`
+
+- Add a private `function normaliseGhHost(host: string): string { const h = host.toLowerCase(); return h === 'github.com' || h.endsWith('.github.com') ? 'github.com' : h; }`. Keep it unexported, so the red-first tests don't depend on a new export.
+- Add `const ghHostKnown = new Map<string, boolean>();` and `function apiHost(): string | null`:
+  ```ts
+  const raw = originHost();
+  if (!raw) return null;
+  const host = normaliseGhHost(raw);
+  let known = ghHostKnown.get(host);
+  if (known === undefined) {
+      known = runner(['auth', 'token', '--hostname', host]).ok; // stdout (the token) is discarded, never logged or returned
+      ghHostKnown.set(host, known);
+  }
+  return known ? host : null;
+  ```
+- `ghApi` uses `apiHost()` in place of `originHost()`. The argv shape is unchanged (`['api', '--hostname', host, …]`, or no flag).
+- `setGhRunnerForTest` and `setOriginUrlReaderForTest` each call `ghHostKnown.clear()`.
+- Update the comment above `ghApi`: the host comes from `origin`, `*.github.com` is normalised to `github.com`, and the host is passed only when `gh auth token --hostname` succeeds. Otherwise gh's default host (or `GH_HOST`) applies.
+- Don't put the probe's stdout or stderr into any error, warning or `unreadable` reason. `apiHost` reads only `.ok`.
+
+### Step 2: Forge tests (AC-16, AC-17 red-first, AC-13 still holds)
+
+File: `tests/forge-rest.test.ts`
+
+Write these before Step 1 (see the red-first note below).
+
+- Add a helper in the file, `stubGh(authHosts: string[])`. It returns `{ apiCalls, authCalls }`. Its runner records each `['auth', 'token', '--hostname', h]` argv into `authCalls` and returns `result('gho_FAKE_TOKEN_SHOULD_NOT_LEAK', true)` when `h` is in `authHosts`, else `result('', false, 'not logged in')`. It records every other argv into `apiCalls` and answers with the same routing as the existing host test. Route by `argv.at(-1)` or `argv.some(a => a.includes(…))`, not by `argv.includes('/pulls?')`, which matches whole elements only (nit N4; fixing the routing here is incidental, not a scope item).
+- Rewrite the existing `forge passes the parsed origin host to every REST call` test (:104) on that helper with `authHosts` = `['github.com', 'ghe.example']`. The AC-13 cases keep their expected hosts. Assert on `apiCalls` (5 entries). Add `assert.deepEqual(authCalls, [['auth', 'token', '--hostname', expectedHost]])`: one probe for five calls, which pins the cache. The `/tmp/local/origin.git` case asserts `authCalls` is empty.
+- New test `forge gates --hostname on gh auth and normalises github.com subdomains (AC-16)`. Each row runs all five exports and asserts on every `apiCalls` argv and on `authCalls`:
+  | origin | authHosts | expected `--hostname` | expected probe host |
+  |---|---|---|---|
+  | `git@github-work:o/r.git` | `['github.com']` | none | `github-work` |
+  | `ssh://git@ssh.github.com:443/o/r.git` | `['github.com']` | `github.com` | `github.com` |
+  | `https://ghe.example/o/r.git` | `['ghe.example']` | `ghe.example` | `ghe.example` |
+  | `https://ghe.example/o/r.git` | `[]` | none | `ghe.example` |
+  | `https://api.github.com/o/r` | `['github.com']` | `github.com` | `github.com` |
+  | `https://notgithub.com/o/r` | `['notgithub.com']` | `notgithub.com` | `notgithub.com` |
+  "None" means `argv[1] !== '--hostname'` and no element equals `'--hostname'`. Also pin one complete argv: the `ssh.github.com` `readPR(7)` call is `['api', '--hostname', 'github.com', '-X', 'GET', 'repos/{owner}/{repo}/pulls/7']`.
+- Add a token-leak test (AC-16, "never written to any log, test output or error message"). Use the Enterprise origin with auth OK and make every api call fail with `result('', false, 'HTTP 502')`. Call each export and capture `console.log`/`console.warn`/`console.error` with `t.mock.method`. Assert the token string appears nowhere: not in `JSON.stringify` of `apiCalls`, not in the return values (the lookup's `unreadable` reason, `readPR` fields, the `mergePR`/`createDraftPR` results), and not in captured console output.
+- **Red-first (AC-17):** with the tests written and `src/` still at HEAD `389251c`, run `node --test --import ./tests/md-loader-register.mjs --import tsx tests/forge-rest.test.ts`. No stub is needed: every seam these tests use exists at HEAD. Expected failures: the alias row (`--hostname github-work` present), the `ssh.github.com` row (`ssh.github.com` ≠ `github.com`), the Enterprise auth-failing row, the `api.github.com` row, and the `authCalls` deepEquals (HEAD makes no probe). Record the failing subtests and reasons, then implement Step 1 and re-run green.
+
+### Step 3: Guard normalisation and auth gate (AC-16)
+
+Files: `.claude/hooks/canon-guard.mjs`, then `npm run sync-templates` for `templates/.claude/hooks/canon-guard.mjs`
+
+- Add `normaliseGhHost(host)` with the same rule as Step 1, and a comment saying it mirrors the forge module.
+- Add `ghKnowsHost(host, cwd)`: `spawnSync('gh', ['auth', 'token', '--hostname', host], { cwd, stdio: 'ignore', timeout: GH_TIMEOUT_MS })`. With `stdio: 'ignore'` the token is never captured. Return `!result.error && result.status === 0`.
+- In `lookupPRHead`:
+  - cwd fallback (:648): `const origin = lookupOriginHost(cwd); const host = origin ? normaliseGhHost(origin) : null; return readPRHead(…, cwd, host && ghKnowsHost(host, cwd) ? host : null);`
+  - `-R` branch (:646): pass `parsed.host ? normaliseGhHost(parsed.host) : null`. This is not gated, because the user named the host.
+  - URL branch (:638): pass `normaliseGhHost(host)`. It isn't gated. This also lowercases the URL host. A port stays in place (nit N3, out of scope).
+- A cwd fallback with a parseable origin now runs two gh spawns in sequence, each bounded by `GH_TIMEOUT_MS`. If the probe times out, the guard proceeds without `--hostname` and does not fail open early.
+
+### Step 4: Guard tests (AC-16, AC-17 red-first)
+
+File: `tests/canon-guard.test.ts`
+
+Write these before Step 3.
+
+- `makeGhShim`: before the `!= api` line (:115), add a branch for `auth token`. When `$1 = auth` and `$2 = token`, it reads the host from `$4`. If that host appears in the space-separated `CANON_GUARD_GH_AUTH_HOSTS`, it prints `gho_FAKE_TOKEN_SHOULD_NOT_LEAK` and exits 0; otherwise it exits 1. The existing log line (:114) already records the probe's argv, which never contains the token.
+- In the Amendment-1 block (:425–476), give `runLogged` an optional `authHosts` argument that sets `CANON_GUARD_GH_AUTH_HOSTS`. Update the existing cwd-fallback expectations:
+  - https Enterprise origin with `authHosts='ghe.example'` → lines `['auth token --hostname ghe.example', 'api -X GET --hostname ghe.example repos/{owner}/{repo}/pulls/12']`.
+  - The scp `GHE.example` origin gives the same two lines.
+  - No origin → unchanged (one line, no probe).
+- New cwd-fallback cases (AC-16), each with an exact `deepEqual` on the lines, and each denied, because the shim's `*/12` still resolves to `task/foo`:
+  - origin `git@github-work:o/r.git`, `authHosts='github.com'` → `['auth token --hostname github-work', 'api -X GET repos/{owner}/{repo}/pulls/12']`
+  - origin `ssh://git@ssh.github.com:443/o/r.git`, `authHosts='github.com'` → `['auth token --hostname github.com', 'api -X GET --hostname github.com repos/{owner}/{repo}/pulls/12']`
+  - origin `https://ghe.example/o/r.git`, `authHosts=''` → `['auth token --hostname ghe.example', 'api -X GET repos/{owner}/{repo}/pulls/12']`
+- Explicit host cases (spec-review nit), not gated, so no probe line. With `authHosts=''`:
+  - `gh -R api.github.com/o/r pr merge 12` → `['api -X GET --hostname github.com repos/o/r/pulls/12']`
+  - `gh pr merge https://api.github.com/o/r/pull/12` → the same line.
+  - `-R https://ghe.example/o/r.git` with `authHosts=''` still gives `--hostname ghe.example`, which proves explicit hosts skip the gate.
+- Token: for the gated cases, assert that `result.stdout`, `result.reason` and the log file contents don't contain `gho_FAKE_TOKEN_SHOULD_NOT_LEAK`.
+- The existing `-R` parse cases (:458–466) and the unparseable `-R` cases stay unchanged: explicit hosts aren't probed, so they still log one line.
+- **Red-first (AC-17):** run `node --test --import ./tests/md-loader-register.mjs --import tsx tests/canon-guard.test.ts` with the guard at HEAD. Expected failures: the alias case (one line with `--hostname github-work`), the `ssh.github.com` case (`--hostname ssh.github.com`, no probe), the Enterprise auth-failing case, the `api.github.com` `-R`/URL cases, and the updated Enterprise cwd cases (HEAD makes no probe line). Record them, then implement Step 3 and re-run green.
+
+### Step 5: Mirror, rebuild, validate, handoff
+
+- `npm run sync-templates`, then `npm run sync-templates:check`.
+- `npm run build`. `forge.ts` is bundled, so `dist/` changes; commit it.
+- Run in full: `npm run lint && npm run type-check && npm test && npm run sync-templates:check && npm run docs-refs-check`. Report any check that fails or can't run as exactly that. Review round 2 noted that the full `npm test` wasn't re-run last iteration (R2-N1), so run it this time.
+- `grep -rn "runCommand('gh'" src` must still return exactly `forge.ts:13`.
+- `grep -rn "gho_\|auth token" src .claude/hooks` should show only the probe call sites, with no logging of probe output.
+- Handoff: append `## Iteration 4 — Amendment Round 2` with:
+  - an AC delta table (AC-16, AC-17, and AC-13 re-confirmed with gh logged in);
+  - a Red-First Evidence table with two rows (forge and guard). Each row gives the command run on HEAD `389251c` source, the failing subtests and reasons, and the post-fix result;
+  - an Interpretations entry for the AC-1 "first argument is `api`" contradiction above, and one for the per-process forge cache;
+  - under Blockers, SG1 marked as resolved by Amendment Round 2.
+
+### Questions recorded (unattended)
+
+- AC-1's "always passes `api` as the first argument" conflicts with Amendment 2's mandated `gh auth token` probe. Plan: the newest amendment wins. The probe shares the single `runCommand('gh'` site, so the grep form of AC-1/AC-2 holds. Recorded in notes.md; the spec is not edited.
+- Should the forge cache "not logged in" results too? Plan: yes, both outcomes are cached per host per process. Re-probing on every call would add a gh spawn to each forge call for no practical gain within one run.
