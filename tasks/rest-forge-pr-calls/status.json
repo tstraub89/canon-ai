@@ -1,0 +1,77 @@
+{
+  "id": "rest-forge-pr-calls",
+  "title": "Route --pr / --ship GitHub calls through REST",
+  "status": "implement",
+  "created": "2026-11-25",
+  "updated": "2026-11-25",
+  "branch": "",
+  "base_branch": "main",
+  "canon": {
+    "upstream_repo": "tstraub89/canon-ai",
+    "upstream_commit": "d42f1474cec2d671ee6e5488cc1237fc8492e082",
+    "orchestrator_commit": "d42f1474cec2d671ee6e5488cc1237fc8492e082",
+    "canon_version": "3.23.0",
+    "codex_cli": "codex-cli 0.172.0",
+    "claude_code": "2.1.332 (Claude Code)"
+  },
+  "task_size": "M",
+  "delicate": false,
+  "human_spec_gate": false,
+  "full_send": true,
+  "worktree": true,
+  "_pr_pinning": "the PR number pinned by --pr lives in the gitignored sidecar tasks/<id>/.pr-number (not in this file); --ship reads it for forge-proof merge verification. Sidecar absence is valid (legacy/pre-PR state).",
+  "phases": {
+    "spec": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "spec_review": {
+      "status": "done",
+      "agent": "codex",
+      "verdict": "approved",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 1,
+      "changes_requested_total": 0,
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
+    },
+    "plan": {
+      "status": "done",
+      "agent": "claude"
+    },
+    "implement": {
+      "status": "pending",
+      "agent": "codex"
+    },
+    "code_review": {
+      "status": "pending",
+      "agent": "claude",
+      "verdict": "",
+      "iterations": 0,
+      "iterations_current_loop": 0,
+      "iterations_total": 0,
+      "changes_requested_total": 0,
+      "auto_block_count": 0
+    },
+    "qa": {
+      "status": "pending",
+      "agent": "claude"
+    },
+    "human_review": {
+      "status": "pending",
+      "agent": "human"
+    }
+  },
+  "escalations": [],
+  "sessions": {
+    "spec_reviewer": "01a21174-89dd-79b1-9884-db8ce0b24052"
+  },
+  "_status_values": "pending | in_progress | done | changes_requested | blocked",
+  "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
+  "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
+  "provider": "mixed",
+  "session_backends": {
+    "spec_reviewer": "codex"
+  }
+}
