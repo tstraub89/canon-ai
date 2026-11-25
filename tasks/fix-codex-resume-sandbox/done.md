@@ -4,76 +4,91 @@
 
 ## What Changed
 
-One paragraph, plain English. No code jargon.
+In mixed mode, canon resumes an earlier Codex session for revisions after a review asks for changes, pre-flight retries, handoff fix-ups, and guardrail retries. Those resumed runs were dropping the write sandbox that fresh runs get. When the operator's Codex settings had no sandbox mode and the project was not marked trusted, Codex fell back to read-only. The implementer then could not write, and the same rejection repeated until the review loop auto-blocked the task. Resumed non-interactive runs now pass the same workspace-write sandbox as fresh runs. Fresh runs, the interactive Codex session and the cold-review lens are unchanged. The README, the canon README and its template mirror, the codebase map and the decisions doc now describe the sandbox by mode, so they no longer say resumes are unsandboxed.
 
 ## Files Changed
 
-- `<path>` — brief note
-- ...
+- `src/orchestrator/agents/codex.ts` — adds the `-c sandbox_mode="workspace-write"` override to the resume argv, placed after the effort flag and before the prompt.
+- `dist/orchestrator/run-task.js` — rebuilt bundle; matches a fresh `npm run build`.
+- `tests/agent-backend.test.ts` — new direct `runCodex` test against a fake `codex` that logs argv (the regression test), plus the parity resume expectation.
+- `tests/run-task-safety-scaffold-push.test.ts` — implement fix-up resume argv expectation updated.
+- `tests/run-task-reroute-preflight.test.ts` — guardrail-retry resume argv expectation updated.
+- `README.md` — "Trust model" bullet: headless Codex runs, fresh or resumed, use the workspace-write sandbox; the interactive session and the cold-review lens remain the exceptions.
+- `.canon/README.md`, `templates/.canon/README.md` — same sandbox sentence, kept in sync with the mirror.
+- `docs/codebase-map.md` — "Codex sandbox baseline" row covers fresh and resumed exec.
+- `docs/decisions.md` — the two runner-owned baseline passages name the workspace-write sandbox rather than the fresh-only flag.
 
 ## How to Test
 
-1. ...
-2. ...
-3. Expected: ...
+1. On a machine where your Codex configuration has no sandbox setting and the project is not marked trusted, run a task until code review asks for changes.
+2. Let the pipeline send the work back to the implementer.
+3. Expected: the revision pass edits files and finishes with no "read-only" errors, and the task moves on to the next review instead of blocking.
 
 ## Test Results
 
 | Check | Result |
 |---|---|
-| Lint | Pass |
-| Type-check | Pass |
-| Unit tests | Pass |
-| E2E tests | Pass / Skipped |
-| Build | Pass |
+| Lint (`npm run lint`) | Pass |
+| Type-check (`npm run type-check`) | Pass |
+| Unit tests (`npm test`) | Pass — the operator re-ran the full suite outside the Codex sandbox under Node 24.22.3: 2250 pass, 0 fail. Inside the sandbox, three fake-binary suites fail on clean `main` too (see Follow-ups). |
+| Red-first regression (AC-2) | Pass — the new `runCodex` resume argv test failed on the pre-fix argv (the `-c` pair was missing) and passed after the fix. |
+| Build (`npm run build`) | Pass — run twice; the `dist/` diff was identical both times. |
+| Template sync (`npm run sync-templates:check`) | Pass via the direct form `node --import tsx scripts/sync-canon-templates.mjs --check`. The npm wrapper itself failed in the sandbox (`EPERM` creating the `tsx` IPC pipe) and was not run to completion. |
+| Docs refs (`npm run docs-refs-check`) | Pass — the operator re-ran it outside the sandbox with the original README wording restored. |
 
 ## Human Verification Required
 
-List any unresolved `human_pending` validation checks from handoff.md. If none remain, write "None." If the human intentionally defers a pending check, add an unbulleted line that begins exactly with `Acknowledged:` and states the rationale, such as `Acknowledged: <check> deferred until after merge because …`. Leave it out unless the human defers a check: the line itself is the waiver.
+None.
 
-- (none / `Check name` — why it requires human verification)
+Pre-merge checklist. These items cannot be confirmed yet, so they are listed for the human:
+
+- [ ] Version correct — not decided at QA; the release step sets the version.
+- [ ] Changelog updated if needed — the draft is in Proposed Changelog; the release step lands it.
+- [x] PR body current — drafted in `tasks/fix-codex-resume-sandbox/pr-body.md`.
+- [ ] Final CI/CD checks green — no PR or CI run exists yet.
+- [ ] Final diff matches spec intent — code review approved with nits; the human confirms the final diff.
 
 ## Proposed Changelog
 
-Apply the project's changelog scope (`docs/decisions.md` §"Versioning and release policy") and the "would a user notice" test. If nothing qualifies, write: no user-facing change — omit from changelog.
-
-- (proposed bullet(s), in the changelog's voice)
+- **Resumed Codex sessions keep the workspace-write sandbox.** In mixed mode, a revision, pre-flight retry, or handoff fix-up on a resumed Codex session could run read-only when your Codex config set no sandbox mode and the project was not trusted. The implementer then could not write, and the task auto-blocked at the review-loop cap. Resumed headless runs now use the same workspace-write sandbox as fresh runs.
 
 ## Judgment Calls to Confirm
 
-List every row in the spec's *Judgment Calls* section whose Decided by value is `Author`: the call, the chosen option, and the strongest alternative. These are calls the human did not explicitly make. If there are no `Author` rows, or the spec has no such section, write "None."
-
-- (call — chosen option; alternative: …)
+- Override value form — quoted TOML string `sandbox_mode="workspace-write"`; alternative: unquoted `sandbox_mode=workspace-write`, matching the `model_reasoning_effort` style and relying on Codex's raw-string fallback.
+- Fresh-path flag — keep `--sandbox workspace-write` on fresh runs; alternative: switch fresh runs to the same `-c` override for symmetry.
+- Resume working directory — no change; rely on the spawn cwd and the session's stored root; alternative: add an explicit cwd override on resume (`codex exec resume` has no `-C`).
 
 ## Decisions Made
 
-Any choices that were made during implementation that you should be aware of.
+- Restored the README wording the implementer had changed to clear a sandbox-only `docs-refs-check` failure. The operator reverted that edit as out of scope; the README change is limited to the Trust model bullet.
+- The sync check ran through `node --import tsx scripts/sync-canon-templates.mjs --check` because the npm wrapper hit `EPERM` in the sandbox. The result is the same checker's output.
+- The resume regression is a direct `runCodex` test against a fake `codex` that logs argv, placed in `tests/agent-backend.test.ts`. It asserts the full array, so no duplicate test was added.
 
 ## Open Questions
 
-Decisions that still need your input. Work recommended for later goes in the next section, not here.
+- Operators whose `~/.codex/config.toml` sets a stricter `sandbox_mode` (for example `read-only`) will now get `workspace-write` on resumed runs, as they already did on fresh runs. The spec's Known Risks accepts this, because canon's runner flags already take precedence for canon's invocations. Confirm you accept this behavior change, or ask for a different approach.
 
 ## Follow-ups
 
-Work that should happen after this task ships. One row per item, or write `None.` alone in place of the table. Write a literal pipe inside a cell as `\|`.
-
-- Category: `correctness`, `risk`, `spec-gap`, `nit`, `scope`, or `observation`.
-- Tracked: `untracked` (not yet decided), `dropped` (decided not to do), `post-ship` (written on base after the merge as a backlog entry or doc fix), or a reference: a link, an issue reference such as `#42`, or another canon task as `task:<id>`. A bare task id is not a reference.
-
 | Category | Follow-up | Tracked |
 |---|---|---|
-| (category) | (what remains and why it matters) | untracked |
+| nit | The implementer's Changes table in `tasks/fix-codex-resume-sandbox/handoff.md` still lists the README stale-reference cleanup that the operator reverted. The Deviations row is the accurate record. | untracked |
+| nit | The "All deviations from plan documented" box in `tasks/fix-codex-resume-sandbox/handoff.md` Ready for Review is unchecked, though the Deviations table is filled in. | untracked |
+| nit | `tests/agent-backend.test.ts:31-60` mutates `process.env.PATH` in-process. It is restored in a `finally` block and is safe under the serial Node test runner. Low confidence; leave or tidy. | untracked |
+| observation | The three fake-binary suites (`tests/agent-backend.test.ts`, `tests/agent-prompt-argv.test.ts`, `tests/blast-radius.test.ts`) fail inside the Codex sandbox on clean `main`, because the fake binaries return empty output. Make them sandbox-safe or document that they need an unsandboxed run. | untracked |
+| observation | `npm run sync-templates:check` fails inside the Codex sandbox with `EPERM` while creating the `tsx` IPC pipe under `/tmp`. The direct `node --import tsx` form works. | untracked |
+| observation | The interactive Codex path ignores `resumeId`. This is a pre-existing quirk, excluded from this task as a Non-Goal in `tasks/fix-codex-resume-sandbox/spec.md`. | untracked |
 
 ## Quality Log
 
-QA fills these five cells; the pipeline's QA prompt defines each one.
-
-- Spec verdict:
-- Human reroute?:
-- Dropped ACs:
-- Validation gaps:
-- Notes:
+- Spec verdict: approved
+- Human reroute?: No
+- Dropped ACs: 0
+- Validation gaps: 1
+- Notes: The npm wrapper for sync-templates:check never ran to completion in the Codex sandbox; the direct checker form passed, and the three fake-binary suites needed an unsandboxed operator run.
 
 ## Root Cause
 
-One line per blocking review finding, reroute, or dropped AC: `- <class>: <one-line cause>`, where class is `context-missing`, `context-conflicting`, `spec-gap`, `plan-error`, `execution`, or `unrequested-change`. If there were none, write "None."
+None.
+
+Maintenance: lessons-learned.md plus this task’s fragment have 17 entries; a human lessons sweep is due (see docs/lessons-learned.md → "How to use this doc").
