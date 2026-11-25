@@ -1,134 +1,77 @@
 # Code Review: metrics-header-mode-dirt
 
-> Reviewer: Claude | Spec: `tasks/metrics-header-mode-dirt/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
+> Reviewer: Claude (foreman synthesis) | Spec: `tasks/metrics-header-mode-dirt/spec.md`
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
-
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+Inputs: anchored Claude lens, cold-Claude lens, cold-Codex (no actionable findings).
 
 ## Stage 1 — Spec Compliance (gate)
 
 ### Validation Gate
 
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-- [ ] Self-Check evidence in the effective record is not contradicted by the diff
+- [x] Validation Outcomes table has no `Fail` results
+- [x] All checks required by the spec's "Validation Required" section were run (per handoff; not re-run by the lenses)
+- [x] No required checks were skipped without justification
+- [x] Red-first evidence recorded for AC-1 and AC-4 against baseline commit
+- [x] Self-Check evidence is not contradicted by the diff
 
 ### Acceptance Criteria Check
 
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Pass | Legacy header widened to the full skeleton block, old row byte-identical, new row 10 cells (`tests/metrics.test.ts`). |
+| AC-2 | Pass | Current-header and no-table fragments are left untouched. |
+| AC-3 | Pass | Classifier covers changed and unknown modes for telemetry and managed docs. Default `'unchanged'` keeps existing calls stable. |
+| AC-4 | Pass | Real-git chmod-only test asserts non-zero exit, the abort text, the file name with the mode reason, and unchanged mode and content. |
+| AC-5 | Pass | Both `docs/pipeline-orchestrator.md` and its `templates/` mirror are updated. |
+| AC-6 | Pass | `dist/` rebuilt; the handoff reports the full suite passing. |
 
 ### Dropped Sections Check
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+- [x] Non-goals respected
+- [x] Known Risks addressed (no-table fragment, `core.fileMode`)
+- [x] Human Test Plan is satisfiable
 
 ### Stage 1 Verdict
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
+- [x] **Pass**
+- [ ] **Fail**
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
+## Stage 2 — Code Quality
 
 ### Summary
 
-One paragraph: overall code quality of the implementation.
+The implementation is small and matches the spec. The mode probe fails closed on probe errors and on malformed or odd-count output. The `mergeHeaderOnly` relocation keeps the `upgrade.ts` re-export, so no CLI behavior changes. The only real issue is leftover comments from the move.
 
 ### Findings
 
 #### Correctness Bugs
 
-> Items that will cause incorrect behavior if shipped.
+(none)
 
-(none / list items)
+#### Nits (optional)
 
-#### Risk / Guardrails
+1. **Orphaned comments after the helper move** (`src/cli/commands/upgrade.ts:70-92`, nit, flagged by 2 lenses: anchored and cold-Claude). The `TABLE_SEPARATOR_RE` comment now ends mid-sentence ("The lookahead"). The `mergeHeaderOnly` JSDoc now sits above `printDocsRefsCutoverWarning`, so it misdocuments that function. Verified in the diff. Source comments are stripped by `tsup`, so there is no adopter-visible effect. Fix: delete or move those comments.
+2. **Header block chosen by first separator, not the `| Timestamp |` line** (`src/orchestrator/metrics.ts:41-50`, nit, flagged by 2 lenses). A hand-edited fragment with an earlier table-like line could have the wrong block replaced. This follows the spec's own implementation note, which reuses `mergeHeaderOnly`. The risk is low, because fragments are machine-written.
+3. **Mixed line endings on CRLF fragments** (`src/orchestrator/metrics.ts:44-49`, nit, anchored lens). The widened header is LF while the rows stay CRLF. The spec requires rows to stay unchanged, and the effect is display-only.
 
-> Items that could cause problems under certain conditions or violate repo conventions.
+#### Test Coverage Notes
 
-(none / list items)
+- The real-git AC-4 test covers only a telemetry doc with a mode-only change. Mode-plus-append and managed docs are covered only by pure classifier tests, and `unknown` only at the classifier level. This meets the AC as written.
 
-#### Optional Cleanup / Nit
+## Dismissed Cold Findings
 
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
-
-#### Spec Gaps
-
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
-
-### Dismissed Cold Findings
-
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): non-atomic read-then-write in `recordMetric` could lose rows under concurrent writers or a mid-write crash. Fragments are per-task and single-writer. The widening runs only once per legacy file, and `recordMetric` is wrapped in try/catch. The shared-file override is a test hook. Low confidence and not grounded in a real flow.
+- Dismissed (cold-Claude): the `split('|')` column count miscounts a header with an escaped `\|`. The skeleton header has no such cell, so this cannot occur.
+- Dismissed (cold-Claude): a legacy header with the same column count but different names is never migrated. This is outside the spec, which migrates only narrower headers.
+- Dismissed (cold-Claude): a failed probe surfaces only the generic "could not be checked" reason. This is specified (AC-3) and fail-closed.
+- Dismissed (cold-Claude, test-integrity): NUL-parsing is untested for malformed output. This is covered at the classifier level and is fail-closed. It is a coverage note, not a bug.
+- Dismissed (cold-Codex): no findings returned, so there is nothing to dismiss.
 
 ## Final Verdict
 
-- [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
-- [ ] Approved
-- [ ] Approved with nits
-- [ ] Changes requested
-- [ ] Spec gap
-
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
+- [ ] **Approved**
+- [x] **Approved with nits**
+- [ ] **Changes requested**
+- [ ] **Spec gap**

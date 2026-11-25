@@ -1,0 +1,1 @@
+The changes safely reject shared-document mode changes during shipping and widen legacy metrics headers while preserving existing rows. No actionable regressions were found.

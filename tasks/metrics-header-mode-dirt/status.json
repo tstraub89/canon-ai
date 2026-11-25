@@ -1,10 +1,10 @@
 {
   "id": "metrics-header-mode-dirt",
   "title": "Widen stale metrics headers; abort ship on mode-only doc changes",
-  "status": "implement",
+  "status": "human_review",
   "created": "2026-11-25",
   "updated": "2026-11-25",
-  "branch": "",
+  "branch": "task/metrics-header-mode-dirt",
   "base_branch": "main",
   "canon": {
     "upstream_repo": "tstraub89/canon-ai",
@@ -41,21 +41,22 @@
       "agent": "claude"
     },
     "implement": {
-      "status": "pending",
+      "status": "done",
       "agent": "codex"
     },
     "code_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude",
-      "verdict": "",
+      "verdict": "approved_with_nits",
       "iterations": 0,
       "iterations_current_loop": 0,
-      "iterations_total": 0,
+      "iterations_total": 1,
       "changes_requested_total": 0,
-      "auto_block_count": 0
+      "auto_block_count": 0,
+      "preflight_rejections_current_loop": 0
     },
     "qa": {
-      "status": "pending",
+      "status": "done",
       "agent": "claude"
     },
     "human_review": {
@@ -64,9 +65,16 @@
     }
   },
   "escalations": [],
-  "sessions": {},
+  "sessions": {
+    "implementer": "01a213a6-742e-7ca1-8430-dfb2f4d5f25a",
+    "reviewer": "29aadfd9-03e7-4567-9cb9-8fb7b7ce8725"
+  },
   "_status_values": "pending | in_progress | done | changes_requested | blocked",
   "_verdict_values": "approved | approved_with_nits | changes_requested | needs_re_review (legacy alias, routed/counted as changes_requested) | spec_gap | sanctioned (operator-only via canon task accept)",
   "_full_send": "true → skip spec gate + auto-open draft PR after clean QA. See docs/pipeline-orchestrator.md (`--full-send`).",
-  "provider": "mixed"
+  "provider": "mixed",
+  "session_backends": {
+    "implementer": "codex",
+    "reviewer": "claude"
+  }
 }
