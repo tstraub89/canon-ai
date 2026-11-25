@@ -84,13 +84,13 @@ None.
 
 | Category | Follow-up | Tracked |
 |---|---|---|
-| nit | `envModel` sits above the path constants in `src/orchestrator/env.ts`. Move it below them to match the file's layout. | untracked |
-| nit | In `tests/pipeline-policy.test.ts`, the test `blank legacy model overrides resolve like unset variables` overlaps the new precedence test. Keep or merge them. The red-first command targets it by name. | untracked |
-| nit | In `tests/pipeline-policy.test.ts`, the legacy-warning test hard-codes a count of five messages. It breaks if the legacy list changes. | untracked |
-| nit | The handoff's AC-6 Claude red-first evidence cites the pre-fix working tree, not a commit. The reviewer accepted it. | untracked |
-| observation | `CLAUDE_BUDGET=''` still passes through as an empty string. It needs its own number parsing (spec Non-Goal). | untracked |
-| observation | The `CODEX_EFFORT_*` legacy warnings still use a truthy check, so a whitespace-only value still prints a warning. | untracked |
-| observation | Trim the model strings in `.canon/config.json` so env and config agree on surrounding spaces (spec Non-Goal). | untracked |
+| nit | `envModel` sits above the path constants in `src/orchestrator/env.ts`. Move it below them to match the file's layout. | #185 |
+| nit | In `tests/pipeline-policy.test.ts`, the test `blank legacy model overrides resolve like unset variables` overlaps the new precedence test. Keep or merge them. The red-first command targets it by name. | #185 |
+| nit | In `tests/pipeline-policy.test.ts`, the legacy-warning test hard-codes a count of five messages. It breaks if the legacy list changes. | #185 |
+| nit | The handoff's AC-6 Claude red-first evidence cites the pre-fix working tree, not a commit. The reviewer accepted it. | dropped |
+| observation | `CLAUDE_BUDGET=''` still passes through as an empty string. It needs its own number parsing (spec Non-Goal). | #185 |
+| observation | The `CODEX_EFFORT_*` legacy warnings still use a truthy check, so a whitespace-only value still prints a warning. | #185 |
+| observation | Trim the model strings in `.canon/config.json` so env and config agree on surrounding spaces (spec Non-Goal). | #185 |
 | observation | The remaining #185 items: doctor wording, the unknown-key hint, duplicated defaults and the deprecation text. | #185 |
 
 ## Quality Log
