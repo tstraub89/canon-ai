@@ -80,6 +80,7 @@ Pre-merge checklist. These items cannot be confirmed yet, so they are listed for
 | nit | `tests/agent-backend.test.ts:31-60` mutates `process.env.PATH` in-process. It is restored in a `finally` block and is safe under the serial Node test runner. Low confidence; leave or tidy. | dropped |
 | observation | The three fake-binary suites (`tests/agent-backend.test.ts`, `tests/agent-prompt-argv.test.ts`, `tests/blast-radius.test.ts`) fail inside the Codex sandbox on clean `main`, because the fake binaries return empty output. Make them sandbox-safe or document that they need an unsandboxed run. | #196 |
 | observation | `npm run sync-templates:check` fails inside the Codex sandbox with `EPERM` while creating the `tsx` IPC pipe under `/tmp`. The direct `node --import tsx` form works. | #196 |
+| observation | CodeRabbit on PR #195: `.canon/README.md` (and mirror) says headless Codex runs use workspace-write without naming the cold-review lens, which sets no sandbox, as an exception (the root README names it). Pre-existing: the old "fresh headless" wording also covered cold review. #196 rewrites the same sentence. | #196 |
 | observation | The interactive Codex path ignores `resumeId`. This is a pre-existing quirk, excluded from this task as a Non-Goal in `tasks/fix-codex-resume-sandbox/spec.md`. | dropped |
 
 ## Quality Log
