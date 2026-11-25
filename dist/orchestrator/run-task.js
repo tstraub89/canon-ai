@@ -478,7 +478,8 @@ var RUN_USAGE = [
   "  --force             Acknowledge high-commitment combinations and bypass",
   "                      explicit safety gates where documented (currently:",
   "                      --full-send on delicate tasks, reroute amendment gate,",
-  "                      base-drift gate, dirty REPO_ROOT worktree-start gate,",
+  "                      base-drift gate, docs-refs check at --pr/--push,",
+  "                      dirty REPO_ROOT worktree-start gate,",
   "                      and spec manifest pre-flight before plan/implement).",
   "  --allow-divergent-base",
   "                      At --push, --pr, and --ship: bypass only the commit-divergence",
@@ -2479,9 +2480,9 @@ function resolveDocsFreshness(config3, diff) {
 // src/orchestrator/main.ts
 import { spawnSync as spawnSync8 } from "child_process";
 import { createHash } from "crypto";
-import fs27 from "fs";
-import os from "os";
-import path25 from "path";
+import fs28 from "fs";
+import os2 from "os";
+import path26 from "path";
 
 // src/orchestrator/policy.ts
 var config2 = {
@@ -3140,8 +3141,8 @@ ${renderedPrompt}`;
         text: ""
       };
     }
-    const sandboxFlags = resumeId ? [] : ["--sandbox", "workspace-write"];
-    const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
+    const sandboxFlags = ["--sandbox", "workspace-write"];
+    const args = resumeId ? ["exec", "resume", resumeId, "--json", ...effortFlag, "-c", 'sandbox_mode="workspace-write"', effectivePrompt, "-m", model] : ["exec", "--json", ...effortFlag, ...sandboxFlags, effectivePrompt, "-m", model, "-C", cwd];
     const displayChunks = [];
     let tokenTotal = 0;
     let sawUsage = false;
@@ -6431,11 +6432,11 @@ function rescaffoldReview(taskDir, identity) {
 
 // node_modules/mustache/mustache.mjs
 var objectToString = Object.prototype.toString;
-var isArray = Array.isArray || function isArrayPolyfill(object) {
-  return objectToString.call(object) === "[object Array]";
+var isArray = Array.isArray || function isArrayPolyfill(object2) {
+  return objectToString.call(object2) === "[object Array]";
 };
-function isFunction(object) {
-  return typeof object === "function";
+function isFunction(object2) {
+  return typeof object2 === "function";
 }
 function typeStr(obj) {
   return isArray(obj) ? "array" : typeof obj;
@@ -7456,7 +7457,7 @@ function isInstalledSourcePath(sourcePath) {
   return sourcePath.includes("/node_modules/") || sourcePath.includes("\\node_modules\\") || sourcePath.includes("/_npx/") || sourcePath.includes("\\_npx\\");
 }
 function resolveCanonVersion(explicit) {
-  return explicit ?? "3.22.0" ?? "dev";
+  return explicit ?? "3.23.1" ?? "dev";
 }
 function resolveOrchestratorCommit(repoRoot, upstreamCommit, runGitAt) {
   const ownToplevel = captureGitOutput(repoRoot, ["rev-parse", "--show-toplevel"], runGitAt);
@@ -8793,10 +8794,161 @@ ${promptSpecReview(state)}` : promptSpecReview(state);
   return { agent: result.backend, sessionId: result.sessionId, exitCode: result.exitCode };
 }
 
+// src/orchestrator/forge.ts
+import fs25 from "fs";
+import os from "os";
+import path23 from "path";
+var defaultRunner = (argv) => runCommand("gh", argv);
+var defaultGitLogRunner = (...args) => gitSafe(...args);
+var defaultOriginUrlReader = () => gitSafe("remote", "get-url", "origin");
+var runner = defaultRunner;
+var gitLogRunner = defaultGitLogRunner;
+var originUrlReader = defaultOriginUrlReader;
+var ghHostKnown = /* @__PURE__ */ new Map();
+function parseRemoteHost(url) {
+  const value = url.trim();
+  if (!value) return null;
+  const scheme = value.match(/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:?#]+)(?::\d*)?(?:[/?#]|$)/i);
+  if (scheme?.[1]) return scheme[1].toLowerCase();
+  if (value.includes("://")) return null;
+  const scp = value.match(/^(?:[^@/:]+@)?([^/:]+):(?!\/)/);
+  return scp?.[1] ? scp[1].toLowerCase() : null;
+}
+function originHost() {
+  const result = originUrlReader();
+  return result.ok ? parseRemoteHost(result.stdout) : null;
+}
+function normaliseGhHost(host) {
+  const value = host.toLowerCase();
+  return value === "github.com" || value.endsWith(".github.com") ? "github.com" : value;
+}
+function apiHost() {
+  const raw = originHost();
+  if (!raw) return null;
+  const host = normaliseGhHost(raw);
+  let known = ghHostKnown.get(host);
+  if (known === void 0) {
+    known = runner(["auth", "token", "--hostname", host]).ok;
+    ghHostKnown.set(host, known);
+  }
+  return known ? host : null;
+}
+function ghApi(argv) {
+  const host = apiHost();
+  return runner(["api", ...host ? ["--hostname", host] : [], ...argv]);
+}
+var REPO = "repos/{owner}/{repo}";
+var MERGE_ALLOWED_FIELD = { squash: "allow_squash_merge", rebase: "allow_rebase_merge", merge: "allow_merge_commit" };
+function isMergedAt(value) {
+  return typeof value === "string" && value.length > 0;
+}
+function object(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : null;
+}
+function fieldString(value) {
+  return typeof value === "string" && value ? value : null;
+}
+function encodeQuery(value) {
+  return encodeURIComponent(value).replace(/%2F/gi, "/");
+}
+function parseAllowedMergeMethods(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return { ok: false };
+  }
+  const record = object(parsed);
+  if (!record) return { ok: false };
+  const allowed = {};
+  for (const method of Object.keys(MERGE_ALLOWED_FIELD)) {
+    const value = record[MERGE_ALLOWED_FIELD[method]];
+    if (typeof value !== "boolean") return { ok: false };
+    allowed[method] = value;
+  }
+  return { ok: true, allowed };
+}
+function lookupPRByBranch(branch, baseBranch, state) {
+  const query = `state=${state === "open" ? "open" : "closed"}&head={owner}%3A${encodeQuery(branch)}` + (baseBranch === null ? "" : `&base=${encodeQuery(baseBranch)}`) + "&per_page=100";
+  const result = ghApi(["-X", "GET", "--paginate", "--jq", ".[]", `${REPO}/pulls?${query}`]);
+  const prefix = "GitHub REST pull-request listing";
+  if (!result.ok) return { kind: "unreadable", reason: result.stderr.trim() || `${prefix} (gh api) exited unsuccessfully` };
+  const output = result.stdout.trim();
+  if (!output) return { kind: "none" };
+  const entries = [];
+  for (const line of output.split(/\r?\n/)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return { kind: "unreadable", reason: `${prefix} returned malformed JSON` };
+    }
+    if (!object(parsed)) return { kind: "unreadable", reason: `${prefix} did not return a JSON object per result` };
+    entries.push(parsed);
+  }
+  for (const raw of entries) {
+    const entry = object(raw);
+    const head = object(entry?.head);
+    const base = object(entry?.base);
+    if (!entry || head?.ref !== branch || typeof entry.number !== "number") continue;
+    if (baseBranch !== null && base?.ref !== baseBranch) continue;
+    if (state === "open" ? entry.state !== "open" : state === "merged" ? !isMergedAt(entry.merged_at) : entry.state !== "closed" || isMergedAt(entry.merged_at)) continue;
+    return { kind: "found", number: entry.number };
+  }
+  return { kind: "none" };
+}
+function readPR(prNum) {
+  const result = ghApi(["-X", "GET", `${REPO}/pulls/${prNum}`]);
+  if (!result.ok) return { ok: false };
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    return { ok: false };
+  }
+  const record = object(parsed);
+  if (!record) return { ok: false };
+  const state = record.state === "open" ? "OPEN" : record.state === "closed" ? isMergedAt(record.merged_at) ? "MERGED" : "CLOSED" : null;
+  return { ok: true, pr: { state, headSha: fieldString(object(record.head)?.sha), baseRef: fieldString(object(record.base)?.ref), url: fieldString(record.html_url) } };
+}
+function isPRMerged(prNum) {
+  const result = readPR(prNum);
+  return result.ok && result.pr.state === "MERGED";
+}
+function mergePR(prNum, method) {
+  return ghApi(["-X", "PUT", `${REPO}/pulls/${prNum}/merge`, "-f", `merge_method=${method}`]);
+}
+function readAllowedMergeMethods() {
+  const result = ghApi(["-X", "GET", REPO]);
+  return result.ok ? parseAllowedMergeMethods(result.stdout) : { ok: false };
+}
+function createDraftPR(options) {
+  const dir = fs25.mkdtempSync(path23.join(os.tmpdir(), "canon-pr-"));
+  const payloadPath = path23.join(dir, "payload.json");
+  try {
+    fs25.writeFileSync(payloadPath, JSON.stringify({ ...options, draft: true }), "utf8");
+    const result = ghApi(["-X", "POST", `${REPO}/pulls`, "--input", payloadPath]);
+    if (!result.ok) return { ok: false, stderr: result.stderr };
+    try {
+      const record = object(JSON.parse(result.stdout));
+      return { ok: true, number: typeof record?.number === "number" ? record.number : null, url: fieldString(record?.html_url) };
+    } catch {
+      return { ok: true, number: null, url: null };
+    }
+  } finally {
+    fs25.rmSync(dir, { recursive: true, force: true });
+  }
+}
+function commitSubjectsBody(branch, baseBranch) {
+  const result = gitLogRunner("log", "--reverse", "--format=%s", `origin/${baseBranch}..${branch}`);
+  if (!result.ok) return { ok: false, reason: result.stderr || "git log failed" };
+  return { ok: true, body: result.stdout.split("\n").map((line) => line.trim()).filter(Boolean).map((subject) => `- ${subject}`).join("\n") };
+}
+
 // src/orchestrator/detach.ts
 import { spawn as spawn3 } from "child_process";
-import fs25 from "fs";
-import path23 from "path";
+import fs26 from "fs";
+import path24 from "path";
 var DETACH_CHILD_FLAG = "CANON_DETACHED";
 var DETACH_DISABLE_FLAG = "CANON_NO_DETACH";
 var PID_FILENAME = ".canon-pid";
@@ -8832,16 +8984,16 @@ function detachAndExit(options) {
   }
   const primaryDir = options.resolveTaskDir(options.taskIds[0]);
   try {
-    fs25.mkdirSync(primaryDir, { recursive: true });
+    fs26.mkdirSync(primaryDir, { recursive: true });
   } catch (error) {
     stderrWrite(`canon: cannot create task dir for log file: ${error.message}
 `);
     return exit(1);
   }
-  const logPath = path23.join(primaryDir, LOG_FILENAME);
+  const logPath = path24.join(primaryDir, LOG_FILENAME);
   let logFd;
   try {
-    logFd = fs25.openSync(logPath, "a");
+    logFd = fs26.openSync(logPath, "a");
   } catch (error) {
     stderrWrite(`canon: cannot open ${logPath}: ${error.message}
 `);
@@ -8854,7 +9006,7 @@ function detachAndExit(options) {
     env: { ...process.env, [DETACH_CHILD_FLAG]: "1" }
   });
   try {
-    fs25.closeSync(logFd);
+    fs26.closeSync(logFd);
   } catch {
   }
   if (child.pid == null) {
@@ -8865,8 +9017,8 @@ function detachAndExit(options) {
   for (const taskId of options.taskIds) {
     try {
       const dir = options.resolveTaskDir(taskId);
-      fs25.mkdirSync(dir, { recursive: true });
-      fs25.writeFileSync(path23.join(dir, PID_FILENAME), `${child.pid}
+      fs26.mkdirSync(dir, { recursive: true });
+      fs26.writeFileSync(path24.join(dir, PID_FILENAME), `${child.pid}
 `, "utf8");
     } catch (error) {
       pidWriteFailures.push({
@@ -8920,9 +9072,9 @@ ${rule}
   return exit(0);
 }
 function readCanonPid(taskDir) {
-  const file = path23.join(taskDir, PID_FILENAME);
+  const file = path24.join(taskDir, PID_FILENAME);
   try {
-    const raw = fs25.readFileSync(file, "utf8").trim();
+    const raw = fs26.readFileSync(file, "utf8").trim();
     const pid = Number.parseInt(raw, 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
@@ -8931,14 +9083,14 @@ function readCanonPid(taskDir) {
 }
 function removeCanonPid(taskDir) {
   try {
-    fs25.unlinkSync(path23.join(taskDir, PID_FILENAME));
+    fs26.unlinkSync(path24.join(taskDir, PID_FILENAME));
   } catch {
   }
 }
 
 // src/orchestrator/telemetry-fold.ts
-import fs26 from "fs";
-import path24 from "path";
+import fs27 from "fs";
+import path25 from "path";
 import { randomUUID } from "crypto";
 var LESSONS_SKELETON = "# Lessons Learned\n\n> Distilled cross-task insights. Task lessons fragments are folded here by `canon run --ship`.\n";
 var METRICS_HEADER = /^\|\s*Timestamp\s*\|/;
@@ -8973,7 +9125,7 @@ function sharedTelemetryDocsTouched(paths) {
 }
 function readOptional(file) {
   try {
-    return fs26.readFileSync(file, "utf8");
+    return fs27.readFileSync(file, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -8982,15 +9134,15 @@ function readOptional(file) {
 function planTelemetryFold(repoRoot, taskIds, taskDirFor3) {
   const kinds = [
     { name: "metrics.md", target: getSharedMetricsFile(repoRoot), fold: foldMetricsFragment },
-    { name: "quality-log.md", target: path24.join(repoRoot, "docs/task-quality-log.md"), fold: foldQualityLogFragment },
-    { name: "lessons.md", target: path24.join(repoRoot, "docs/lessons-learned.md"), fold: foldLessonsFragment }
+    { name: "quality-log.md", target: path25.join(repoRoot, "docs/task-quality-log.md"), fold: foldQualityLogFragment },
+    { name: "lessons.md", target: path25.join(repoRoot, "docs/lessons-learned.md"), fold: foldLessonsFragment }
   ];
   const before = new Map(kinds.map((kind) => [kind.target, readOptional(kind.target)]));
   const contents = new Map(before);
   const fragments = [];
   for (const taskId of taskIds) {
     for (const kind of kinds) {
-      const fragmentPath = path24.join(taskDirFor3(taskId), kind.name);
+      const fragmentPath = path25.join(taskDirFor3(taskId), kind.name);
       const content = readOptional(fragmentPath);
       if (content === null) continue;
       fragments.push({ path: fragmentPath, content });
@@ -9013,22 +9165,22 @@ function applyTelemetryFold(plan) {
   const deleted = [];
   try {
     for (const write of plan.writes) {
-      fs26.mkdirSync(path24.dirname(write.target), { recursive: true });
+      fs27.mkdirSync(path25.dirname(write.target), { recursive: true });
       const temp = `${write.target}.${randomUUID()}.canon-fold.tmp`;
-      const fd = fs26.openSync(temp, "wx");
+      const fd = fs27.openSync(temp, "wx");
       temps.push(temp);
       try {
-        fs26.writeFileSync(fd, write.after, "utf8");
+        fs27.writeFileSync(fd, write.after, "utf8");
       } finally {
-        fs26.closeSync(fd);
+        fs27.closeSync(fd);
       }
     }
     for (let index = 0; index < plan.writes.length; index += 1) {
-      fs26.renameSync(temps[index], plan.writes[index].target);
+      fs27.renameSync(temps[index], plan.writes[index].target);
       written.push(plan.writes[index]);
     }
     for (const fragment of plan.fragments) {
-      fs26.unlinkSync(fragment.path);
+      fs27.unlinkSync(fragment.path);
       deleted.push(fragment);
     }
   } catch (error) {
@@ -9042,17 +9194,17 @@ function applyTelemetryFold(plan) {
     };
     for (const write of written.reverse()) {
       restore(() => {
-        if (write.before === null) fs26.unlinkSync(write.target);
-        else fs26.writeFileSync(write.target, write.before, "utf8");
+        if (write.before === null) fs27.unlinkSync(write.target);
+        else fs27.writeFileSync(write.target, write.before, "utf8");
       });
     }
-    for (const fragment of deleted) restore(() => fs26.writeFileSync(fragment.path, fragment.content, "utf8"));
+    for (const fragment of deleted) restore(() => fs27.writeFileSync(fragment.path, fragment.content, "utf8"));
     if (rollbackErrors.length) throw new Error(`${String(error)}; rollback failed: ${rollbackErrors.join("; ")}`);
     throw error;
   } finally {
     for (const temp of temps) {
       try {
-        fs26.unlinkSync(temp);
+        fs27.unlinkSync(temp);
       } catch {
       }
     }
@@ -9061,7 +9213,7 @@ function applyTelemetryFold(plan) {
 function foldTelemetryFragments(repoRoot, taskIds, taskDirFor3) {
   const plan = planTelemetryFold(repoRoot, taskIds, taskDirFor3);
   applyTelemetryFold(plan);
-  return plan.writes.map((write) => path24.relative(repoRoot, write.target));
+  return plan.writes.map((write) => path25.relative(repoRoot, write.target));
 }
 function formatPostFoldFailureHint(foldedDocs, state, baseBranch) {
   const location = state === "uncommitted" ? "as uncommitted (possibly staged) edits in the working tree. Do not reset or check out those docs." : `in the local chore: archive commit on ${baseBranch}, which was not pushed. Do not reset the local ${baseBranch} branch.`;
@@ -9095,29 +9247,6 @@ function classifyMergeOutcome(opts) {
   if (opts.exitOk) return "tolerate";
   if (opts.mergeConfirmed) return "tolerate";
   return "fail";
-}
-var MERGE_FLAG = { squash: "--squash", rebase: "--rebase", merge: "--merge" };
-var MERGE_ALLOWED_FIELD = {
-  squash: "squashMergeAllowed",
-  rebase: "rebaseMergeAllowed",
-  merge: "mergeCommitAllowed"
-};
-function parseAllowedMergeMethods(stdout) {
-  let parsed;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    return { ok: false };
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return { ok: false };
-  const record = parsed;
-  const allowed = {};
-  for (const method of Object.keys(MERGE_ALLOWED_FIELD)) {
-    const value = record[MERGE_ALLOWED_FIELD[method]];
-    if (typeof value !== "boolean") return { ok: false };
-    allowed[method] = value;
-  }
-  return { ok: true, allowed };
 }
 function formatMergeFailureMessage(options) {
   const command = `canon run ${options.taskIds.map(shellQuoteArg).join(" ")} --ship`;
@@ -9247,21 +9376,21 @@ function backupIndexFile(cwd) {
   const source = indexPath.stdout.trim();
   const backup = `${source}.canon-autocommit-backup`;
   try {
-    fs27.copyFileSync(source, backup);
+    fs28.copyFileSync(source, backup);
   } catch {
     return null;
   }
   return {
     restore() {
       try {
-        fs27.renameSync(backup, source);
+        fs28.renameSync(backup, source);
         return true;
       } catch {
         return false;
       }
     },
     discard() {
-      fs27.rmSync(backup, { force: true });
+      fs28.rmSync(backup, { force: true });
     }
   };
 }
@@ -9373,13 +9502,13 @@ function snapshotOutsideArtifacts(cwd, taskIds) {
   snap.set("[git HEAD]", head.stdout.trim());
   try {
     for (const [filePath, xy] of statusByPath) {
-      const absolute = path25.join(cwd, filePath);
+      const absolute = path26.join(cwd, filePath);
       let fingerprint;
       try {
-        const stat = fs27.lstatSync(absolute);
-        if (stat.isSymbolicLink()) fingerprint = `symlink:${fs27.readlinkSync(absolute)}`;
+        const stat = fs28.lstatSync(absolute);
+        if (stat.isSymbolicLink()) fingerprint = `symlink:${fs28.readlinkSync(absolute)}`;
         else if (stat.isDirectory()) fingerprint = "dir";
-        else if (stat.isFile()) fingerprint = createHash("sha256").update(fs27.readFileSync(absolute)).digest("hex");
+        else if (stat.isFile()) fingerprint = createHash("sha256").update(fs28.readFileSync(absolute)).digest("hex");
         else fingerprint = `other:${stat.mode}`;
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
@@ -9410,7 +9539,7 @@ function fixupTaskContexts(taskIds) {
 }
 async function fixUpOwnArtifactRefs(opts) {
   const artifacts = opts.taskIds.flatMap((taskId) => opts.artifactNames.map((name) => `tasks/${taskId}/${name}`));
-  const checkerPath = path25.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
+  const checkerPath = path26.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
   const consequence = opts.phase === "implement" ? "Committing as before; the --pr docs-refs gate will stop on these findings, and a pre-commit hook may also reject the commit." : "Fix them before --pr; its docs-refs gate will stop on them.";
   const runCheck = () => runDocsRefsCheck(opts.cwd, checkerPath);
   const filter = (result) => result.kind === "findings" ? filterArtifactFindings(result.findings, artifacts) : [];
@@ -9510,7 +9639,7 @@ async function fixUpReviewArtifactRefs(taskIds, cwd, sessionId) {
     for (const taskId of taskIds) {
       let content = null;
       try {
-        content = fs27.readFileSync(path25.join(taskDirFor2(taskId), "review.md"), "utf8");
+        content = fs28.readFileSync(path26.join(taskDirFor2(taskId), "review.md"), "utf8");
       } catch {
       }
       const checked = content === null ? null : extractCheckedVerdict(content);
@@ -9657,7 +9786,7 @@ function autoCommitCode(taskIds, cwd = REPO_ROOT2) {
     if (dirtyFiles.has(f)) continue;
     if (gitIgnoredHandoffFiles.has(f)) continue;
     if (ownedArtifacts.has(f)) continue;
-    const exists = fs27.existsSync(path25.join(cwd, f));
+    const exists = fs28.existsSync(path26.join(cwd, f));
     if (!exists) {
       const committed = gitSafeAt(cwd, "log", "--format=%H", "--max-count=1", `${baseRefForLog}..HEAD`, "--", f);
       if (committed.ok && committed.stdout.trim()) {
@@ -9815,30 +9944,30 @@ function exemptNodeModulesPath(entry, cwd, resolvedWorkspaceDirs) {
   if (entryPath === null) return null;
   if (matchesPorcelainPath(entryPath, "node_modules")) {
     return probeNodeModulesEntry(
-      path25.join(cwd, entryPath),
-      path25.join(REPO_ROOT2, entryPath)
+      path26.join(cwd, entryPath),
+      path26.join(REPO_ROOT2, entryPath)
     ).verdict === "verified-symlink" ? "node_modules" : null;
   }
   if (!isNodeModulesEntryPath(entryPath)) return null;
   let cwdReal;
   let repoRootReal;
   try {
-    cwdReal = fs27.realpathSync(cwd);
-    repoRootReal = fs27.realpathSync(REPO_ROOT2);
+    cwdReal = fs28.realpathSync(cwd);
+    repoRootReal = fs28.realpathSync(REPO_ROOT2);
   } catch {
     return null;
   }
   if (cwdReal === repoRootReal) return null;
   const workspaceDirs = resolvedWorkspaceDirs ?? resolveWorkspaceDirs(REPO_ROOT2);
   for (const workspace of workspaceDirs) {
-    const resolvedDestination = resolveContainedPath(path25.join(cwd, workspace), cwd);
+    const resolvedDestination = resolveContainedPath(path26.join(cwd, workspace), cwd);
     if (resolvedDestination === null) continue;
-    const relativeDestination = path25.relative(cwdReal, resolvedDestination).split(path25.sep).join("/");
+    const relativeDestination = path26.relative(cwdReal, resolvedDestination).split(path26.sep).join("/");
     const expectedEntryPath = `${relativeDestination}/node_modules`;
     if (!matchesPorcelainPath(entryPath, expectedEntryPath)) continue;
     return probeNodeModulesEntry(
-      path25.join(resolvedDestination, "node_modules"),
-      path25.join(REPO_ROOT2, workspace, "node_modules")
+      path26.join(resolvedDestination, "node_modules"),
+      path26.join(REPO_ROOT2, workspace, "node_modules")
     ).verdict === "verified-symlink" ? expectedEntryPath : null;
   }
   return null;
@@ -9880,15 +10009,15 @@ function buildHumanReviewStagePaths(taskIds, affectedManagedDocs, dirtyEntries, 
 }
 function findPullRequestTemplate(repoRoot) {
   const candidates = [
-    path25.join(repoRoot, ".github", "pull_request_template.md"),
-    path25.join(repoRoot, ".github", "PULL_REQUEST_TEMPLATE.md"),
-    path25.join(repoRoot, "docs", "pull_request_template.md"),
-    path25.join(repoRoot, "docs", "PULL_REQUEST_TEMPLATE.md"),
-    path25.join(repoRoot, "pull_request_template.md"),
-    path25.join(repoRoot, "PULL_REQUEST_TEMPLATE.md")
+    path26.join(repoRoot, ".github", "pull_request_template.md"),
+    path26.join(repoRoot, ".github", "PULL_REQUEST_TEMPLATE.md"),
+    path26.join(repoRoot, "docs", "pull_request_template.md"),
+    path26.join(repoRoot, "docs", "PULL_REQUEST_TEMPLATE.md"),
+    path26.join(repoRoot, "pull_request_template.md"),
+    path26.join(repoRoot, "PULL_REQUEST_TEMPLATE.md")
   ];
   for (const candidate of candidates) {
-    if (fs27.existsSync(candidate)) return candidate;
+    if (fs28.existsSync(candidate)) return candidate;
   }
   return null;
 }
@@ -9902,13 +10031,13 @@ function resolveQaPrBody(taskIds, activeCwd) {
   if (taskIds.length !== 1) {
     return { kind: "fallback", reason: "bundle: per-task pr-body.md files are not combined in this version" };
   }
-  const prBodyPath = path25.join(activeCwd, "tasks", taskIds[0], "pr-body.md");
+  const prBodyPath = path26.join(activeCwd, "tasks", taskIds[0], "pr-body.md");
   if (!isPrBodyTemplate(prBodyPath)) {
     return { kind: "body-file", path: prBodyPath };
   }
   return {
     kind: "fallback",
-    reason: fs27.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
+    reason: fs28.existsSync(prBodyPath) ? "pr-body.md is still the stub template" : "pr-body.md not found"
   };
 }
 function commitQaArtifacts(taskIds, cwd) {
@@ -9985,59 +10114,42 @@ function createDraftPRForTask(taskIds, branchName) {
   if (!ghAvailable) die2("--pr requires the gh CLI, but it is not available.");
   const baseBranch = getBaseBranch2(taskIds);
   const title = getTitle(readStatus(taskIds[0]));
-  const args = [
-    "pr",
-    "create",
-    "--draft",
-    "--base",
-    baseBranch,
-    "--head",
-    branchName,
-    "--title",
-    title
-  ];
-  const body = resolveCanonPrBody(taskIds, title);
-  if (body !== null) {
-    args.push("--body", body);
-  } else {
+  let body = resolveCanonPrBody(taskIds, title);
+  if (body === null) {
     const activeCwd = getActiveCwd(taskIds);
     const qaPrBody = resolveQaPrBody(taskIds, activeCwd);
-    if (qaPrBody.kind === "body-file") {
-      args.push("--body-file", qaPrBody.path);
-      const prResult2 = runCommand("gh", args);
-      if (!prResult2.ok) {
-        die2(`Failed to create draft PR: ${prResult2.stderr || "unknown error"}`);
+    if (qaPrBody.kind === "body-file") body = fs28.readFileSync(qaPrBody.path, "utf8");
+    else {
+      warn2(`PR body fallback (${qaPrBody.reason}) \u2014 falling back to repo PR template or the branch's commit subjects`);
+      const templatePath = findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
+      if (templatePath) body = fs28.readFileSync(templatePath, "utf8");
+      else {
+        const subjects = commitSubjectsBody(branchName, baseBranch);
+        if (!subjects.ok) warn2(`Could not list the branch's commit subjects for the PR body (${subjects.reason}); opening the draft PR with an empty body.`);
+        body = subjects.ok ? subjects.body : "";
       }
-      info2(`Draft PR created: ${prResult2.stdout || branchName}`);
-      return;
-    }
-    warn2(`PR body fallback (${qaPrBody.reason}) \u2014 falling back to repo PR template or --fill`);
-    const templatePath = findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
-    if (templatePath) {
-      args.push("--body-file", templatePath);
-    } else {
-      args.push("--fill");
     }
   }
-  const prResult = runCommand("gh", args);
-  if (!prResult.ok) {
-    die2(`Failed to create draft PR: ${prResult.stderr || "unknown error"}`);
+  const created = createDraftPR({ base: baseBranch, head: branchName, title, body });
+  if (!created.ok) {
+    die2(`Failed to create draft PR: ${created.stderr || "unknown error"}`);
+    return;
   }
-  info2(`Draft PR created: ${prResult.stdout || branchName}`);
+  info2(`Draft PR created: ${created.url ?? branchName}`);
 }
 function formatExistingPRMessage(prNum, prUrl) {
   return `Existing draft PR: #${prNum} (${prUrl})`;
 }
 function sidecarPathFor(taskId, taskDir = taskDirFor2(taskId)) {
-  return path25.join(taskDir, ".pr-number");
+  return path26.join(taskDir, ".pr-number");
 }
 function recordPinnedPRNumber(taskIds, prNum) {
   const alreadyPinned = taskIds.every((taskId) => readSidecarPRNumber(taskId) === prNum);
   if (alreadyPinned) return;
   for (const taskId of taskIds) {
     const sidecarPath = sidecarPathFor(taskId);
-    fs27.mkdirSync(path25.dirname(sidecarPath), { recursive: true });
-    fs27.writeFileSync(sidecarPath, String(prNum), "utf8");
+    fs28.mkdirSync(path26.dirname(sidecarPath), { recursive: true });
+    fs28.writeFileSync(sidecarPath, String(prNum), "utf8");
   }
 }
 function reportOrCreatePR(taskIds, branchName, cwd) {
@@ -10076,8 +10188,8 @@ function parseOriginRepoSlug(remoteUrl) {
 }
 function lookupPRUrl(prNum) {
   if (ghAvailable) {
-    const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "url", "--jq", ".url"]);
-    if (result.ok && result.stdout.trim()) return result.stdout.trim();
+    const result = readPR(prNum);
+    if (result.ok && result.pr.url) return result.pr.url;
   }
   const remoteResult = runCommand("git", ["remote", "get-url", "origin"]);
   if (remoteResult.ok) {
@@ -10285,8 +10397,8 @@ function commitHumanReviewFiles(taskIds, cwd, createPR) {
   }
   const baseBranch = getBaseBranch(taskIds);
   pushScaffoldBaseCommits(taskIds, cwd, createPR);
-  const docsRefsScript = path25.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
-  if (fs27.existsSync(docsRefsScript)) {
+  const docsRefsScript = path26.join(REPO_ROOT2, "scripts", "docs-refs-check.mjs");
+  if (fs28.existsSync(docsRefsScript)) {
     const docsRefsResult = spawnSync8("node", [docsRefsScript], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -10593,29 +10705,21 @@ function findMergedPRNumber(branch, baseBranch) {
 }
 function getMergedPRHeadSha(prNum) {
   if (!ghAvailable) return null;
-  const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "headRefOid", "--jq", ".headRefOid"]);
-  if (!result.ok) return null;
-  const sha = result.stdout.trim();
+  const result = readPR(prNum);
+  const sha = result.ok ? result.pr.headSha : null;
   if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) return null;
   return sha;
 }
-function isPRMerged(prNum) {
-  if (!ghAvailable) return false;
-  const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "state", "--jq", ".state"]);
-  return result.ok && result.stdout.trim() === "MERGED";
-}
 function getPRBaseRefName(prNum) {
   if (!ghAvailable) return null;
-  const result = runCommand("gh", ["pr", "view", String(prNum), "--json", "baseRefName", "--jq", ".baseRefName"]);
-  if (!result.ok) return null;
-  const ref = result.stdout.trim();
-  return ref || null;
+  const result = readPR(prNum);
+  return result.ok ? result.pr.baseRef : null;
 }
 function readSidecarPRNumber(taskId, taskDir = taskDirFor2(taskId)) {
   const sidecarPath = sidecarPathFor(taskId, taskDir);
   let raw;
   try {
-    raw = fs27.readFileSync(sidecarPath, "utf8").trim();
+    raw = fs28.readFileSync(sidecarPath, "utf8").trim();
   } catch {
     return null;
   }
@@ -10626,7 +10730,7 @@ function readSidecarPRNumber(taskId, taskDir = taskDirFor2(taskId)) {
 }
 function resolveProofPRNumberForPrefetch(taskId, branchName, baseBranch, taskCwd) {
   if (!ghAvailable) return null;
-  const pinnedPrNum = readSidecarPRNumber(taskId, path25.join(taskCwd, "tasks", taskId));
+  const pinnedPrNum = readSidecarPRNumber(taskId, path26.join(taskCwd, "tasks", taskId));
   if (pinnedPrNum !== null) return pinnedPrNum;
   return findOpenPRNumber(branchName, baseBranch) ?? findMergedPRNumber(branchName, baseBranch);
 }
@@ -10644,7 +10748,7 @@ function establishPRHeadAncestryProof(cwd, prNum, prHead, localTip) {
   if (prHead === null) {
     return {
       proven: false,
-      reason: `headRefOid for PR #${prNum} could not be materialized locally; merge proof is unproven.`
+      reason: `PR head SHA for PR #${prNum} could not be materialized locally; merge proof is unproven.`
     };
   }
   const ancestorCheck = gitSafeAt(cwd, "merge-base", "--is-ancestor", localTip, prHead);
@@ -10657,7 +10761,7 @@ function establishPRHeadAncestryProof(cwd, prNum, prHead, localTip) {
   return { proven: true };
 }
 function establishMergeProof(taskId, branchName, localTip, baseBranch, cwd, prefetchedHeads) {
-  const pinnedPrNum = readSidecarPRNumber(taskId, path25.join(cwd, "tasks", taskId));
+  const pinnedPrNum = readSidecarPRNumber(taskId, path26.join(cwd, "tasks", taskId));
   if (ghAvailable && pinnedPrNum !== null) {
     if (!isPRMerged(pinnedPrNum)) {
       return { proven: false, reason: `Pinned PR #${pinnedPrNum} is not in MERGED state.` };
@@ -10692,7 +10796,7 @@ function assertNoOpenPRForTask(branchName, baseBranch, taskIds, mergeMethod) {
     die(
       `--ship aborted: PR #${prNum} is open for ${branchName} but the merge step did not run.
   This can happen during gh transient hiccups. Re-run \`canon run ${taskIds.map(shellQuoteArg).join(" ")} --ship\`; if it keeps failing,
-  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks \`gh pr merge\` on task PRs) and re-run --ship, or fix the cause.
+  merge PR #${prNum} in the GitHub UI (the canon guard hook blocks \`gh pr merge\` of task PRs) and re-run --ship, or fix the cause.
   canon merges with \`ship.merge_method\` (currently ${mergeMethod}); set it to squash, rebase, or merge in .canon/config.json.`
     );
   }
@@ -10701,30 +10805,9 @@ function findOpenPRNumber(branch, baseBranch) {
   if (!ghAvailable) return null;
   return findPRNumberExact(branch, baseBranch, "open");
 }
-function lookupPRNumberExact(branch, baseBranch, state) {
-  const args = ["pr", "list", "--head", branch, "--state", state, "--limit", "1000", "--json", "number,headRefName"];
-  if (baseBranch !== null) args.push("--base", baseBranch);
-  const result = runCommand("gh", args);
-  if (!result.ok) return { kind: "unreadable", reason: result.stderr.trim() || "gh pr list exited unsuccessfully" };
-  if (!result.stdout.trim()) return { kind: "unreadable", reason: "gh pr list returned empty output" };
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
-    return { kind: "unreadable", reason: "gh pr list returned malformed JSON" };
-  }
-  if (!Array.isArray(parsed)) return { kind: "unreadable", reason: "gh pr list did not return a JSON array" };
-  for (const entry of parsed) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const headRefName = entry.headRefName;
-    const number = entry.number;
-    if (headRefName === branch && typeof number === "number") return { kind: "found", number };
-  }
-  return { kind: "none" };
-}
 function findPRNumberExact(branch, baseBranch, state) {
   if (!ghAvailable) return null;
-  const result = lookupPRNumberExact(branch, baseBranch, state);
+  const result = lookupPRByBranch(branch, baseBranch, state);
   return result.kind === "found" ? result.number : null;
 }
 function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId, openPRByBranch, mergeMethod) {
@@ -10739,7 +10822,7 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId, openPRByBranch
     const prNum = openPRByBranch.get(branch);
     if (!prNum) continue;
     info(`Merging PR #${prNum} (${branch} \u2192 ${baseBranch}) via ${mergeMethod}...`);
-    const result = runCommand("gh", ["pr", "merge", String(prNum), MERGE_FLAG[mergeMethod]]);
+    const result = mergePR(prNum, mergeMethod);
     const outcome = classifyMergeOutcome({
       exitOk: result.ok,
       mergeConfirmed: result.ok ? true : isPRMerged(prNum)
@@ -10748,7 +10831,7 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId, openPRByBranch
       return { failed: { prNum, stderr: result.stderr, mergedEarlier } };
     }
     if (!result.ok) {
-      warn(`PR #${prNum} merged, but gh exited non-zero and was tolerated: ${result.stderr.trim() || "unknown error"}`);
+      warn(`PR #${prNum} merged, but gh api exited non-zero and was tolerated: ${result.stderr.trim() || "unknown error"}`);
     } else {
       info(`PR #${prNum} merged.`);
     }
@@ -10768,8 +10851,8 @@ function mergeOpenPRsAndPull(taskIds, baseBranch, branchByTaskId, openPRByBranch
   return { merged: anyMerged };
 }
 function runPostMergeHook() {
-  const hookPath = path25.join(REPO_ROOT2, ".canon/hooks/post-merge.sh");
-  if (!fs27.existsSync(hookPath)) return;
+  const hookPath = path26.join(REPO_ROOT2, ".canon/hooks/post-merge.sh");
+  if (!fs28.existsSync(hookPath)) return;
   info2("Running .canon/hooks/post-merge.sh...");
   const result = runCommand2("bash", [hookPath]);
   if (!result.ok) {
@@ -10793,12 +10876,12 @@ function commitArchiveChanges(taskIds, baseBranch) {
 }
 function rewriteArchivedTaskRefs(taskIds) {
   const targets = [
-    path25.join(REPO_ROOT2, "docs", "lessons-learned.md"),
-    path25.join(REPO_ROOT2, "docs", "task-quality-log.md")
+    path26.join(REPO_ROOT2, "docs", "lessons-learned.md"),
+    path26.join(REPO_ROOT2, "docs", "task-quality-log.md")
   ];
   for (const filePath of targets) {
-    if (!fs27.existsSync(filePath)) continue;
-    let content = fs27.readFileSync(filePath, "utf8");
+    if (!fs28.existsSync(filePath)) continue;
+    let content = fs28.readFileSync(filePath, "utf8");
     let changed = false;
     for (const taskId of taskIds) {
       const stale = `tasks/${taskId}/`;
@@ -10809,8 +10892,8 @@ function rewriteArchivedTaskRefs(taskIds) {
       }
     }
     if (changed) {
-      fs27.writeFileSync(filePath, content, "utf8");
-      info2(`Updated stale task refs in ${path25.relative(REPO_ROOT2, filePath)}.`);
+      fs28.writeFileSync(filePath, content, "utf8");
+      info2(`Updated stale task refs in ${path26.relative(REPO_ROOT2, filePath)}.`);
     }
   }
 }
@@ -10845,7 +10928,7 @@ function classifyAndPreserveSharedDocDirt() {
     if (porcelainCode !== " M") {
       return { relPath, docClass, porcelainCode, headContent: null, workingContent: null };
     }
-    const workingContent = fs27.readFileSync(path25.join(REPO_ROOT2, relPath), "utf8");
+    const workingContent = fs28.readFileSync(path26.join(REPO_ROOT2, relPath), "utf8");
     const headResult = gitSafeAtRaw(REPO_ROOT2, "show", `HEAD:${relPath}`);
     return {
       relPath,
@@ -10862,11 +10945,11 @@ function classifyAndPreserveSharedDocDirt() {
   }
   const preserve = verdict.preserve;
   if (preserve.length === 0) return [];
-  const backupDir = fs27.mkdtempSync(path25.join(os.tmpdir(), "canon-ship-shared-doc-backup-"));
+  const backupDir = fs28.mkdtempSync(path26.join(os2.tmpdir(), "canon-ship-shared-doc-backup-"));
   const preserved = [];
   for (const { relPath, suffix } of preserve) {
-    const backupPath = path25.join(backupDir, relPath.replace(/[\\/]/g, "__"));
-    fs27.writeFileSync(backupPath, suffix, "utf8");
+    const backupPath = path26.join(backupDir, relPath.replace(/[\\/]/g, "__"));
+    fs28.writeFileSync(backupPath, suffix, "utf8");
     info2(`Preserving uncommitted ${relPath} dirt during --ship; backup: ${backupPath}`);
     const checkoutResult = gitSafe("checkout", "HEAD", "--", relPath);
     if (!checkoutResult.ok) {
@@ -10880,21 +10963,21 @@ function shipTasks(taskIds, mergeMethod) {
   const resolveShipCwd = (taskId) => {
     const tasksDirOverride2 = process.env.CANON_TASKS_DIR_OVERRIDE;
     if (tasksDirOverride2) {
-      return path25.dirname(tasksDirOverride2);
+      return path26.dirname(tasksDirOverride2);
     }
     if (isOrphanedWorktreeState(taskId)) return REPO_ROOT2;
-    return path25.dirname(path25.dirname(taskDirFor2(taskId)));
+    return path26.dirname(path26.dirname(taskDirFor2(taskId)));
   };
   const taskStatuses = /* @__PURE__ */ new Map();
   const readShipStatus = (taskId) => {
     const taskCwd = resolveShipCwd(taskId);
     const candidates = [
-      path25.join(taskCwd, "tasks", taskId, "status.json"),
-      path25.join(taskCwd, taskId, "status.json"),
-      path25.join(taskDirForRepoRoot2(taskId), "status.json")
+      path26.join(taskCwd, "tasks", taskId, "status.json"),
+      path26.join(taskCwd, taskId, "status.json"),
+      path26.join(taskDirForRepoRoot2(taskId), "status.json")
     ];
     for (const candidate of candidates) {
-      if (fs27.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
+      if (fs28.existsSync(candidate)) return readStatusFromPath(candidate, taskId);
     }
     const snapshot = taskStatuses.get(taskId);
     if (snapshot) return snapshot;
@@ -10926,7 +11009,7 @@ function shipTasks(taskIds, mergeMethod) {
     const currentPhase = getCurrentPhase(readShipStatus(taskId));
     if (currentPhase !== "human_review") continue;
     const taskCwd = resolveShipCwd(taskId);
-    const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path25.join(taskCwd, "tasks");
+    const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path26.join(taskCwd, "tasks");
     const gateResult = checkPhaseGate(
       taskId,
       "human_review",
@@ -10957,7 +11040,7 @@ function shipTasks(taskIds, mergeMethod) {
   const openPRByBranch = /* @__PURE__ */ new Map();
   if (ghAvailable) {
     for (const branch of new Set(branchByTaskId.values())) {
-      const lookup2 = lookupPRNumberExact(branch, baseBranch, "open");
+      const lookup2 = lookupPRByBranch(branch, baseBranch, "open");
       if (lookup2.kind === "unreadable") {
         die(
           `--ship aborted: could not read the open-PR listing for ${branch}: ${lookup2.reason}. Nothing was changed; re-running \`--ship\` is safe.`
@@ -10966,8 +11049,7 @@ function shipTasks(taskIds, mergeMethod) {
       if (lookup2.kind === "found") openPRByBranch.set(branch, lookup2.number);
     }
     if (openPRByBranch.size > 0) {
-      const result = runCommand("gh", ["repo", "view", "--json", Object.values(MERGE_ALLOWED_FIELD).join(",")]);
-      const parsed = result.ok ? parseAllowedMergeMethods(result.stdout) : { ok: false };
+      const parsed = readAllowedMergeMethods();
       if (!parsed.ok) {
         die(
           `--ship aborted: could not read the repository's merge settings for ${mergeMethod} (\`ship.merge_method\` in \`.canon/config.json\`). Nothing was changed; re-running \`--ship\` is safe.`
@@ -10987,8 +11069,8 @@ function shipTasks(taskIds, mergeMethod) {
   let preservedSharedDocDirt = [];
   const restorePreservedSharedDocDirt = () => {
     for (const { relPath, suffix, backupPath } of preservedSharedDocDirt) {
-      fs27.appendFileSync(path25.join(REPO_ROOT2, relPath), suffix, "utf8");
-      fs27.rmSync(backupPath, { force: true });
+      fs28.appendFileSync(path26.join(REPO_ROOT2, relPath), suffix, "utf8");
+      fs28.rmSync(backupPath, { force: true });
       info2(`Re-applied preserved ${relPath} dirt as uncommitted changes; backup removed.`);
     }
     preservedSharedDocDirt = [];
@@ -10996,7 +11078,7 @@ function shipTasks(taskIds, mergeMethod) {
   if (taskIds.some((id) => taskSnapshot(id).worktree)) {
     preservedSharedDocDirt = classifyAndPreserveSharedDocDirt();
   }
-  const orphanedStatusPaths = taskIds.filter((taskId) => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT2).map((taskId) => path25.join("tasks", taskId, "status.json"));
+  const orphanedStatusPaths = taskIds.filter((taskId) => taskSnapshot(taskId).worktree && resolveShipCwd(taskId) === REPO_ROOT2).map((taskId) => path26.join("tasks", taskId, "status.json"));
   if (orphanedStatusPaths.length > 0) {
     gitSafe("checkout", "HEAD", "--", ...orphanedStatusPaths);
   }
@@ -11042,7 +11124,7 @@ function shipTasks(taskIds, mergeMethod) {
     try {
       restorePreservedSharedDocDirt();
     } catch (error) {
-      const backups = preservedSharedDocDirt.map(({ backupPath }) => backupPath).filter((backupPath) => fs27.existsSync(backupPath)).join(", ") || "none";
+      const backups = preservedSharedDocDirt.map(({ backupPath }) => backupPath).filter((backupPath) => fs28.existsSync(backupPath)).join(", ") || "none";
       warn2(`Could not restore the telemetry notes set aside for this --ship (${error instanceof Error ? error.message : String(error)}). Backups that may remain: ${backups}`);
     }
     die(failureMessage);
@@ -11084,7 +11166,7 @@ Recovery:
   for (const taskId of taskIds) {
     let parsed;
     try {
-      parsed = parseFollowups(fs27.readFileSync(path25.join(taskDirForRepoRoot2(taskId), "done.md"), "utf8"));
+      parsed = parseFollowups(fs28.readFileSync(path26.join(taskDirForRepoRoot2(taskId), "done.md"), "utf8"));
     } catch (err) {
       const missing = err.code === "ENOENT";
       const detail = missing ? "done.md is missing" : `done.md could not be read (${err instanceof Error ? err.message : String(err)})`;
@@ -11111,8 +11193,8 @@ Recovery:
   }
   const localBranchesToDelete = [];
   try {
-    const archiveDir = path25.join(TASKS_DIR2, "_archive");
-    if (!fs27.existsSync(archiveDir)) fs27.mkdirSync(archiveDir, { recursive: true });
+    const archiveDir = path26.join(TASKS_DIR2, "_archive");
+    if (!fs28.existsSync(archiveDir)) fs28.mkdirSync(archiveDir, { recursive: true });
     for (const taskId of taskIds) {
       const { worktree: hasWorktree } = taskSnapshot(taskId);
       const status = readShipStatus(taskId);
@@ -11120,23 +11202,23 @@ Recovery:
       status.updated = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const humanReview = status.phases.human_review;
       if (humanReview) humanReview.status = "done";
-      writeStatusToFile(path25.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
+      writeStatusToFile(path26.join(REPO_ROOT2, "tasks", taskId, "status.json"), status);
       const src = taskDirForRepoRoot2(taskId);
-      const dest = path25.join(archiveDir, taskId);
-      fs27.renameSync(src, dest);
+      const dest = path26.join(archiveDir, taskId);
+      fs28.renameSync(src, dest);
       info2(`\u{1F4E6} ${taskId} \u2192 tasks/_archive/${taskId}`);
       const branchName = taskSnapshot(taskId).branch;
       if (branchExistsLocally(branchName)) localBranchesToDelete.push(branchName);
     }
     rewriteArchivedTaskRefs(taskIds);
     const stagedPaths = taskIds.flatMap((id) => [
-      path25.join(TASKS_DIR2, id),
+      path26.join(TASKS_DIR2, id),
       // deleted source (if not cleaned up)
-      path25.join(TASKS_DIR2, "_archive", id),
+      path26.join(TASKS_DIR2, "_archive", id),
       // new archive destination
-      path25.join(REPO_ROOT2, "docs", "lessons-learned.md"),
-      path25.join(REPO_ROOT2, "docs", "task-quality-log.md"),
-      path25.join(REPO_ROOT2, "docs", "pipeline-invocations.md")
+      path26.join(REPO_ROOT2, "docs", "lessons-learned.md"),
+      path26.join(REPO_ROOT2, "docs", "task-quality-log.md"),
+      path26.join(REPO_ROOT2, "docs", "pipeline-invocations.md")
     ]);
     stageArchiveChanges(stagedPaths);
     restorePreservedSharedDocDirt();
@@ -11223,7 +11305,7 @@ function unnamedBranchMates(entries) {
   const root = process.env.CANON_TASKS_DIR_OVERRIDE ?? TASKS_DIR2;
   let candidates;
   try {
-    candidates = fs27.readdirSync(root).sort();
+    candidates = fs28.readdirSync(root).sort();
   } catch {
     return [];
   }
@@ -11232,7 +11314,7 @@ function unnamedBranchMates(entries) {
     if (named.has(taskId) || taskId === "_archive" || taskId === "_templates") continue;
     let status;
     try {
-      status = isOrphanedWorktreeState(taskId) ? readStatusFromPath(path25.join(taskDirForRepoRoot(taskId), "status.json"), taskId) : readStatus(taskId);
+      status = isOrphanedWorktreeState(taskId) ? readStatusFromPath(path26.join(taskDirForRepoRoot(taskId), "status.json"), taskId) : readStatus(taskId);
     } catch {
       continue;
     }
@@ -11284,7 +11366,7 @@ function rerouteFromHumanReview(taskIds) {
     if (!result.amended) {
       amendmentFailures.push({
         taskId,
-        specPath: path25.join(taskDirFor2(taskId), "spec.md"),
+        specPath: path26.join(taskDirFor2(taskId), "spec.md"),
         requiredRound,
         expectedHeading,
         reason: result.reason
@@ -11340,7 +11422,7 @@ function rerouteFromHumanReview(taskIds) {
     }
     const rescaffold = rescaffoldReview(taskDirFor2(taskId), scaffoldIdentity);
     if (rescaffold.outcome === "written") {
-      info(`Re-scaffolded tasks/${taskId}/review.md from ${path25.relative(process.cwd(), rescaffold.source)}.`);
+      info(`Re-scaffolded tasks/${taskId}/review.md from ${path26.relative(process.cwd(), rescaffold.source)}.`);
     } else if (rescaffold.outcome === "no-template") {
       warn2(
         `tasks/${taskId}/review.md is missing and no template was found to re-scaffold it (looked for a review.md override under tasks/_templates/ and .canon/templates/review.md). The code-review foreman will have to write the file from scratch.`
@@ -11469,7 +11551,7 @@ async function runPhase(phase, state) {
   if (phase === "qa") {
     const activeCwd = getActiveCwd(taskIds);
     const qaTemplatePath = state.isBundle ? null : findPullRequestTemplate(activeCwd) ?? findPullRequestTemplate(REPO_ROOT2);
-    const resolvedPrTemplate = qaTemplatePath ? fs27.readFileSync(qaTemplatePath, "utf8") : null;
+    const resolvedPrTemplate = qaTemplatePath ? fs28.readFileSync(qaTemplatePath, "utf8") : null;
     return runQaPhase(state, cliArgs.interactive, resolvedPrTemplate);
   }
   if (phase === "human_review") {
@@ -11483,7 +11565,7 @@ async function runPhase(phase, state) {
       }
       const branch = [...branches][0];
       const cwd = getActiveCwd(taskIds2);
-      const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path25.join(cwd, "tasks");
+      const tasksRootForGate = process.env.CANON_TASKS_DIR_OVERRIDE ?? path26.join(cwd, "tasks");
       for (const taskId of taskIds2) {
         const gateResult = checkPhaseGate(taskId, "human_review", void 0, tasksRootForGate);
         if (!gateResult.ok) {
@@ -11550,9 +11632,9 @@ async function runPhase(phase, state) {
 }
 var extractCheckedVerdict2 = extractCheckedVerdict;
 function readArtifact(taskId, name) {
-  const p = path25.join(taskDirFor2(taskId), name);
+  const p = path26.join(taskDirFor2(taskId), name);
   try {
-    return fs27.readFileSync(p, "utf8");
+    return fs28.readFileSync(p, "utf8");
   } catch {
     return null;
   }
@@ -11568,15 +11650,15 @@ function checkImplementEvidence(taskId) {
     return { advanced: false, note: `handoff.md Changes table has malformed row(s): ${sample}${tail}` };
   }
   const issues = validateHandoffAgainstSpec(
-    path25.join(taskDirFor2(taskId), "spec.md"),
-    path25.join(taskDirFor2(taskId), "handoff.md")
+    path26.join(taskDirFor2(taskId), "spec.md"),
+    path26.join(taskDirFor2(taskId), "handoff.md")
   );
   if (issues.length > 0) return { advanced: false, note: `handoff.md validation failed: ${issues.join("; ")}` };
   const checkRoots = [REPO_ROOT2];
   const sForEvidence = readStatus(taskId);
   if (sForEvidence.worktree === true) {
     const wt = worktreePath(taskId);
-    if (fs27.existsSync(wt)) checkRoots.push(wt);
+    if (fs28.existsSync(wt)) checkRoots.push(wt);
   }
   const ignoreCwd = checkRoots[checkRoots.length - 1];
   const gitIgnored = filterGitIgnoredPaths(files, ignoreCwd);
@@ -11588,7 +11670,7 @@ function checkImplementEvidence(taskId) {
     };
   }
   const existingFiles = verifiableFiles.filter(
-    (f) => checkRoots.some((root) => fs27.existsSync(path25.join(root, f)))
+    (f) => checkRoots.some((root) => fs28.existsSync(path26.join(root, f)))
   );
   if (existingFiles.length === 0) {
     const evidenceCwd = checkRoots[checkRoots.length - 1];
@@ -11678,12 +11760,12 @@ function tryEvidenceAdvance(taskId, phase) {
       return { advanced: true, note: "spec.md is populated" };
     }
     case "qa": {
-      const donePath = path25.join(taskDirFor(taskId), "done.md");
+      const donePath = path26.join(taskDirFor(taskId), "done.md");
       if (isDoneMdTemplate(donePath)) return { advanced: false, note: "done.md is still the template" };
       if (!process.env.CANON_SKIP_PHASE_GATE) {
         let content;
         try {
-          content = fs27.readFileSync(donePath, "utf8");
+          content = fs28.readFileSync(donePath, "utf8");
         } catch {
           return { advanced: false, note: "done.md unreadable" };
         }
@@ -12107,9 +12189,9 @@ function checkDeps(taskIds, skipAgentDeps = false) {
   }
   for (const taskId of taskIds) {
     validateTaskId(taskId);
-    const repoRootStatusFile = path25.join(REPO_ROOT2, "tasks", taskId, "status.json");
-    const statusFile = cliArgs.ship && fs27.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
-    if (!fs27.existsSync(statusFile)) {
+    const repoRootStatusFile = path26.join(REPO_ROOT2, "tasks", taskId, "status.json");
+    const statusFile = cliArgs.ship && fs28.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(taskId);
+    if (!fs28.existsSync(statusFile)) {
       die(`No status.json at tasks/${taskId}/status.json \u2014 run canon task new ${taskId} first`);
     }
   }
@@ -12148,9 +12230,9 @@ async function main() {
   try {
     const statuses = cliArgs.taskIds.map((id) => {
       validateTaskId(id);
-      const mainFile = path25.join(REPO_ROOT2, "tasks", id, "status.json");
-      const statusFile = cliArgs.ship && fs27.existsSync(mainFile) ? mainFile : statusFileFor(id);
-      if (!fs27.existsSync(statusFile)) die2(`No status.json at tasks/${id}/status.json \u2014 run canon task new ${id} first`);
+      const mainFile = path26.join(REPO_ROOT2, "tasks", id, "status.json");
+      const statusFile = cliArgs.ship && fs28.existsSync(mainFile) ? mainFile : statusFileFor(id);
+      if (!fs28.existsSync(statusFile)) die2(`No status.json at tasks/${id}/status.json \u2014 run canon task new ${id} first`);
       return readStatusFromPath(statusFile, id);
     });
     if (!cliArgs.ship || cliArgs.dryRun) runProvider = resolveBundleProvider(statuses);
@@ -12167,8 +12249,8 @@ async function main() {
   const earlyHeartbeatTaskIds = cliArgs.taskIds;
   let heartbeatStarted = false;
   const earlyHeartbeatResolver = (id) => {
-    const repoRootStatusFile = path25.join(REPO_ROOT2, "tasks", id, "status.json");
-    return path25.dirname(cliArgs.ship && fs27.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
+    const repoRootStatusFile = path26.join(REPO_ROOT2, "tasks", id, "status.json");
+    return path26.dirname(cliArgs.ship && fs28.existsSync(repoRootStatusFile) ? repoRootStatusFile : statusFileFor(id));
   };
   if (!cliArgs.ship && !cliArgs.dryRun) {
     guardConcurrentRun(cliArgs.taskIds, earlyHeartbeatResolver);
@@ -12204,7 +12286,7 @@ async function main() {
   }
   refreshCanonSnapshotsAtPaths(taskIds.map(statusFileFor));
   const initialState = buildPipelineState(taskIds);
-  const heartbeatDirResolver = (id) => path25.dirname(statusFileFor(id));
+  const heartbeatDirResolver = (id) => path26.dirname(statusFileFor(id));
   if (!isSynchronousMode(cliArgs) && shouldAutoDetach()) {
     detachAndExit({
       taskIds,

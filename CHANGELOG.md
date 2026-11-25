@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [3.23.1] — 2026-11-25
+
+### Fixed
+
+- **`--pr`, `--full-send` and `--ship` work where GitHub's GraphQL API is blocked**, as it is in Claude Code cloud sessions. canon now sends its pull-request calls through gh's REST API: draft PR creation, the branch lookup, the merge and the merge proof. It uses the GitHub host of your `origin` remote when gh is logged in to that host. Before this, `--pr` failed at PR creation in those environments, and `--ship` stopped at its pre-flight check even when the PR had already been merged. When there is no canon body, QA body or PR template, the draft PR body now lists the branch's commit subjects instead of relying on `gh pr create --fill`.
+- **The merge guard works where GraphQL is blocked.** The guard hook reads a PR's branch over REST, so it still blocks `gh pr merge` of a task PR in those environments rather than silently allowing it.
+- **Resumed Codex sessions keep the workspace-write sandbox.** In mixed mode, a revision, a pre-flight retry or a handoff fix-up on a resumed Codex session could run read-only if your Codex config set no sandbox mode and the project wasn't trusted. The implementer then couldn't write, and the task auto-blocked at the review-loop cap. Resumed runs now use the same sandbox as fresh runs.
+- **Corrected gh requirement text.** `canon doctor` and `canon init` now say gh is needed for `--pr` and `--ship`. `canon run --help` now lists the docs-refs check among the checks `--force` skips.
+
+## [3.23.0] — 2026-11-21
+
 ### Added
 
 - **New `/canon-prune` skill prunes the permanent docs.** It reviews patterns, decisions, architecture, routed pitfall docs and agent files rule by rule with parallel inventory agents; proposes deletes, relocations and merges with evidence, each approved by the human individually, and reports how many rules it proposes to leave unchanged; and flags edits to docs that may change what implement prompts receive. It drafts a `docs: canon-prune` commit message recording reviewed-and-kept rules, and never touches the lessons buffer or canon-managed files. It is installed by `canon init` / `canon upgrade` and checked by `canon doctor`. Until you run `canon upgrade` and add `Skill(canon-prune)` and `Skill(canon-prune:*)` to `.claude/settings.json`, `canon doctor` warns about the missing skill and both missing allowlist entries. The README and `/canon-init` advise keeping canon mentions in agent files at a high level.

@@ -7,7 +7,8 @@ import { METRICS_SKELETON, recordMetric } from '../src/orchestrator/metrics.js';
 import { writeQualityLogForTask } from '../src/orchestrator/quality-log.js';
 import { applyTelemetryFold, foldLessonsFragment, foldTelemetryFragments, planTelemetryFold, sharedTelemetryDocsTouched } from '../src/orchestrator/telemetry-fold.js';
 import { parseTable } from '../src/orchestrator/markdown-table.js';
-import { formatMergeFailureMessage, parseAllowedMergeMethods } from '../src/orchestrator/main.js';
+import { formatMergeFailureMessage } from '../src/orchestrator/main.js';
+import { parseAllowedMergeMethods } from '../src/orchestrator/forge.js';
 import type { StatusJson } from '../src/orchestrator/types.js';
 import {
     TSX_LOADER,
@@ -41,9 +42,9 @@ import {
 
 
 void test('allowed merge-method response requires all three boolean fields', () => {
-    const parsed = parseAllowedMergeMethods('{"squashMergeAllowed":false,"rebaseMergeAllowed":true,"mergeCommitAllowed":false}');
+    const parsed = parseAllowedMergeMethods('{"allow_squash_merge":false,"allow_rebase_merge":true,"allow_merge_commit":false}');
     assert.deepEqual(parsed, { ok: true, allowed: { squash: false, rebase: true, merge: false } });
-    assert.deepEqual(parseAllowedMergeMethods('{"squashMergeAllowed":true,"rebaseMergeAllowed":true}'), { ok: false });
+    assert.deepEqual(parseAllowedMergeMethods('{"allow_squash_merge":true,"allow_rebase_merge":true}'), { ok: false });
     assert.deepEqual(parseAllowedMergeMethods('not json'), { ok: false });
 });
 
@@ -325,9 +326,9 @@ for (const [method, flag] of [['squash', '--squash'], ['rebase', '--rebase'], ['
 
             assert.equal(result.status, 0, result.stderr);
             const log = fs.readFileSync(ghLog, 'utf8');
-            assert.match(log, new RegExp(`^pr merge 107 ${flag}$`, 'm'));
+            assert.match(log, new RegExp(`^api -X PUT repos/\\{owner\\}/\\{repo\\}/pulls/107/merge -f merge_method=${method}$`, 'm'));
             for (const otherFlag of ['--squash', '--rebase', '--merge']) {
-                if (otherFlag !== flag) assert.doesNotMatch(log, new RegExp(`^pr merge 107 ${otherFlag}$`, 'm'));
+                if (otherFlag !== flag) assert.doesNotMatch(log, new RegExp(`^api -X PUT repos/.*merge_method=${otherFlag.slice(2)}$`, 'm'));
             }
             assert.doesNotMatch(log, /--delete-branch/);
             assert.match(result.stdout, new RegExp(`Deleted remote branch ${branch}\\.`));
@@ -383,9 +384,9 @@ void test('--ship pre-flight refuses unreadable or disallowed merge settings bef
             assert.notEqual(result.status, 0, scenario.name);
             assert.match(result.stderr, scenario.expected, scenario.name);
             const log = fs.readFileSync(ghLog, 'utf8');
-            assert.doesNotMatch(log, /pr merge/);
-            if (scenario.name.includes('open PR listing')) assert.doesNotMatch(log, /repo view/);
-            else assert.match(log, /repo view/);
+            assert.doesNotMatch(log, /pulls\/107\/merge/);
+            if (scenario.name.includes('open PR listing')) assert.doesNotMatch(log, /api -X GET repos\/\{owner\}\/\{repo\}$/m);
+            else assert.match(log, /api -X GET repos\/\{owner\}\/\{repo\}$/m);
             assert.equal(gitIn(localDir, 'branch', '--show-current'), branchBefore);
             if (scenario.keepRemoteBranch) assert.equal(fs.readFileSync(fetchHeadPath, 'utf8'), 'preflight sentinel\n');
             assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);
@@ -666,9 +667,11 @@ void test('--ship failed merge restores preserved telemetry dirt before aborting
         });
         markTaskWorktree(localDir, taskId);
         fs.appendFileSync(path.join(localDir, 'docs', 'pipeline-invocations.md'), suffix, 'utf8');
+        const ghLog = path.join(dir, 'gh.log');
 
         const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
             TMPDIR: tmpDir,
+            FAKE_GH_LOG: ghLog,
             FAKE_GH_OPEN_PR_NUMBER: '107',
             FAKE_GH_PR_HEAD: branch,
             FAKE_GH_PR_BASE: 'main',
@@ -684,6 +687,40 @@ void test('--ship failed merge restores preserved telemetry dirt before aborting
         assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);
         assert.match(result.stderr, /no local cleanup ran/i);
         assert.match(result.stderr, /re-run `canon run .* --ship`/);
+        const calls = fs.readFileSync(ghLog, 'utf8').trim().split('\n');
+        const mergeIndex = calls.findIndex(call => call.includes('PUT repos/{owner}/{repo}/pulls/107/merge'));
+        const proofIndex = calls.findIndex((call, index) => index > mergeIndex && call.includes('GET repos/{owner}/{repo}/pulls/107'));
+        assert.ok(mergeIndex >= 0, calls.join('\n'));
+        assert.ok(proofIndex > mergeIndex, calls.join('\n'));
+    });
+});
+
+void test('--ship tolerates a failed merge request when a fresh REST read proves the PR merged', () => {
+    withTempDir('ship-merge-fail-but-merged-', dir => {
+        const taskId = 'merge-fail-but-merged';
+        const { localDir, branch, tip, fakeTools } = prepareShipFixture(dir, [taskId], { prNumbers: { [taskId]: 107 } });
+        const ghLog = path.join(dir, 'gh.log');
+
+        const result = runCanon(localDir, [taskId, '--ship'], fakeTools, {
+            FAKE_GH_LOG: ghLog,
+            FAKE_GH_OPEN_PR_NUMBER: '107',
+            FAKE_GH_MERGED_PR_NUMBER: '107',
+            FAKE_GH_PR_HEAD: branch,
+            FAKE_GH_PR_BASE: 'main',
+            FAKE_GH_PR_STATE: 'MERGED',
+            FAKE_GH_BASE_REF_NAME: 'main',
+            FAKE_GH_HEAD_REF_OID: tip,
+            FAKE_GH_MERGE_FAIL: '1',
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stderr, /PR #107 merged, but gh api exited non-zero and was tolerated: merge failed/);
+        expectArchivedAndDeleted(localDir, taskId, branch);
+        const calls = fs.readFileSync(ghLog, 'utf8').trim().split('\n');
+        const mergeIndex = calls.findIndex(call => call.includes('PUT repos/{owner}/{repo}/pulls/107/merge'));
+        const proofIndex = calls.findIndex((call, index) => index > mergeIndex && call.includes('GET repos/{owner}/{repo}/pulls/107'));
+        assert.ok(mergeIndex >= 0, calls.join('\n'));
+        assert.ok(proofIndex > mergeIndex, calls.join('\n'));
     });
 });
 

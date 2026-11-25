@@ -147,3 +147,33 @@ The prune skill's implement-prompt guard listed the content that pitfall selecti
 *(2026-11-19, source: canon-prune-skill)*
 
 The prune spec said canon-managed files are never read. The skill still told the agent to run the preflight in canon-sweep §"Preconditions" and to take a home from canon-sweep §"Step 2", and both sections sit in that managed set. The contradiction went to review as a correctness bug. Prevention: when a rule says a set is never read or edited and a skill points at a heading in that set, state the exception in the same sentence, name the exact sections, and say which parts of them apply (here, only the three preflight checks). Otherwise the agent either skips the reference or breaks the rule.
+
+---
+
+### A carve-out's condition must match the rows it covers, not a run of another skill
+
+*(date 2026-11-20, source: canon-prune-run-lessons)*
+
+A docs-audit carve-out said the "describes a canon mechanism" delete rule does not apply "when pruning canon-ai's own root docs with `/canon-prune`." The rows it covers are canon-managed root copies, and `/canon-prune` excludes canon-managed files from its input, so the condition could never be true for them. Two cold reviewers flagged it as unreachable. Prevention: when a carve-out covers a set of files, state the exception unconditionally for those rows and say why it applies. Do not condition it on a run of another skill that never touches those files. Before writing the wording, check the other skill's input rule for those same files. Canonical example: the docs-audit prune row in `.claude/skills/docs-audit/SKILL.md` (line 26), against the exclusion in `.claude/skills/canon-prune/SKILL.md`.
+
+---
+
+### When a suite fails only inside the agent sandbox, reproduce on clean main before calling it a regression
+
+*(2026-11-25, source: fix-codex-resume-sandbox)*
+
+Three test files (`tests/agent-backend.test.ts`, `tests/agent-prompt-argv.test.ts`, `tests/blast-radius.test.ts`) use fake `claude` and `codex` binaries. Inside the Codex Linux sandbox those fakes return empty output, so six checks fail, and the same failures reproduce on clean `main`. The implementer had to note that the `npm test` failure was environmental, and the operator had to re-run the suite outside the sandbox before accepting the work. Prevention: when a suite fails only under the agent's sandbox, run the same command on the base branch in the same sandbox, and then outside it, before treating the failure as a regression or as a reason to edit tests. Record both results in the Validation Outcomes table. The fake-binary tests are the usual case, because they spawn child processes that the sandbox constrains.
+
+---
+
+### Pass gh api an owner-qualified filter that no gh placeholder can reach
+
+*(2026-11-25, source: rest-forge-pr-calls)*
+
+`gh api` expands `{owner}` and `{repo}`, and the legacy `:owner`, `:repo` and `:branch` placeholders, anywhere in the endpoint, query string included. A branch whose name starts with one of those words (for example `repo-x`) had its separator replaced, so the `head=` filter stopped being exact. The result was not wrong, because the code still checked `head.ref`, but the lookup paged through every PR in the repo. Prevention: percent-encode the separator in any query filter built from a user-controlled name (`%3A` for `:`), pin the exact argv for a branch with a placeholder-like prefix, and do not rely on a fake gh to show the encoding is needed, because it does not expand placeholders. Canonical example: `lookupPRByBranch` in `src/orchestrator/forge.ts`.
+
+### Check the API host for each gh subcommand separately
+
+*(2026-11-25, source: rest-forge-pr-calls)*
+
+`gh api` and `gh pr` do not share a host. With an Enterprise `origin` and a github.com login, `gh api` sent requests to api.github.com while `gh pr` used the Enterprise host. `gh api --hostname` also does no normalization: `ssh.github.com` and SSH host aliases such as `git@github-work:` failed. Prevention: before writing a rule that picks an API host, run each gh subcommand with `GH_DEBUG=api` and compare the logged request URLs, and gate any `--hostname` on an offline check such as `gh auth token --hostname`. Canonical example: the host selection in `src/orchestrator/forge.ts`, and the same rule in `.claude/hooks/canon-guard.mjs`.

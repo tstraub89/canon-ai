@@ -1232,6 +1232,7 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
         const currentBranchPath = path.join(dir, 'current-branch.txt');
         fs.writeFileSync(currentBranchPath, 'task/task-a\n');
         const prStateFile = path.join(dir, 'gh-pr-state.txt');
+        const createdPayload = path.join(dir, 'created-pr.json');
 
         const result = runNodeInline([
             "import { main } from './src/orchestrator/main.ts';",
@@ -1249,16 +1250,71 @@ void test('main --pr on complete logs the pr-body fallback when pr-body.md is mi
             FAKE_GIT_REMOTE_EXISTS: '1',
             FAKE_GIT_TASK_BRANCH: 'task/task-a',
             FAKE_GH_PR_STATE_FILE: prStateFile,
+            FAKE_GH_CREATE_PAYLOAD: createdPayload,
         });
 
         assert.equal(result.status, 0, result.stderr);
-        assert.match(result.stderr, /PR body fallback \(pr-body\.md not found\) — falling back to repo PR template or --fill/);
+        assert.match(result.stderr, /PR body fallback \(pr-body\.md not found\) — falling back to repo PR template or the branch's commit subjects/);
         const gitLog = fs.readFileSync(path.join(dir, 'git.log'), 'utf8');
         assert.match(gitLog, /^push -u origin task\/task-a$/m, 'push must run before falling back to the repo template');
         const ghLog = fs.readFileSync(path.join(dir, 'gh.log'), 'utf8');
-        assert.match(ghLog, /pr create .*--body-file .*pull_request_template\.md/m);
+        assert.match(ghLog, /api -X POST repos\/\{owner\}\/\{repo\}\/pulls/m);
+        assert.deepEqual(JSON.parse(fs.readFileSync(createdPayload, 'utf8')), {
+            title: 'task-a', head: 'task/task-a', base: 'main',
+            body: fs.readFileSync(path.join(process.cwd(), '.github', 'pull_request_template.md'), 'utf8'), draft: true,
+        });
     });
 });
+
+for (const source of ['canon', 'qa'] as const) {
+    void test(`main --pr creates a REST draft with the ${source} PR body`, () => {
+        withTempDir(`run-task-complete-pr-body-${source}-`, dir => {
+            const tasksRoot = path.join(dir, 'tasks');
+            const worktreesRoot = path.join(dir, 'worktrees');
+            const worktreeDir = path.join(worktreesRoot, 'task-a');
+            const fakeBins = path.join(dir, 'fake-bins');
+            const fakeGitDir = path.join(fakeBins, 'git-bin');
+            fs.mkdirSync(fakeGitDir, { recursive: true });
+            fs.mkdirSync(path.join(worktreeDir, 'tasks', 'task-a'), { recursive: true });
+            setupFakeGit(fakeGitDir);
+            setupFakeCliTools(fakeBins);
+
+            const status = makeCompleteStatus('task-a', 'task/task-a');
+            status.worktree = true;
+            writeTaskStatus(tasksRoot, 'task-a', status);
+            const currentBranchPath = path.join(dir, 'current-branch.txt');
+            fs.writeFileSync(currentBranchPath, 'task/task-a\n');
+            const payloadPath = path.join(dir, 'created-pr.json');
+            const prStateFile = path.join(dir, 'gh-pr-state.txt');
+            const body = source === 'canon' ? 'Generated for task-a — task-a' : 'QA summary for task-a';
+            if (source === 'qa') fs.writeFileSync(path.join(worktreeDir, 'tasks', 'task-a', 'pr-body.md'), body);
+
+            const result = runNodeInline([
+                "import { main } from './src/orchestrator/main.ts';",
+                "process.argv = ['node', 'canon', 'task-a', '--pr'];",
+                "main().catch(err => { console.error(err); process.exit(1); });",
+            ].join('\n'), {
+                ...process.env,
+                PATH: `${fakeGitDir}${path.delimiter}${fakeBins}${path.delimiter}${process.env.PATH ?? ''}`,
+                CANON_TASKS_DIR_OVERRIDE: tasksRoot,
+                CANON_WORKTREES_ROOT: worktreesRoot,
+                FAKE_GIT_LOG: path.join(dir, 'git.log'),
+                FAKE_GIT_CURRENT_BRANCH: currentBranchPath,
+                FAKE_GIT_REMOTE_BRANCH: 'task/task-a',
+                FAKE_GIT_REMOTE_EXISTS: '1',
+                FAKE_GIT_TASK_BRANCH: 'task/task-a',
+                FAKE_GH_PR_STATE_FILE: prStateFile,
+                FAKE_GH_CREATE_PAYLOAD: payloadPath,
+                ...(source === 'canon' ? { CANON_PR_BODY: 'Generated for $LABEL — $TITLE' } : {}),
+            });
+
+            assert.equal(result.status, 0, result.stderr);
+            assert.deepEqual(JSON.parse(fs.readFileSync(payloadPath, 'utf8')), {
+                title: 'task-a', head: 'task/task-a', base: 'main', body, draft: true,
+            });
+        });
+    });
+}
 
 void test('main --pr at human_review is idempotent when an open PR already exists', () => {
     withTempDir('run-task-human-review-pr-', dir => {
@@ -1358,7 +1414,7 @@ void test('main --pr does NOT match an open PR on the wrong base (Codex P2 on re
 
 void test('main --pr at human_review with dirty allowed files is idempotent when an open PR already exists (GP #10)', () => {
     // 1.2.0's --pr idempotency only fired on the clean-tree retry path. The
-    // dirty-tree commit-then-create path went straight to `gh pr create` and
+    // dirty-tree commit-then-create path went straight to PR creation and
     // died on its "PR already exists" exit code. GP's starter-preview-renderer
     // bundle hit this when QA finished writing artifacts and `--pr` ran while
     // tasks/<id>/done.md was still uncommitted — the PR (already opened on a
@@ -1406,7 +1462,7 @@ void test('main --pr at human_review with dirty allowed files is idempotent when
 
         // 1.3.0 expectation: the existing PR is detected after the commit + push,
         // canon prints the URL, and exits 0. Pre-fix this exited 1 with the
-        // `gh pr create` "PR already exists" stderr propagated up.
+        // create-call "PR already exists" stderr propagated up.
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /Existing draft PR: #94 \(https:\/\/github\.com\/x\/y\/pull\/94\)/);
         // The commit + push must still happen for QA artifacts to reach origin
@@ -1847,8 +1903,8 @@ void test('commitHumanReviewFiles(createPR = true) opens a PR on a clean-tree re
         const gitLog = fs.readFileSync(gitLogPath, 'utf8');
         assert.match(gitLog, /^push -u origin task\/task-a$/m);
         const ghLog = fs.readFileSync(ghLogPath, 'utf8');
-        assert.match(ghLog, /^pr list /m);
-        assert.match(ghLog, /^pr create /m);
+        assert.match(ghLog, /^api -X GET --paginate --jq \.\[\] .*pulls\?/m);
+        assert.match(ghLog, /^api -X POST .*pulls/m);
     });
 });
 
@@ -1984,7 +2040,7 @@ void test('main full-send tail pushes an unpushed scaffold tip SHA before the di
         const remoteTip = execFileSync('git', ['--git-dir', originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
         assert.equal(remoteTip, scaffoldTip);
         const ghLog = fs.readFileSync(path.join(dir, 'gh.log'), 'utf8');
-        assert.match(ghLog, /^pr create /m);
+        assert.match(ghLog, /^api -X POST .*pulls/m);
     });
 });
 
@@ -2053,7 +2109,7 @@ void test('full-send tail leaves every unsafe scaffold-looking commit off origin
             const remoteTip = execFileSync('git', ['--git-dir', fixture.originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
             assert.equal(remoteTip, fixture.originBaseSha, variant.name);
             const ghLog = fs.existsSync(path.join(dir, 'gh.log')) ? fs.readFileSync(path.join(dir, 'gh.log'), 'utf8') : '';
-            assert.doesNotMatch(ghLog, /^pr create /m, variant.name);
+            assert.doesNotMatch(ghLog, /^api -X POST .*pulls/m, variant.name);
         });
     }
 });
@@ -2068,7 +2124,7 @@ void test('full-send tail fails closed on a rejected base push and a commit-list
         assert.match(result.stderr, /protected branch rejection/);
         assert.match(result.stderr, /base branch may be protected/i);
         const ghLog = fs.existsSync(path.join(dir, 'gh.log')) ? fs.readFileSync(path.join(dir, 'gh.log'), 'utf8') : '';
-        assert.doesNotMatch(ghLog, /^pr create /m);
+        assert.doesNotMatch(ghLog, /^api -X POST .*pulls/m);
         const remoteTip = execFileSync('git', ['--git-dir', fixture.originDir, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim();
         assert.equal(remoteTip, fixture.originBaseSha);
     });

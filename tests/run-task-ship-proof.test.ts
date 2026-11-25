@@ -174,7 +174,7 @@ void test('--ship proves pinned merged PR, fast-forwards, archives, and deletes 
 
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /fast-forwarding/);
-        assert.doesNotMatch(fs.readFileSync(ghLog, 'utf8'), /repo view/);
+        assert.doesNotMatch(fs.readFileSync(ghLog, 'utf8'), /^api -X GET repos\/\{owner\}\/\{repo\}$/m);
         expectArchivedAndDeleted(localDir, taskId, branch);
     });
 });

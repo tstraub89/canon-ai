@@ -874,7 +874,7 @@ export function doctorCmd(args: string[]): void {
         ...(requiredAgents.has('claude') ? [checkBinary('claude', true, 'npm install -g @anthropic-ai/claude-code')] : []),
         ...(requiredAgents.has('claude') && isAvailable('claude') ? [checkClaudeVersion()] : []),
         ...(requiredAgents.has('codex') ? [checkBinary('codex', true, 'npm install -g @openai/codex')] : []),
-        checkBinary('gh', false, 'brew install gh && gh auth login  (required for --pr / --push)'),
+        checkBinary('gh', false, 'brew install gh && gh auth login  (required for --pr / --ship)'),
     ];
 
     const codexDeprecated = checkCodexMdDeprecated(cwd);

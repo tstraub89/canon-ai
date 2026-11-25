@@ -57,6 +57,7 @@ Keep entries terse — one row per file/area, with at most a one-line note. Long
 | `canon update` command | `src/cli/commands/update.ts` | Resolves the running install's root (`local`/`global`/`npx`, realpath-canonicalized); gates on manifest presence + `canon-ai` dependency listing; installs the latest final release from npm after resolving and verifying its tag, or installs a labeled `main`/ref/SHA development build from GitHub; writes `provenance.json` in `.canon` (write-only — no reader yet) |
 | Phase routing logic (phase order, transitions) | `src/orchestrator/main.ts` (`runPhase()`, `checkAndRoute()`) | `PHASE_ORDER` is defined in `src/orchestrator/types.ts`; `main.ts` aliases it |
 | Auto-commit after implement (verifies handoff vs. dirty tree) | `src/orchestrator/main.ts`, `src/orchestrator/git.ts`, `src/orchestrator/validation.ts` | |
+| GitHub PR create, lookup, merge and proof REST calls | `src/orchestrator/forge.ts` | Central REST adapter for GitHub PR operations |
 | Pre-flight gate before code review (validation outcomes, AC coverage, baseline Self-Check presence/fill) | `src/orchestrator/validation.ts` | |
 | Handoff Changes-table parser | `src/orchestrator/validation.ts` | Extracts comma-separated backtick-path / markdown-link tokens per cell |
 | Spec Affected Files parser | `src/orchestrator/validation.ts` | `scanSpecManifest` in `src/orchestrator/markdown-table.ts` shares fence/comment exclusion with `lintSpecManifest` and `lintSpecManifestForTasks`; lint gates spec done and plan/implement entry. `parseAffectedFilesFromSpec(taskId)` reads `### Affected Files` H3 tables from both `## Design` and `## Amendment` / `## Amendment Round N` H2 sections; feeds `buildAffectedFilesAllowlist()` for `verifyBaseDrift` (`--push`/`--pr`) and `buildAdmittedAllowlist()` for the `code_review` pre-flight (`src/orchestrator/phases/code-review.ts`) and full-send scope check |
@@ -183,7 +184,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `src/`, `tests/`, and the remaining `scripts/**/*.d.ts` tooling declaration |
 | Claude permissions, SessionStart and PreToolUse guard registration | `.claude/settings.json` | Auto-shows in-progress tasks at session start; guard registration is opt-in |
 | Claude Code guard hook | `.claude/hooks/canon-guard.mjs` | PreToolUse deny for `status.json` writes, piped `canon run` / `canon watch` and run-log polling, and every `gh pr merge` of a task PR (any strategy); registration snippet `RECOMMENDED_GUARD_HOOKS` in `src/cli/commands/doctor.ts` |
-| Codex sandbox baseline | `src/orchestrator/agents/codex.ts` | `--sandbox workspace-write` passed on fresh exec |
+| Codex sandbox baseline | `src/orchestrator/agents/codex.ts` | Workspace-write sandbox applies to fresh and resumed exec |
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
 | Git ignores | `.gitignore` | |
 | Contributor git-hooks setup | `scripts/install-git-hooks.mjs` | One-time `npm run hooks` wrapper for contributors; skips gracefully when no `.git/` is present |
