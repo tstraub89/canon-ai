@@ -1,7 +1,7 @@
 {
   "id": "rest-forge-pr-calls",
   "title": "Route --pr / --ship GitHub calls through REST",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-25",
   "updated": "2026-11-25",
   "branch": "task/rest-forge-pr-calls",
@@ -64,7 +64,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

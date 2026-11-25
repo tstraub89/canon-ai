@@ -105,29 +105,29 @@ These spec rows were marked `Author` in the spec's Judgment Calls table. None wa
 
 | Category | Follow-up | Tracked |
 |---|---|---|
-| scope | `src/orchestrator/main.ts` keeps the github.com-only fallback (`parseOriginRepoSlug`) when a REST PR read fails for an Enterprise host. The handoff recorded it as a follow-up candidate; host changes were scoped to the forge and guard. | untracked |
-| scope | The guard's `GH_REPO` / `GH_HOST` command-prefix handling. The spec records it as a Non-Goal that predates this task. | untracked |
-| risk | The guard does not block `gh api -X PUT …/pulls/<n>/merge`, so a task PR can still be merged that way. This bypass exists today. The spec's Non-Goals say to track it as a follow-up. | untracked |
-| scope | The README gh install note says gh is needed for `--pr` and `--ship` and not for `--push`. The CLI still requires gh for `--push`. The gating is a Non-Goal, so the operator should fix the note or the gate. | post-ship |
-| nit | Guard: the PR-URL regex is case-sensitive, so `gh pr merge HTTPS://github.com/o/r/pull/12` fails open. The `-R` parsing is case-insensitive. Add the `i` flag and strip a `:port` before `--hostname` (round-1 N1). | untracked |
-| nit | `.claude/hooks/canon-guard.mjs` comment "Mirrors parseRemoteHost in canon-ai's forge module" sits above `normaliseGhHost` and points adopters at canon-ai source they cannot open (round-1 N2). | untracked |
-| nit | Same guard comment, "mirrors canon's forge behavior", overstates the match because the forge also gates on gh auth (round-2 R2-N4). | untracked |
-| nit | `src/orchestrator/main.ts` `reportOrCreatePR` discards the created PR number and re-lists PRs. If the re-list fails, canon dies even though it has the number (round-1 N3). | untracked |
-| nit | `src/orchestrator/main.ts` `establishMergeProof` makes separate reads for the same PR. Immutable fields could share one read; merge state must stay fresh (round-1 N4). | untracked |
-| nit | `tasks/rest-forge-pr-calls/spec.md` AC-1 still says every gh call "always passes `api` as the first argument". Amendment Round 2 overrides it. Note the stale wording (round-1 N5). | untracked |
-| nit | `tasks/rest-forge-pr-calls/handoff.md` has duplicate "Iteration 2" headings and no Iteration 3 section, so the chronology is out of order (round-1 N6, round-2 R2-N1). | untracked |
-| nit | `tests/forge-rest.test.ts` "two pages" test name overstates what it covers (round-1 N7). | untracked |
-| nit | `src/orchestrator/forge.ts`: when the listing call fails with stderr, the `unreadable` reason is raw gh stderr with no "GitHub REST pull-request listing" prefix (round-1 N8). | untracked |
-| nit | `src/orchestrator/main.ts`: some reflowed comments are very long or start lowercase, and the `findMergedPRNumber` comment still cites the gh porcelain issue (round-1 N9). | untracked |
-| nit | `docs/pipeline-orchestrator.md` REST statement could say how the API host is chosen and mention the `GH_HOST` workaround for SSH-alias Enterprise origins (round-1 N10). | untracked |
-| nit | `tests/forge-rest.test.ts` fake returns the match for any endpoint; a comment saying the argv assertion is what pins the regression would help (round-2 R2-N2). | untracked |
-| nit | `tests/forge-rest.test.ts` should name gh's `:owner\|:repo\|:branch` placeholder pattern in a comment, because the stub cannot prove real gh leaves `{owner}%3A` alone (round-2 R2-N3). | untracked |
-| nit | Earlier review round (`tasks/rest-forge-pr-calls/review-prior-2.md`, reviewed at `389251c`; not re-listed in the final round): a successful empty listing now maps to `none`. Record the change of meaning in the handoff, or use a sentinel filter. | untracked |
-| nit | Earlier review round: with `GH_FORCE_TTY` or `CLICOLOR_FORCE` set, gh prints multi-line colored JSON, so every listing becomes `unreadable`. This fails closed. Clear those variables or set `NO_COLOR=1` in the forge runner. | untracked |
-| nit | Earlier review round: forge test fixtures include `[]` and a raw scalar that real gh does not print, and the malformed-line and `{}`-line parse paths are untested. | untracked |
-| nit | Earlier review round: the merge-fail-but-merged test sets every per-PR read to MERGED, so it shows a GET follows the PUT but not that the post-failure read caused the outcome. | untracked |
-| nit | Earlier review round: `object()` is checked twice in the forge listing parser, and the `!entry` guard is redundant. | untracked |
-| observation | The fake-`gh` tests cannot validate real `gh api` flags (spec Known Risk). A scheduled or manual live check against gh 2.89 or newer would catch a wrong flag before users do. | untracked |
+| scope | `src/orchestrator/main.ts` keeps the github.com-only fallback (`parseOriginRepoSlug`) when a REST PR read fails for an Enterprise host. The handoff recorded it as a follow-up candidate; host changes were scoped to the forge and guard. | #198 |
+| scope | The guard's `GH_REPO` / `GH_HOST` command-prefix handling. The spec records it as a Non-Goal that predates this task. | #197 |
+| risk | The guard does not block `gh api -X PUT …/pulls/<n>/merge`, so a task PR can still be merged that way. This bypass exists today. The spec's Non-Goals say to track it as a follow-up. | #197 |
+| scope | The README gh install note says gh is needed for `--pr` and `--ship` and not for `--push`. The CLI still requires gh for `--push`. The gating is a Non-Goal, so the operator should fix the note or the gate. | #198 |
+| nit | Guard: the PR-URL regex is case-sensitive, so `gh pr merge HTTPS://github.com/o/r/pull/12` fails open. The `-R` parsing is case-insensitive. Add the `i` flag and strip a `:port` before `--hostname` (round-1 N1). | #197 |
+| nit | `.claude/hooks/canon-guard.mjs` comment "Mirrors parseRemoteHost in canon-ai's forge module" sits above `normaliseGhHost` and points adopters at canon-ai source they cannot open (round-1 N2). | #197 |
+| nit | Same guard comment, "mirrors canon's forge behavior", overstates the match because the forge also gates on gh auth (round-2 R2-N4). | #197 |
+| nit | `src/orchestrator/main.ts` `reportOrCreatePR` discards the created PR number and re-lists PRs. If the re-list fails, canon dies even though it has the number (round-1 N3). | #198 |
+| nit | `src/orchestrator/main.ts` `establishMergeProof` makes separate reads for the same PR. Immutable fields could share one read; merge state must stay fresh (round-1 N4). | #198 |
+| nit | `tasks/rest-forge-pr-calls/spec.md` AC-1 still says every gh call "always passes `api` as the first argument". Amendment Round 2 overrides it. Note the stale wording (round-1 N5). | dropped |
+| nit | `tasks/rest-forge-pr-calls/handoff.md` has duplicate "Iteration 2" headings and no Iteration 3 section, so the chronology is out of order (round-1 N6, round-2 R2-N1). | dropped |
+| nit | `tests/forge-rest.test.ts` "two pages" test name overstates what it covers (round-1 N7). | #198 |
+| nit | `src/orchestrator/forge.ts`: when the listing call fails with stderr, the `unreadable` reason is raw gh stderr with no "GitHub REST pull-request listing" prefix (round-1 N8). | #198 |
+| nit | `src/orchestrator/main.ts`: some reflowed comments are very long or start lowercase, and the `findMergedPRNumber` comment still cites the gh porcelain issue (round-1 N9). | #198 |
+| nit | `docs/pipeline-orchestrator.md` REST statement could say how the API host is chosen and mention the `GH_HOST` workaround for SSH-alias Enterprise origins (round-1 N10). | #198 |
+| nit | `tests/forge-rest.test.ts` fake returns the match for any endpoint; a comment saying the argv assertion is what pins the regression would help (round-2 R2-N2). | #198 |
+| nit | `tests/forge-rest.test.ts` should name gh's `:owner\|:repo\|:branch` placeholder pattern in a comment, because the stub cannot prove real gh leaves `{owner}%3A` alone (round-2 R2-N3). | #198 |
+| nit | Earlier review round (`tasks/rest-forge-pr-calls/review-prior-2.md`, reviewed at `389251c`; not re-listed in the final round): a successful empty listing now maps to `none`. Record the change of meaning in the handoff, or use a sentinel filter. | #198 |
+| nit | Earlier review round: with `GH_FORCE_TTY` or `CLICOLOR_FORCE` set, gh prints multi-line colored JSON, so every listing becomes `unreadable`. This fails closed. Clear those variables or set `NO_COLOR=1` in the forge runner. | #198 |
+| nit | Earlier review round: forge test fixtures include `[]` and a raw scalar that real gh does not print, and the malformed-line and `{}`-line parse paths are untested. | #198 |
+| nit | Earlier review round: the merge-fail-but-merged test sets every per-PR read to MERGED, so it shows a GET follows the PUT but not that the post-failure read caused the outcome. | #198 |
+| nit | Earlier review round: `object()` is checked twice in the forge listing parser, and the `!entry` guard is redundant. | #198 |
+| observation | The fake-`gh` tests cannot validate real `gh api` flags (spec Known Risk). A scheduled or manual live check against gh 2.89 or newer would catch a wrong flag before users do. | #198 |
 
 ## Quality Log
 
