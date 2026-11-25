@@ -1,7 +1,7 @@
 {
   "id": "metrics-header-mode-dirt",
   "title": "Widen stale metrics headers; abort ship on mode-only doc changes",
-  "status": "human_review",
+  "status": "complete",
   "created": "2026-11-25",
   "updated": "2026-11-25",
   "branch": "task/metrics-header-mode-dirt",
@@ -60,7 +60,7 @@
       "agent": "claude"
     },
     "human_review": {
-      "status": "pending",
+      "status": "done",
       "agent": "human"
     }
   },

@@ -185,3 +185,11 @@ Three test files (`tests/agent-backend.test.ts`, `tests/agent-prompt-argv.test.t
 *(date 2026-11-25, source: empty-model-env-unset)*
 
 A loop that checked each blank variable against its unset baseline passed, even though a blank primary variable could still shadow a set fallback in the same chain. Equal-to-unset only shows that the blank value is treated as absent. It does not show that the next source in the chain wins. Code review round 1 found that the named cases (blank `CODEX_MODEL_MINI` with `CODEX_MODEL_DEFAULT=legacy-mini`, and blank `CLAUDE_MODEL_QA` with `CLAUDE_MODEL=legacy-x`) had no assertion. Prevention: for every fallback chain that a blank value can enter, write one assertion per link (primary blank with a fallback set, fallback blank with the default reached, and the default when everything is blank), in addition to any baseline loop. Canonical example: the test `blank model overrides preserve Claude and Codex fallback precedence` in `tests/pipeline-policy.test.ts`.
+
+---
+
+### A "clean" verdict from a content comparison misses metadata-only changes
+
+*(2026-11-25, source: metrics-header-mode-dirt)*
+
+A dirt classifier that compares working content with HEAD calls a file clean when the bytes match, but git also tracks state that changes without touching content, most importantly the file mode. A `chmod +x` on a shared telemetry doc showed as ` M` with identical text, so `classifySharedDocDirtFromData` returned `clean`, and the later `git add -A` swept the mode bit into the archive commit on base. The preserve path had the same blind spot: it re-checked out HEAD and silently dropped the mode. Prevention: when a gate decides whether a file may be touched, list the git attributes it must compare (content, mode, and anything else `git diff --raw` reports) and pass each one from the caller to the classifier, since a pure function cannot see state it was not given. Probe failures must map to "unknown, abort", never to "unchanged". Canonical example: the mode probe in `src/orchestrator/main.ts` feeding `classifySharedDocDirtFromData` in `src/orchestrator/validation.ts`.

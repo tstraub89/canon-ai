@@ -1768,3 +1768,9 @@
 | 2026-11-25T16:52:17.075Z | empty-model-env-unset | code_review | claude:code-review-cold | claude-sonnet-5-5 | 1 | 8.1s | 119806 | ok | - |
 | 2026-11-25T16:52:17.076Z | empty-model-env-unset | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 1 | 13.7s | 202317 | ok | - |
 | 2026-11-25T16:53:50.106Z | empty-model-env-unset | qa | claude | claude-haiku-5-5 | 0 | 92.6s | 730270 | ok | medium |
+| 2026-11-25T17:08:33.690Z | metrics-header-mode-dirt | implement | codex | gpt-6-luna | 0 | 508.3s | 3088062 | ok | medium |
+| 2026-11-25T17:09:26.486Z | metrics-header-mode-dirt | code_review | codex | gpt-6-luna | 0 | 51.8s | - | ok | high |
+| 2026-11-25T17:10:21.228Z | metrics-header-mode-dirt | code_review | claude | sonnet | 0 | 54.7s | 384446 | ok | medium |
+| 2026-11-25T17:10:21.229Z | metrics-header-mode-dirt | code_review | claude:code-review-cold | claude-sonnet-5-5 | 0 | 20.0s | 136988 | ok | - |
+| 2026-11-25T17:10:21.231Z | metrics-header-mode-dirt | code_review | claude:code-review-anchored | claude-sonnet-5-5 | 0 | 27.4s | 245756 | ok | - |
+| 2026-11-25T17:11:24.660Z | metrics-header-mode-dirt | qa | claude | claude-haiku-5-5 | 0 | 63.1s | 520803 | ok | medium |
