@@ -1,134 +1,82 @@
 # Code Review: empty-model-env-unset
 
-> Reviewer: Claude | Spec: `tasks/empty-model-env-unset/spec.md`
->
-> **Per-round sections.** This file is cumulative across review rounds. The Stage 1 / Stage 2 structure below covers Round 1 (initial review). On re-review, append a new `## Round N` section near the bottom rather than rewriting earlier rounds — the implementer reads only the latest round's section to know what to address.
+**Scope:** Full — base `main` — reason: Round 1 (initial review)
 
-Code review is synthesized by a foreman from its lenses: an anchored Claude lens that applies the Stage 1 / Stage 2 charter below and a cold-Claude lens that reads only the diff. In mixed mode a third, cold-Codex lens, pre-obtained by the orchestrator as an unanchored diff review from a different model family, joins them; Claude mode has the anchored and cold-Claude lenses only. The foreman writes this single consolidated artifact and verdict.
+Lenses: anchored Claude, cold Claude, cold Codex (no findings).
 
-The anchored review runs in two stages on the first round. **Stage 1 is a gate.** If it fails, skip Stage 2 entirely and send back — do not write code-quality findings against code that's about to change.
+## Stage 1: Validation Gate
 
-**Scope:** Full — base `<baseBranch>` — reason: Round 1 (initial review)
+Result: **pass**
 
-## Stage 1 — Spec Compliance (gate)
-
-### Validation Gate
-
-Did the implementer's `handoff.md` pass all applicable checks?
-
-- [ ] Validation Outcomes table has no `Fail` results
-- [ ] All checks required by the spec's "Validation Required" section were run
-- [ ] No required checks were skipped without justification
-- [ ] Red-first evidence recorded for each red-first AC (Red-First Evidence row against pre-fix code, a [wrong-premise] Blocker, or the environment-bound escape's outcome)
-- [ ] Self-Check evidence in the effective record is not contradicted by the diff
-
-### Acceptance Criteria Check
-
-Cross-reference **every** AC from the spec. Missing an AC from this table is itself a Stage 1 failure.
-
-| AC | Status | Notes |
+| AC | Status | Note |
 |---|---|---|
-| AC-1: ... | Pass / Fail / Partial | ... |
-| AC-2: ... | Pass / Fail / Partial | ... |
+| AC-1 | Partial | The all-14-names loop in `tests/pipeline-policy.test.ts` covers blank and whitespace values against the unset baseline. Several named resolution cases have no assertion (see Finding 1). |
+| AC-2 | Met | `tests/run-task-codex-config.test.ts` asserts `config-mini` and `config-full`. |
+| AC-3 | Met | `' opus '` resolves to `opus` and `' m '` to `m`. |
+| AC-4 | Met | Whitespace model legacy variables are silent. Non-empty ones warn, and the effort warning is unchanged. |
+| AC-5 | Met | `envModel` is the single helper, and the structural grep is clean. `CLAUDE_BUDGET` is unchanged, and `src/lib/pipeline-policy.ts` is untouched. |
+| AC-6 | Met | The handoff records both red-first runs. |
+| AC-7 | Met | `docs/pipeline-orchestrator.md` and `templates/docs/pipeline-orchestrator.md` carry the same sentence once. |
 
-### Dropped Sections Check
+## Stage 2: Findings
 
-- [ ] Non-goals respected (no out-of-scope work)
-- [ ] Known Risks addressed or documented as accepted
-- [ ] Human Test Plan is satisfiable by the implementation
+1. **code-bug (test coverage, AC-1)** — `tests/pipeline-policy.test.ts:364-368` (anchored lens; medium severity, high confidence). AC-1 lists explicit resolution cases, and these are unasserted:
+   - blank `CLAUDE_MODEL` gives QA `claude-haiku-5-5` and a strong cell `opus`;
+   - blank `CLAUDE_MODEL_QA` with `CLAUDE_MODEL=legacy-x` gives `legacy-x`;
+   - a blank phase pin falls through to its tier or default model;
+   - blank `CODEX_MODEL_MINI` with `CODEX_MODEL_DEFAULT=legacy-mini` gives `legacy-mini`;
+   - the same holds for `FULL` / `DELICATE`, resolving to `gpt-6.2-sol` by default;
+   - `CODEX_MODEL_MINI` unset with a blank `CODEX_MODEL_DEFAULT` gives `gpt-6-luna`.
 
-### Stage 1 Verdict
+   The baseline `deepEqual` loop cannot catch a blank primary variable that shadows a set fallback. The blank-`MINI` plus set-`DEFAULT` precedence, the core of #185, has no direct test. Add the missing assertions.
+2. **nit** — `src/orchestrator/env.ts:58-60` (flagged by 2 lenses: anchored and cold-Claude). The ternary hard-codes three names. Route every `LEGACY_FALLBACK_ENV_VARS` entry through `envModel` if they are all model variables. Keep the `CODEX_EFFORT_*` check, which sits in a separate list.
+3. **nit** — `tests/pipeline-policy.test.ts:389` (anchored lens). The warning test does not snapshot or restore `CODEX_EFFORT_DELICATE`, so an ambient value would break the `messages.length === 4` check.
+4. **nit** — the handoff's AC-6 Claude row cites the pre-fix working tree rather than a commit. This is acceptable.
 
-- [ ] **Pass** — proceed to Stage 2
-- [ ] **Fail** — skip Stage 2, final verdict below is `Changes requested`
+## Dismissed Cold Findings
 
-> If Stage 1 fails: summarize the gaps above, mark Stage 2 as "Not run — Stage 1 failed," and stop. The implementer will re-implement; re-review runs both stages from scratch.
-
-## Stage 2 — Code Quality (only if Stage 1 passed)
-
-### Summary
-
-One paragraph: overall code quality of the implementation.
-
-### Findings
-
-#### Correctness Bugs
-
-> Items that will cause incorrect behavior if shipped.
-
-(none / list items)
-
-#### Risk / Guardrails
-
-> Items that could cause problems under certain conditions or violate repo conventions.
-
-(none / list items)
-
-#### Optional Cleanup / Nit
-
-> Style, naming, or minor improvements. Not blocking.
-
-(none / list items)
-
-#### Spec Gaps
-
-> Things the implementer had to guess at because the spec was ambiguous, silent, or wrong. If a surviving finding's root cause is the spec rather than the code, the final verdict is `spec_gap`.
-
-(none / list items)
-
-### Dismissed Cold Findings
-
-> Cold-lens findings dropped after verification. Use `Dismissed (cold-Claude): <finding> - <reason>` or, in mixed mode, `Dismissed (cold-Codex): <finding> - <reason>`. Include the reason; verified cold findings are not dismissed merely for being off-AC.
-
-(none / list items)
+- Dismissed (cold-Claude): `CLAUDE_BUDGET` is read raw, so an empty string passes through. Spec Non-Goals and AC-5 explicitly leave it out and assert it unchanged.
+- Dismissed (cold-Codex): no actionable defects were reported. Finding 1 was not raised by it, but it is verified against the spec.
 
 ## Final Verdict
 
-- [ ] **Approved** — ship as-is
-- [ ] **Approved with nits** — ship after addressing optional items (or not)
-- [ ] **Changes requested** — must address Stage 1 failures or Stage 2 correctness/risk items before shipping
-- [ ] **Spec gap** - root cause is the spec, not the code; halt for human instead of routing to implement
-
----
-
-<!--
-On re-review, append below this line:
-
-Heading rule for ANY append to this file: only real review rounds may use a
-`## Round N` heading. The verdict parser scopes to the latest `## Round` body —
-an administrative block (pre-flight rejection, halt note, audit stamp) headed
-`## Round …` with no verdict checkbox makes the parser return no verdict and
-breaks routing. Administrative appends use a non-Round heading (e.g.
-`## Pre-Flight Rejection (round N)`) and omit the verdict checkbox entirely.
-
-## Round N — verifying iteration N-1's response to round N-1
-
-**Scope:** Full | Delta — base `<baseBranch or prevSHA>` — reason: <trigger reason, or "delta">
-
-### Stage 1 — Acceptance Criteria Re-Check
-
-Re-fill this table with every AC from spec.md against the latest code. Earlier AC tables were snapshots of earlier iterations, not reusable proof. ACs whose relevant code paths did not change may be marked `Met (unchanged from round N-1)` with a one-line evidence pointer.
-
-| AC | Status | Notes |
-|---|---|---|
-| AC-1: ... | Met / Partial / Not Met | ... |
-| AC-2: ... | Met / Partial / Not Met | ... |
-
-### Verifying Round N-1 findings
-
-- _correctness bug:_ "<one-line summary>" → addressed (file:line; AC-N now Met in table above) ✓ / still open / no longer relevant
-- _risk/guardrail:_ ... → ...
-
-### New findings (only NEW issues introduced by Iteration N's changes)
-
-(none / list)
-
-### Verdict for this round
-
 - [ ] Approved
 - [ ] Approved with nits
-- [ ] Changes requested
+- [x] Changes requested
 - [ ] Spec gap
 
-> Round 3+: findings must be `correctness bug` or `spec gap` only — no `optional cleanup/nit` and no wording-only changes. We are tightening, not exploring.
--->
+## Round 2
+
+**Scope:** Delta — base `3cb58eeecc453f376ad52f8a588379c57739bde4` — reason: small fix within the files already under review
+
+Lenses: anchored Claude (full diff, effective Self-Check and red-first record), cold Claude (delta), cold Codex (delta; no actionable defects).
+
+### Stage 1
+
+Result: **pass**. All of AC-1 through AC-7 are met. The Round 1 gap is closed: the new test `blank model overrides preserve Claude and Codex fallback precedence` in `tests/pipeline-policy.test.ts` asserts every resolution case AC-1 names.
+
+### Stage 2
+
+Round 1 items resolved:
+- Finding 1: the AC-1 resolution assertions were added.
+- Finding 2: `warnLegacyEnvVars` in `src/orchestrator/env.ts` now routes every entry through `envModel`.
+- Finding 3: the warning test now snapshots and restores `CODEX_EFFORT_DELICATE`.
+
+Surviving findings (nits only, no code-bugs):
+- nit (anchored): `src/orchestrator/env.ts:26` places `envModel` above the path constants.
+- nit (anchored): the test `blank legacy model overrides resolve like unset variables` overlaps the new precedence test. It is harmless, and the red-first command targets it by name.
+- nit (cold-Claude): the warning test hard-codes a count of 5. This is a low-severity fragility.
+
+### Dismissed Cold Findings
+
+- Dismissed (cold-Claude): a future non-model entry in `LEGACY_FALLBACK_ENV_VARS` would be trimmed by `envModel`. All current entries are model variables, and the list holds fallbacks only.
+- Dismissed (cold-Claude): the `LEGACY_IGNORED_ENV_VARS` effort check still uses truthiness. This is unchanged on purpose per the spec's Non-Goals.
+- Dismissed (cold-Claude): `dist/` may not match a clean build. The change mirrors the source exactly, and the handoff reports the build.
+- Dismissed (cold-Codex): no actionable defects were reported.
+
+### Final Verdict
+
+- [ ] Approved
+- [x] Approved with nits
+- [ ] Changes requested
+- [ ] Spec gap

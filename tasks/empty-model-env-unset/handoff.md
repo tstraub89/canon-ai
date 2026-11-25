@@ -1,157 +1,126 @@
 # Implementation Handoff: empty-model-env-unset
 
 > Author: implementer | Spec: `tasks/empty-model-env-unset/spec.md` | Plan: `tasks/empty-model-env-unset/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a source file with its test, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
-
-## Canon Governance
-
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
-| Canon version | `status.json.canon.canon_version` |
-
-Codex CLI applies in mixed mode only.
+| `src/orchestrator/env.ts`, `src/orchestrator/policy.ts` | Added and applied the shared model env normalizer; model legacy warnings use it. |
+| `tests/pipeline-policy.test.ts`, `tests/run-task-codex-config.test.ts` | Added blank, whitespace, trim, warning, budget, and config-fallback coverage. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Documented blank model values and trimming in Environment Variables. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Rebuilt bundles. |
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+Normalize model environment input once at the shared env boundary so whitespace and empty values fall through existing precedence while non-empty values are trimmed. The budget and effort warning paths remain unchanged.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None | Followed the planned helper and test approach. | None |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1 | Met | Spawned policy tests compare all 14 blank/whitespace variables against unset baselines; resolution assertions cover Claude defaults and Codex fallback/defaults. |
+| AC-2 | Met | Blank mini/full env values resolve to configured models through `getCodexConfig`. |
+| AC-3 | Met | Padded Claude QA and Codex mini values resolve trimmed. |
+| AC-4 | Met | Warning test checks blank model variables stay silent, non-empty legacy values warn, and effort warning remains. |
+| AC-5 | Met | `envModel` is the sole source env reader for all 14 model names; `CLAUDE_BUDGET` remains direct and empty; `src/lib/pipeline-policy.ts` is untouched. |
+| AC-6 | Met | Both red-first checks reproduced against the pre-fix policy source; see evidence below. |
+| AC-7 | Met | Environment Variables docs and mirror contain the rule once; sync check passed. |
 
 ## Edge Cases Considered
 
-- ...
+- Unset, empty, whitespace-only, and padded non-empty model env values.
+- Deprecated Codex fallbacks retain precedence after blank primary values.
+- `CLAUDE_BUDGET=''` stays `''`.
+- Effort deprecation warnings retain their original truthy check.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- None.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-6 Claude | `node --import tsx --test --test-name-pattern='blank legacy model overrides' tests/pipeline-policy.test.ts` | Pre-fix working-tree source (before implementation) | `'' !== 'sonnet'` for blank `CLAUDE_MODEL`. | Included in passing policy tests. |
+| AC-6 Codex | `CODEX_MODEL_MINI='' node --import tsx --eval "import('./src/orchestrator/policy.ts').then(m => { if (m.policyConfig().codexModelMini !== '') process.exit(1); console.log('codexModelMini='); })"` | `HEAD` policy source, restored immediately after the check | Printed `codexModelMini=`: blank mini was treated as a real model instead of falling through. | Blank-model policy/config tests pass with the fix. |
 
 ## Self-Check
 
-> One row per pre-handoff self-check, each with evidence a reviewer can check against the diff. **Test integrity:** each behavioral test added or changed, the assertion that pins its failure reason, and how you know it fails without the change (a Red-First Evidence row counts; regenerated snapshots and fixture-only edits are exempt and can be summarized in one line). **Restatement sweep:** the search pattern(s) you ran for each changed contract, and every hit outside Affected Files with how it was handled — updated, or recorded as a Blocker. **Sibling parity:** the parallel paths you examined for each added guard or branch, and whether each got the same treatment, or why not. A row may read `N/A — <reason>`. Write a literal pipe inside a cell as `\|`. Cite paths by the same file-citation rule as the rest of this handoff (full repository-root paths; the markdown-link form for a file that does not exist).
-
 | Check | Evidence |
 |---|---|
-| Test integrity | _(tests added or changed → the assertion that pins each failure reason → how you know it fails without the change)_ |
-| Restatement sweep | _(search pattern(s) run per changed contract → hits outside Affected Files and how each was handled)_ |
-| Sibling parity | _(parallel paths examined per added guard or branch → same treatment, or why not)_ |
+| Test integrity | `tests/pipeline-policy.test.ts` pins blank/whitespace values to unset baselines, trimmed values, warning counts, and unchanged empty budget; `tests/run-task-codex-config.test.ts` pins configured mini/full values. Red-first failures above establish the two primary regressions without the fix. |
+| Restatement sweep | Searched `CLAUDE_MODEL`, `CODEX_MODEL`, `empty or whitespace-only model` and `trimmed` across `src/`, `docs/`, and `templates/docs/`. No runtime contract duplicates needed changes; the environment reference and its mirror are the two requested doc surfaces. Separate `rg -n 'CLAUDE_MODEL' src/` and `rg -n 'CODEX_MODEL' src/` searches confirm there are no direct `process.env` model reads. |
+| Sibling parity | Examined every Claude pin/tier/legacy variable and both Codex primary/fallback pairs in `src/orchestrator/policy.ts`; each routes through `envModel`. The three model legacy warnings use the same helper; the separate `CODEX_EFFORT_*` path remains unchanged as specified. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 2,322 passed, 1 skipped. |
+| `npm run build` | Pass | Rebuilt `dist/`. |
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | |
 
-## Ready for Review
-
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
+## Iteration 2 — addressing review round 1
 
 ### Findings addressed
 
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
+- **AC-1 coverage:** added explicit fallback assertions for blank Claude legacy, QA pin, and phase pin values; Codex mini/full blank primaries with deprecated fallbacks; and blank deprecated fallbacks reaching built-in defaults. AC-1 is now fully covered.
+- **Warning helper consistency:** `warnLegacyEnvVars` now routes every `LEGACY_FALLBACK_ENV_VARS` entry through `envModel`; the separate ignored `CODEX_EFFORT_*` list keeps its prior behavior.
+- **Warning test isolation:** the test now saves, sets, and restores `CODEX_EFFORT_DELICATE` alongside `CODEX_EFFORT_DEFAULT`.
 
-### AC deltas (if any)
+### AC delta
 
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
+| AC | Status | Notes |
+|---|---|---|
+| AC-1 | Met | Added the named precedence assertions from Review Round 1 Finding 1; targeted policy tests and the full suite pass. |
 
 ### Self-Check
 
-_Include only when this round makes an earlier Self-Check row incomplete or untrue, and include only the rows it updates. Each row restates that check's evidence for all work on the branch, not only this round, and supersedes every earlier version of that row (earlier rows stay in place as history). This subsection never replaces the baseline `## Self-Check` section._
-
 | Check | Evidence |
 |---|---|
+| Test integrity | In `tests/pipeline-policy.test.ts`, assertions pin blank `CLAUDE_MODEL` to Haiku QA and Opus strong cells, blank QA pin to `legacy-x`, blank spec pin to tier/default, blank Codex mini/full primaries to their deprecated fallback or built-in defaults, and restoration of both effort env variables. These fail on the unnormalized branch because blank primaries shadow the configured fallback/default; the unset-baseline loop also compares all 14 variables. `tests/run-task-codex-config.test.ts` separately pins blank env models to config values. |
+| Sibling parity | Rechecked every model env read in `src/orchestrator/policy.ts`: all 10 Claude model variables plus both Codex primary/fallback pairs use `envModel`. All three entries in `LEGACY_FALLBACK_ENV_VARS` use `envModel`; `LEGACY_IGNORED_ENV_VARS` remains the separate effort-only path. Mini/full fallback and config paths are covered in `tests/pipeline-policy.test.ts` and `tests/run-task-codex-config.test.ts`. |
 
-### Re-run validation (only checks that re-ran)
+### Validation Outcomes
 
 | Check | Result | Notes |
 |---|---|---|
-| `<lint>` | Pass | |
--->
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 2,323 passed, 1 skipped. |
+| `npm run build` | Pass | Rebuilt `dist/`. |
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | |
+
+## Iteration 1 — addressing pre-flight rejection
+
+### Changes
+
+- Repaired the baseline Restatement sweep cell to avoid a literal pipe in its inline command; the handoff table parser treats that pipe as a cell boundary, and the row now parses as exactly two cells.
+
+### Self-Check
+
+| Check | Evidence |
+|---|---|
+| Restatement sweep | Rechecked the structural search `process.env` plus the `CLAUDE_MODEL`/`CODEX_MODEL` names across `src/`; it returns no direct reads. The two documentation hits are the requested [docs/pipeline-orchestrator.md](/home/user/canon-ai/.canon/worktrees/empty-model-env-unset/docs/pipeline-orchestrator.md) and [templates/docs/pipeline-orchestrator.md](/home/user/canon-ai/.canon/worktrees/empty-model-env-unset/templates/docs/pipeline-orchestrator.md); no additional in-scope restatement was found. |
+
+### Validation Outcomes
+
+| Check | Result | Notes |
+|---|---|---|
+| `npm run lint` | Pass | |
+| `npm run type-check` | Pass | |
+| `npm test` | Pass | 2,322 passed, 1 skipped. |
+| `npm run build` | Pass | Rebuilt `dist/`. |
+| `npm run sync-templates:check` | Pass | |
+| `npm run docs-refs-check` | Pass | |

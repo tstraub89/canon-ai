@@ -1,0 +1,1 @@
+The changed warning condition is equivalent for the three legacy model variables, and the added tests cover fallback precedence and legacy warning behavior. I found no actionable defects in the diff.
