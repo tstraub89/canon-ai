@@ -699,3 +699,23 @@ void test('AC-13: canon-ai git-path pitfalls and Validation Gate Discipline stay
     assert.match(lintOutput, /## Lint & Type Safety Policy[\s\S]*Lint suppression comments/);
     assert.match(lintOutput, /Lint & Type Safety Policy — Lint \/ TS suppression \/ `any` — `src\/orchestrator\/prompts\/templates\/implement\.md` \*\*\(matches this task\)\*\*/);
 });
+
+void test('directory-glob depth boundary: only globs that can match inside the directory select it (#167)', () => {
+    const table = [
+        '| Area | Section | Key files |',
+        '|---|---|---|',
+        '| Equal depth | Boundary Rules | `src/*` |',
+        '| One level deeper | Boundary Rules | `src/*/*` |',
+        '| Globstar | Boundary Rules | `src/**` |',
+        '| Prefix sibling | Boundary Rules | `src/ab/**` |',
+    ].join('\n');
+    const output = selectPitfalls(matchingInput(tablePatterns(table, '## Boundary Rules\n\nBOUNDARY_BODY\n'), ['src/a/']));
+    const marked = (area: string, key: string): RegExp =>
+        new RegExp(`Boundary Rules — ${area} — \`${key.replace(/\*/g, '\\*')}\` \\*\\*\\(matches this task\\)\\*\\*`);
+
+    // `src/*` has the directory's own depth: it matches `src/a` itself, never a path inside it.
+    assert.doesNotMatch(output, marked('Equal depth', 'src/*'));
+    assert.match(output, marked('One level deeper', 'src/*/*'));
+    assert.match(output, marked('Globstar', 'src/**'));
+    assert.doesNotMatch(output, marked('Prefix sibling', 'src/ab/**'));
+});
