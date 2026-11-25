@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { runCodex } from '../src/orchestrator/agents/codex.ts';
+import { CODEX_HEADLESS } from '../src/orchestrator/prompts/helpers.ts';
 
 // Pins literal session flags and model/effort/budget defaults under a scrubbed env.
 // Expected argv uses current config getters and shared prompt helpers; actual
@@ -25,6 +27,37 @@ const parityRows = [
     ['Claude retry', 'reviewer', 'code_review', 'session', true],
     ['QA fixup', 'qa', 'qa', 'session', true],
 ] as const;
+
+void test('runCodex resume argv applies the workspace-write sandbox config', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-resume-argv-'));
+    const logPath = path.join(dir, 'argv.json');
+    const previousPath = process.env.PATH;
+    const previousLog = process.env.CODEX_RESUME_ARGV_LOG;
+    fs.writeFileSync(path.join(dir, 'codex'), [
+        '#!/bin/sh',
+        'node -e \'require("fs").writeFileSync(process.env.CODEX_RESUME_ARGV_LOG, JSON.stringify(process.argv.slice(1)))\' "$@"',
+        'printf "%s\\n" \'{"type":"thread.started","thread_id":"resumed-session"}\'',
+        'printf "%s\\n" \'{"type":"item.completed","item":{"type":"agent_message","text":"resumed"}}\'',
+        'printf "%s\\n" \'{"type":"turn.completed"}\'',
+    ].join('\n'), { mode: 0o755 });
+    process.env.PATH = `${dir}${path.delimiter}${previousPath ?? ''}`;
+    process.env.CODEX_RESUME_ARGV_LOG = logPath;
+    try {
+        const prompt = 'Finish the requested task.';
+        const result = await runCodex(prompt, false, 'resume-id', 'test-model', 'high', undefined, dir, false);
+        assert.equal(result.text, 'resumed', JSON.stringify(result));
+        assert.deepEqual(JSON.parse(fs.readFileSync(logPath, 'utf8')), [
+            'exec', 'resume', 'resume-id', '--json', '-c', 'model_reasoning_effort=high',
+            '-c', 'sandbox_mode="workspace-write"', `${CODEX_HEADLESS}\n\n${prompt}`, '-m', 'test-model',
+        ]);
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        if (previousLog === undefined) delete process.env.CODEX_RESUME_ARGV_LOG;
+        else process.env.CODEX_RESUME_ARGV_LOG = previousLog;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
 
 void test('backend session contract: literal flags and policy defaults', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'backend-parity-'));
@@ -63,7 +96,7 @@ for (const [name, role, phase, resumeId, wrapForResume] of ${JSON.stringify(pari
     const effective = (claude ? CLAUDE_HEADLESS : CODEX_HEADLESS) + '\\n\\n' + rendered;
     const expected = claude
       ? ['-p', effective, '--model', cfg.model, '--effort', cfg.effort, '--add-dir', REPO_ROOT, '--max-budget-usd', cfg.budget, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose', '--add-dir', cwd, ...(resumeId ? ['--resume',resumeId] : [])]
-      : resumeId ? ['exec','resume',resumeId,'--json','-c','model_reasoning_effort='+cfg.effort,effective,'-m',cfg.model]
+      : resumeId ? ['exec','resume',resumeId,'--json','-c','model_reasoning_effort='+cfg.effort,'-c','sandbox_mode="workspace-write"',effective,'-m',cfg.model]
       : ['exec','--json','-c','model_reasoning_effort='+cfg.effort,'--sandbox','workspace-write',effective,'-m',cfg.model,'-C',cwd];
     assert.deepEqual(actual, { binary: claude ? 'claude' : 'codex', argv: expected, cwd: fs.realpathSync(cwd) }, name);
     assert.equal(cfg.model, claude ? phase === 'qa' ? 'claude-haiku-5-5' : 'opus' : 'gpt-6-luna', name);

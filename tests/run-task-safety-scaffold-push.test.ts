@@ -534,6 +534,7 @@ void test('review-entry docs-refs fix-up resumes the stored implement session in
         const fixup = entries.find(entry => entry.agent === 'codex' && entry.argv.includes('stored-implement-session'));
         assert.deepEqual(fixup, { agent: 'codex', cwd: fs.realpathSync(fixture.worktreeDir), argv: [
             'exec', 'resume', 'stored-implement-session', '--json', '-c', `model_reasoning_effort=${cfg.effort}`,
+            '-c', 'sandbox_mode="workspace-write"',
             `${CODEX_HEADLESS}\n\n${expectedPrompt}`, '-m', cfg.model,
         ] });
     });

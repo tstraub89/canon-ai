@@ -183,7 +183,7 @@ Run via `npm test` (uses node `--test` runner with `tsx` import hook). Test file
 | TypeScript config (strict, ES2022, NoEmit) | `tsconfig.json` | `src/`, `tests/`, and the remaining `scripts/**/*.d.ts` tooling declaration |
 | Claude permissions, SessionStart and PreToolUse guard registration | `.claude/settings.json` | Auto-shows in-progress tasks at session start; guard registration is opt-in |
 | Claude Code guard hook | `.claude/hooks/canon-guard.mjs` | PreToolUse deny for `status.json` writes, piped `canon run` / `canon watch` and run-log polling, and every `gh pr merge` of a task PR (any strategy); registration snippet `RECOMMENDED_GUARD_HOOKS` in `src/cli/commands/doctor.ts` |
-| Codex sandbox baseline | `src/orchestrator/agents/codex.ts` | `--sandbox workspace-write` passed on fresh exec |
+| Codex sandbox baseline | `src/orchestrator/agents/codex.ts` | Workspace-write sandbox applies to fresh and resumed exec |
 | Custom canon hooks (placeholder) | `.canon/hooks/README.md` | |
 | Git ignores | `.gitignore` | |
 | Contributor git-hooks setup | `scripts/install-git-hooks.mjs` | One-time `npm run hooks` wrapper for contributors; skips gracefully when no `.git/` is present |

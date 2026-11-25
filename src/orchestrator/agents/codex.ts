@@ -76,9 +76,10 @@ export async function runCodex(
             };
         }
 
-        const sandboxFlags = resumeId ? [] : ['--sandbox', 'workspace-write'];
+        const sandboxFlags = ['--sandbox', 'workspace-write'];
         const args = resumeId
-            ? ['exec', 'resume', resumeId, '--json', ...effortFlag, effectivePrompt, '-m', model]
+            // `codex exec resume` has no --sandbox flag, so preserve the mode through config.
+            ? ['exec', 'resume', resumeId, '--json', ...effortFlag, '-c', 'sandbox_mode="workspace-write"', effectivePrompt, '-m', model]
             : ['exec', '--json', ...effortFlag, ...sandboxFlags, effectivePrompt, '-m', model, '-C', cwd];
 
         const displayChunks: string[] = [];
