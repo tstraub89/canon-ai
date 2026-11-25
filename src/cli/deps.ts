@@ -13,7 +13,7 @@ function hardDeps(provider: Provider): Dep[] { return [
 ]; }
 
 const SOFT_DEPS: Dep[] = [
-    { cmd: 'gh', installHint: 'brew install gh && gh auth login  (required for --pr / --push)' },
+    { cmd: 'gh', installHint: 'brew install gh && gh auth login  (required for --pr / --ship)' },
 ];
 
 export function isAvailable(cmd: string): boolean {

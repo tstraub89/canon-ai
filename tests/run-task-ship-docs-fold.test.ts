@@ -7,7 +7,8 @@ import { METRICS_SKELETON, recordMetric } from '../src/orchestrator/metrics.js';
 import { writeQualityLogForTask } from '../src/orchestrator/quality-log.js';
 import { applyTelemetryFold, foldLessonsFragment, foldTelemetryFragments, planTelemetryFold, sharedTelemetryDocsTouched } from '../src/orchestrator/telemetry-fold.js';
 import { parseTable } from '../src/orchestrator/markdown-table.js';
-import { formatMergeFailureMessage, parseAllowedMergeMethods } from '../src/orchestrator/main.js';
+import { formatMergeFailureMessage } from '../src/orchestrator/main.js';
+import { parseAllowedMergeMethods } from '../src/orchestrator/forge.js';
 import type { StatusJson } from '../src/orchestrator/types.js';
 import {
     TSX_LOADER,
@@ -41,9 +42,9 @@ import {
 
 
 void test('allowed merge-method response requires all three boolean fields', () => {
-    const parsed = parseAllowedMergeMethods('{"squashMergeAllowed":false,"rebaseMergeAllowed":true,"mergeCommitAllowed":false}');
+    const parsed = parseAllowedMergeMethods('{"allow_squash_merge":false,"allow_rebase_merge":true,"allow_merge_commit":false}');
     assert.deepEqual(parsed, { ok: true, allowed: { squash: false, rebase: true, merge: false } });
-    assert.deepEqual(parseAllowedMergeMethods('{"squashMergeAllowed":true,"rebaseMergeAllowed":true}'), { ok: false });
+    assert.deepEqual(parseAllowedMergeMethods('{"allow_squash_merge":true,"allow_rebase_merge":true}'), { ok: false });
     assert.deepEqual(parseAllowedMergeMethods('not json'), { ok: false });
 });
 
@@ -325,9 +326,9 @@ for (const [method, flag] of [['squash', '--squash'], ['rebase', '--rebase'], ['
 
             assert.equal(result.status, 0, result.stderr);
             const log = fs.readFileSync(ghLog, 'utf8');
-            assert.match(log, new RegExp(`^pr merge 107 ${flag}$`, 'm'));
+            assert.match(log, new RegExp(`^api -X PUT repos/\\{owner\\}/\\{repo\\}/pulls/107/merge -f merge_method=${method}$`, 'm'));
             for (const otherFlag of ['--squash', '--rebase', '--merge']) {
-                if (otherFlag !== flag) assert.doesNotMatch(log, new RegExp(`^pr merge 107 ${otherFlag}$`, 'm'));
+                if (otherFlag !== flag) assert.doesNotMatch(log, new RegExp(`^api -X PUT repos/.*merge_method=${otherFlag.slice(2)}$`, 'm'));
             }
             assert.doesNotMatch(log, /--delete-branch/);
             assert.match(result.stdout, new RegExp(`Deleted remote branch ${branch}\\.`));
@@ -383,9 +384,9 @@ void test('--ship pre-flight refuses unreadable or disallowed merge settings bef
             assert.notEqual(result.status, 0, scenario.name);
             assert.match(result.stderr, scenario.expected, scenario.name);
             const log = fs.readFileSync(ghLog, 'utf8');
-            assert.doesNotMatch(log, /pr merge/);
-            if (scenario.name.includes('open PR listing')) assert.doesNotMatch(log, /repo view/);
-            else assert.match(log, /repo view/);
+            assert.doesNotMatch(log, /pulls\/107\/merge/);
+            if (scenario.name.includes('open PR listing')) assert.doesNotMatch(log, /api -X GET repos\/\{owner\}\/\{repo\}$/m);
+            else assert.match(log, /api -X GET repos\/\{owner\}\/\{repo\}$/m);
             assert.equal(gitIn(localDir, 'branch', '--show-current'), branchBefore);
             if (scenario.keepRemoteBranch) assert.equal(fs.readFileSync(fetchHeadPath, 'utf8'), 'preflight sentinel\n');
             assert.equal(readRel(localDir, 'docs/pipeline-invocations.md'), METRICS_SKELETON + suffix);

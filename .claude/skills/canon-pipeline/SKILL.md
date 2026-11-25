@@ -77,7 +77,7 @@ Before `--pr`, read `tasks/<id>/done.md` → `## Follow-ups`. For each `untracke
 canon run <task-id> --pr
 ```
 
-Pushes the task branch (first pushing canon's own unpushed scaffold commits on `base_branch`, or creating it on origin if missing when every local-only commit is canon-safe or already published) and opens a draft PR via `gh pr create` targeting `base_branch` from `status.json`. After it runs, read `tasks/<id>/handoff.md` and verify the auto-generated PR body matches actual scope — rewrite via `gh pr edit <num> --body-file ...` if code-review iterations expanded scope beyond the initial handoff.
+Pushes the task branch (first pushing canon's own unpushed scaffold commits on `base_branch`, or creating it on origin if missing when every local-only commit is canon-safe or already published) and opens a draft PR through GitHub REST via `gh api` targeting `base_branch` from `status.json`. After it runs, read `tasks/<id>/handoff.md` and verify the auto-generated PR body matches actual scope — rewrite via `gh pr edit <num> --body-file ...` if code-review iterations expanded scope beyond the initial handoff.
 
 `--pr` aborts if merging `origin/<base>` conflicts or the branch changes files outside the spec's `### Affected Files` table (after QA, QA-managed docs, telemetry and the tasks' own artifacts are also allowed). Resolve a merge conflict in the branch; for an intentional out-of-scope change, fix the table or amend the spec. Don't reach for `--force`. `--push` pushes without opening a PR.
 

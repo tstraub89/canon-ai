@@ -112,11 +112,13 @@ function writeExecutable(dir: string, name: string, lines: string[]): string {
 function makeGhShim(binDir: string): void {
     writeExecutable(binDir, 'gh', [
         'if [ -n "${CANON_GUARD_GH_LOG-}" ]; then printf "%s\\n" "$*" >> "$CANON_GUARD_GH_LOG"; fi',
-        'case "$3" in',
-        '  12) printf "%s\\n" task/foo ;;',
-        '  13) printf "%s\\n" release/v1.2 ;;',
-        '  98) exec sleep 5 ;;',
-        '  99) exit 1 ;;',
+        'if [ "${1:-}" != "api" ]; then printf "%s\\n" "HTTP 403: GitHub GraphQL is not available" >&2; exit 1; fi',
+        'endpoint=""; while [ $# -gt 0 ]; do case "$1" in api|-X|--hostname) shift 2 ;; GET) shift ;; *) endpoint="$1"; shift ;; esac; done',
+        'case "$endpoint" in',
+        '  */12) printf \'{"head":{"ref":"task/foo"}}\\n\' ;;',
+        '  */13) printf \'{"head":{"ref":"release/v1.2"}}\\n\' ;;',
+        '  */98) exec sleep 5 ;;',
+        '  */99) exit 1 ;;',
         '  *) exit 1 ;;',
         'esac',
     ]);
@@ -336,7 +338,22 @@ void test('task PR merge rule denies every merge strategy and allows lookup fail
                 const result = run(command, fixture.repo, { CANON_GUARD_GH_LOG: ghLogPath });
                 assert.equal(result.denied, true, result.reason || command);
                 assert.match(result.reason, /canon run foo --ship/);
-                assert.match(fs.readFileSync(ghLogPath, 'utf8'), /-R owner\/repo/);
+                assert.match(fs.readFileSync(ghLogPath, 'utf8'), /repos\/owner\/repo\/pulls\/12/);
+            });
+        }
+        for (const [name, command] of [
+            ['PR URL', 'gh pr merge https://github.com/owner/repo/pull/12 --squash'],
+            ['number ref with hash prefix', "gh pr merge '#12' --squash"],
+            ['owner-qualified task branch', 'gh pr merge owner:task/foo --squash'],
+            ['task branch ref', 'gh pr merge task/foo --squash'],
+            ['enterprise PR URL', 'gh pr merge https://ghe.example/owner/repo/pull/12 --squash'],
+        ] as const) {
+            await t.test(name, () => {
+                fs.rmSync(ghLogPath, { force: true });
+                const result = run(command, fixture.repo, { CANON_GUARD_GH_LOG: ghLogPath });
+                assert.equal(result.denied, true, result.reason || command);
+                assert.match(result.reason, /canon run foo --ship/);
+                if (name === 'enterprise PR URL') assert.match(fs.readFileSync(path.join(fixture.root, 'gh-lookup.log'), 'utf8'), /--hostname ghe\.example/);
             });
         }
         await t.test('bundle PR names every task recorded on the shared branch', () => {

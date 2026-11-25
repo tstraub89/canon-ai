@@ -631,10 +631,23 @@ function findPRReference(args, initialRepo = null) {
 }
 
 function lookupPRHead(ref, repo, cwd) {
+    if (ref.includes('://')) {
+        const match = ref.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[#?].*)?$/);
+        if (!match) return null;
+        const [, host, owner, name, number] = match;
+        return readPRHead(`repos/${owner}/${name}/pulls/${number}`, cwd, host);
+    }
+    if (ref.includes(':')) return ref.slice(ref.indexOf(':') + 1);
+    if (!/^#?\d+$/.test(ref)) return ref;
+    const repoParts = (repo ?? '').split('/');
+    const explicitHost = repoParts.length === 3 ? repoParts[0] : null;
+    const repoPath = repoParts.length === 2 ? `repos/${repoParts[0]}/${repoParts[1]}` : 'repos/{owner}/{repo}';
+    return readPRHead(`${repoPath}/pulls/${ref.replace(/^#/, '')}`, cwd, explicitHost);
+}
+
+function readPRHead(endpoint, cwd, host) {
     const result = spawnSync('gh', [
-        'pr', 'view', ref,
-        ...(repo ? ['-R', repo] : []),
-        '--json', 'headRefName', '--jq', '.headRefName',
+        'api', '-X', 'GET', ...(host ? ['--hostname', host] : []), endpoint,
     ], {
         cwd,
         encoding: 'utf8',
@@ -642,8 +655,10 @@ function lookupPRHead(ref, repo, cwd) {
         timeout: GH_TIMEOUT_MS,
     });
     if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
-    const head = result.stdout.trim();
-    return head || null;
+    try {
+        const data = JSON.parse(result.stdout);
+        return typeof data?.head?.ref === 'string' && data.head.ref ? data.head.ref : null;
+    } catch { return null; }
 }
 
 function lookupCurrentBranch(cwd) {

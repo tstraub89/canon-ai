@@ -1,0 +1,99 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import * as splitGit from './git.js';
+import type { ShipMergeMethod } from './docs-freshness.js';
+import type { CommandResult } from './types.js';
+
+export type ExactPRLookup = { kind: 'found'; number: number } | { kind: 'none' } | { kind: 'unreadable'; reason: string };
+export type PRFields = { state: 'OPEN' | 'CLOSED' | 'MERGED' | null; headSha: string | null; baseRef: string | null; url: string | null };
+export type GhRunner = (argv: string[]) => CommandResult;
+export type GitLogRunner = (...args: string[]) => CommandResult;
+const defaultRunner: GhRunner = argv => splitGit.runCommand('gh', argv);
+const defaultGitLogRunner: GitLogRunner = (...args) => splitGit.gitSafe(...args);
+let runner = defaultRunner;
+let gitLogRunner = defaultGitLogRunner;
+
+export function setGhRunnerForTest(next: GhRunner | null): void { runner = next ?? defaultRunner; }
+export function setGitLogRunnerForTest(next: GitLogRunner | null): void { gitLogRunner = next ?? defaultGitLogRunner; }
+function ghApi(argv: string[]): CommandResult { return runner(['api', ...argv]); }
+const REPO = 'repos/{owner}/{repo}';
+const MERGE_ALLOWED_FIELD: Record<ShipMergeMethod, string> = { squash: 'allow_squash_merge', rebase: 'allow_rebase_merge', merge: 'allow_merge_commit' };
+function isMergedAt(value: unknown): boolean { return typeof value === 'string' && value.length > 0; }
+function object(value: unknown): Record<string, unknown> | null { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null; }
+function fieldString(value: unknown): string | null { return typeof value === 'string' && value ? value : null; }
+function encodeQuery(value: string): string { return encodeURIComponent(value).replace(/%2F/gi, '/').replace(/%3A/gi, ':'); }
+
+export function parseAllowedMergeMethods(stdout: string): { ok: true; allowed: Record<ShipMergeMethod, boolean> } | { ok: false } {
+    let parsed: unknown;
+    try { parsed = JSON.parse(stdout); } catch { return { ok: false }; }
+    const record = object(parsed);
+    if (!record) return { ok: false };
+    const allowed = {} as Record<ShipMergeMethod, boolean>;
+    for (const method of Object.keys(MERGE_ALLOWED_FIELD) as ShipMergeMethod[]) {
+        const value = record[MERGE_ALLOWED_FIELD[method]];
+        if (typeof value !== 'boolean') return { ok: false };
+        allowed[method] = value;
+    }
+    return { ok: true, allowed };
+}
+
+export function lookupPRByBranch(branch: string, baseBranch: string | null, state: 'open' | 'merged' | 'closed'): ExactPRLookup {
+    const query = `state=${state === 'open' ? 'open' : 'closed'}&head={owner}:${encodeQuery(branch)}` +
+        (baseBranch === null ? '' : `&base=${encodeQuery(baseBranch)}`) + '&per_page=100';
+    const result = ghApi(['-X', 'GET', '--paginate', '--slurp', `${REPO}/pulls?${query}`]);
+    const prefix = 'GitHub REST pull-request listing';
+    if (!result.ok) return { kind: 'unreadable', reason: result.stderr.trim() || `${prefix} (gh api) exited unsuccessfully` };
+    if (!result.stdout.trim()) return { kind: 'unreadable', reason: `${prefix} returned empty output` };
+    let parsed: unknown;
+    try { parsed = JSON.parse(result.stdout); } catch { return { kind: 'unreadable', reason: `${prefix} returned malformed JSON` }; }
+    if (!Array.isArray(parsed) || parsed.some(page => !Array.isArray(page))) return { kind: 'unreadable', reason: `${prefix} did not return a JSON array of pages` };
+    for (const page of parsed as unknown[][]) for (const raw of page) {
+        const entry = object(raw);
+        const head = object(entry?.head);
+        const base = object(entry?.base);
+        if (!entry || head?.ref !== branch || typeof entry.number !== 'number') continue;
+        if (baseBranch !== null && base?.ref !== baseBranch) continue;
+        if (state === 'open' ? entry.state !== 'open' : state === 'merged' ? !isMergedAt(entry.merged_at) : entry.state !== 'closed' || isMergedAt(entry.merged_at)) continue;
+        return { kind: 'found', number: entry.number };
+    }
+    return { kind: 'none' };
+}
+
+export function readPR(prNum: number): { ok: true; pr: PRFields } | { ok: false } {
+    const result = ghApi(['-X', 'GET', `${REPO}/pulls/${prNum}`]);
+    if (!result.ok) return { ok: false };
+    let parsed: unknown;
+    try { parsed = JSON.parse(result.stdout); } catch { return { ok: false }; }
+    const record = object(parsed);
+    if (!record) return { ok: false };
+    const state = record.state === 'open' ? 'OPEN' : record.state === 'closed' ? (isMergedAt(record.merged_at) ? 'MERGED' : 'CLOSED') : null;
+    return { ok: true, pr: { state, headSha: fieldString(object(record.head)?.sha), baseRef: fieldString(object(record.base)?.ref), url: fieldString(record.html_url) } };
+}
+
+export function isPRMerged(prNum: number): boolean { const result = readPR(prNum); return result.ok && result.pr.state === 'MERGED'; }
+export function mergePR(prNum: number, method: ShipMergeMethod): CommandResult { return ghApi(['-X', 'PUT', `${REPO}/pulls/${prNum}/merge`, '-f', `merge_method=${method}`]); }
+export function readAllowedMergeMethods(): { ok: true; allowed: Record<ShipMergeMethod, boolean> } | { ok: false } {
+    const result = ghApi(['-X', 'GET', REPO]);
+    return result.ok ? parseAllowedMergeMethods(result.stdout) : { ok: false };
+}
+
+export function createDraftPR(options: { base: string; head: string; title: string; body: string }): { ok: true; number: number | null; url: string | null } | { ok: false; stderr: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-pr-'));
+    const payloadPath = path.join(dir, 'payload.json');
+    try {
+        fs.writeFileSync(payloadPath, JSON.stringify({ ...options, draft: true }), 'utf8');
+        const result = ghApi(['-X', 'POST', `${REPO}/pulls`, '--input', payloadPath]);
+        if (!result.ok) return { ok: false, stderr: result.stderr };
+        try {
+            const record = object(JSON.parse(result.stdout));
+            return { ok: true, number: typeof record?.number === 'number' ? record.number : null, url: fieldString(record?.html_url) };
+        } catch { return { ok: true, number: null, url: null }; }
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+export function commitSubjectsBody(branch: string, baseBranch: string): { ok: true; body: string } | { ok: false; reason: string } {
+    const result = gitLogRunner('log', '--reverse', '--format=%s', `origin/${baseBranch}..${branch}`);
+    if (!result.ok) return { ok: false, reason: result.stderr || 'git log failed' };
+    return { ok: true, body: result.stdout.split('\n').map(line => line.trim()).filter(Boolean).map(subject => `- ${subject}`).join('\n') };
+}
