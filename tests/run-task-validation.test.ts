@@ -339,6 +339,23 @@ void test('classifySharedDocDirtFromData preserves byte-for-byte telemetry appen
     );
 });
 
+void test('shared-doc classifier aborts changed and unknown file modes before content verdicts', () => {
+    for (const docClass of ['telemetry', 'managed'] as const) {
+        assert.deepEqual(classifySharedDocDirtFromData(docClass, ' M', 'same\n', 'same\n', 'changed'), {
+            verdict: 'abort', reason: 'has an uncommitted file-mode change; commit or revert it',
+        });
+    }
+    assert.deepEqual(classifySharedDocDirtFromData('telemetry', ' M', 'base\n', 'base\nrow\n', 'changed'), {
+        verdict: 'abort', reason: 'has an uncommitted file-mode change; commit or revert it',
+    });
+    assert.deepEqual(classifySharedDocDirtFromData('managed', ' M', 'base\n', 'edit\n', 'unknown'), {
+        verdict: 'abort', reason: 'file mode could not be checked',
+    });
+    assert.deepEqual(classifySharedDocDirtFromData('telemetry', ' M', 'base\n', 'base\nrow\n', 'unchanged'), {
+        verdict: 'preserve', suffix: 'row\n',
+    });
+});
+
 void test('classifySharedDocDirtFromData treats identical content as clean, not empty preserve', () => {
     assert.deepEqual(
         classifySharedDocDirtFromData('telemetry', null, 'base\n', 'base\n'),

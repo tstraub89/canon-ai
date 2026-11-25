@@ -3,6 +3,8 @@ import { fileURLToPath } from 'url';
 import { basename, dirname, join, relative, resolve } from 'path';
 import { spawnSync } from 'child_process';
 import { CANON_OWNED, DELIMITED } from '../../lib/canon-owned.js';
+import { mergeHeaderOnly } from '../../lib/markdown-table.js';
+export { mergeHeaderOnly } from '../../lib/markdown-table.js';
 import { CANON_GITIGNORE_BLOCK, upsertCanonBlock } from '../../lib/canon-block.js';
 import { assertNoSymlinkDestinations } from '../../lib/scaffold-paths.js';
 import { handlePreScan, type ArgDeclaration, unknownOptionMessage, unexpectedArgumentMessage } from '../../lib/cli-args.js';
@@ -75,10 +77,6 @@ export function mergeDelimited(templateContent: string, projectContent: string):
 // files (Windows checkouts) would consume the trailing `\r`, leaving the
 // header slice ending in `\r` and the project tail starting at `\n` — the
 // "byte-for-byte rows preserved" guarantee would break. The lookahead
-// `(?=\r?\n|$)` anchors to end-of-line without consuming it.
-// (Codex P2 on PR #80.)
-const TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
-
 /**
  * Header-only sync for telemetry files. The template ends at the table
  * separator line (it never contains rows); the project file extends the
@@ -91,20 +89,6 @@ const TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
  * Returns null if either file is missing a table separator — fail safely
  * rather than corrupt the project's data.
  */
-export function mergeHeaderOnly(templateContent: string, projectContent: string): string | null {
-    const projectMatch = TABLE_SEPARATOR_RE.exec(projectContent);
-    const templateMatch = TABLE_SEPARATOR_RE.exec(templateContent);
-    if (!projectMatch || !templateMatch) return null;
-
-    const templateSepEnd = (templateMatch.index ?? 0) + templateMatch[0].length;
-    const projectSepEnd = (projectMatch.index ?? 0) + projectMatch[0].length;
-
-    const templateHeader = templateContent.slice(0, templateSepEnd);
-    const projectTail = projectContent.slice(projectSepEnd);
-
-    return templateHeader + projectTail;
-}
-
 function printDocsRefsCutoverWarning(cutoverWarnings: string[], check: boolean): void {
     if (cutoverWarnings.length === 0) return;
     // The pre-split checker hardcoded VALID_DIRS / NOISY_SOURCE_PATHS /

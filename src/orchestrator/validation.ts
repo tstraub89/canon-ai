@@ -1898,15 +1898,20 @@ export type SharedDocClassification =
     | { verdict: 'preserve'; suffix: string }
     | { verdict: 'abort'; reason: string };
 
+export type SharedDocModeState = 'changed' | 'unchanged' | 'unknown';
+
 export function classifySharedDocDirtFromData(
     docClass: SharedDocClass,
     porcelainCode: string | null,
     headContent: string | null,
     workingContent: string | null,
+    mode: SharedDocModeState = 'unchanged',
 ): SharedDocClassification {
     if (porcelainCode === null) {
         return { verdict: 'clean' };
     }
+    if (mode === 'changed') return { verdict: 'abort', reason: 'has an uncommitted file-mode change; commit or revert it' };
+    if (mode === 'unknown') return { verdict: 'abort', reason: 'file mode could not be checked' };
     if (porcelainCode !== ' M') {
         return {
             verdict: 'abort',
@@ -1952,6 +1957,7 @@ export type SharedDocEntryInput = {
     porcelainCode: string | null;
     headContent: string | null;
     workingContent: string | null;
+    mode?: SharedDocModeState;
 };
 
 export type SharedDocSetVerdict =
@@ -1968,6 +1974,7 @@ export function classifySharedDocSetFromData(entries: readonly SharedDocEntryInp
             entry.porcelainCode,
             entry.headContent,
             entry.workingContent,
+            entry.mode,
         );
         if (result.verdict === 'abort') {
             abortedFiles.push({ relPath: entry.relPath, reason: result.reason });

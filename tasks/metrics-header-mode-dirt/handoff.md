@@ -1,157 +1,83 @@
 # Implementation Handoff: metrics-header-mode-dirt
 
-> Author: implementer | Spec: `tasks/metrics-header-mode-dirt/spec.md` | Plan: `tasks/metrics-header-mode-dirt/plan.md`
->
-> **Per-iteration sections.** This file is cumulative across review rounds. The sections below cover Iteration 1 (initial implementation). On subsequent revisions, append a new `## Iteration N — addressing review round N-1` section near the bottom rather than rewriting the file — the reviewer reads it as the cumulative record.
+> Author: Codex | Spec: `tasks/metrics-header-mode-dirt/spec.md` | Plan: `tasks/metrics-header-mode-dirt/plan.md`
 
 ## Changes
 
-> One row per file changed — or a comma-separated list of files in the first column when they're tightly coupled (e.g. a source file with its test, or a generated artifact with its source script). The first column holds one or more tokens — each either `` `path/to/file.ext` `` or `[path/to/file.ext](url)` — separated by commas, with an optional short note after the last token. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. Group only files that change together for the same reason; unrelated files read better on separate rows. Every listed path must exist in `git diff <base>...HEAD` after auto-commit, except gitignored build output listed beside its generator and this task's own artifacts under `tasks/<id>/`; those may be listed without appearing in the diff and are not checked.
->
-> The pre-flight coverage check reads rows ONLY from this table and from `### Changes` tables inside `## Iteration N` sections. A file-list table under any other heading is invisible to it — don't invent new coverage sections.
->
-> **Deleting a file?** In this table use the `[path/to/file.ext](path/to/file.ext)` markdown-link form — **not** backticks and **not** bare prose. Backticks trip `docs-refs-check` (a backtick path-ref to a now-missing path under a `validDirs` dir reads as broken); bare prose fails this table's path parse (the first column must be a backtick-path or a markdown-link). The markdown-link is the one form that satisfies both.
-
-> **Directory paths:** backticking a path to an existing directory is fine — `docs-refs-check` accepts it. A backticked directory path that no longer exists (for example, one this task deleted) can be reported as a missing reference, so describe removed directories in prose or use the markdown-link form above.
-
 | File | What Changed |
 |---|---|
+| `src/orchestrator/metrics.ts`, `src/lib/markdown-table.ts` | Widen a narrower metrics header with the shared header-only merge while preserving rows and fragments without a table. |
+| `src/cli/commands/upgrade.ts` | Re-export and use the relocated `mergeHeaderOnly` helper; upgrade behavior remains unchanged. |
+| `src/orchestrator/validation.ts`, `src/orchestrator/main.ts` | Carry changed/unchanged/unknown file-mode state into shared-doc classification and fail closed when the raw mode probe is invalid. |
+| `tests/metrics.test.ts`, `tests/run-task-validation.test.ts`, `tests/run-task-ship-docs-fold.test.ts` | Cover legacy/current/no-table metrics fragments, classifier modes, and a real-git mode-only ship abort. |
+| `docs/pipeline-orchestrator.md`, `templates/docs/pipeline-orchestrator.md` | Document the shared-doc mode check for `--ship`. |
+| `dist/cli/index.js`, `dist/orchestrator/run-task.js` | Rebuilt bundles. |
 
 ## Canon Governance
 
-The authoritative provenance stamp for this task lives in `status.json.canon`. Reference those fields here instead of duplicating them as a second source of truth.
-
-| Field | Source |
-|---|---|
-| Upstream repo | `status.json.canon.upstream_repo` |
-| Upstream commit | `status.json.canon.upstream_commit` |
-| Orchestrator commit | `status.json.canon.orchestrator_commit` |
-| Codex CLI | `status.json.canon.codex_cli` |
-| Claude Code | `status.json.canon.claude_code` |
-| Canon version | `status.json.canon.canon_version` |
-
-Codex CLI applies in mixed mode only.
+The authoritative provenance stamp for this task lives in `status.json.canon`.
 
 ## Intent & Rationale
 
-Brief explanation of the approach taken and why.
+`recordMetric` now replaces only a narrower table header block before appending, leaving old rows intact. The existing header merge was moved into `src/lib/markdown-table.ts` so the CLI upgrade path and orchestrator can share it without an orchestrator-to-CLI dependency. Before `--ship` classifies dirty shared docs, it probes index-to-worktree raw diff modes and passes the result to the pure classifier; a changed or unknown mode aborts before merge.
 
 ## Deviations from Plan
 
-**Spec ACs are binding. Plan approach is guidance.** You may implement differently than the plan specifies if you have good reason — document it here. Undocumented deviations and silently dropped ACs are critical violations.
-
 | Deviation | Rationale | AC impact |
 |---|---|---|
-| _(none / describe what changed from the plan and why)_ | | |
+| None. | Implemented the planned helper relocation and behavior. | None. |
 
 ## AC Coverage
 
-Cross-reference each Acceptance Criterion from spec.md and confirm it is met. AC IDs may be flat-numbered (`AC-1`) or grouped under section letters (`AC-A1`) — mirror whatever scheme spec.md uses.
-
 | AC | Status | Notes |
 |---|---|---|
-| AC-1: ... | Met / Partial / Not met | |
-| AC-2: ... | Met / Partial / Not met | |
+| AC-1: legacy 9-column header is widened, old row remains byte-identical, appended row has 10 cells | Met | `tests/metrics.test.ts` asserts the complete skeleton header through the separator, the exact old row, and the new row cell count. |
+| AC-2: current/fresh headers and no-table fragments are preserved | Met | Existing fresh-fragment coverage plus the new current-header and no-table prefix assertions pass. |
+| AC-3: changed/unknown modes abort while unchanged verdicts remain stable | Met | `tests/run-task-validation.test.ts` covers telemetry and managed docs, pure append, mode plus changed content, unknown mode, and unchanged mode. Existing classifier cases also pass. |
+| AC-4: real-git chmod-only telemetry dirt aborts and leaves mode/content intact | Met | POSIX fixture sets `core.fileMode=true`; stderr, non-zero exit, bytes, and mode are asserted. |
+| AC-5: operator docs and mirror describe mode abort | Met | Both docs state changed or uncheckable mode aborts pre-merge; template sync check passes. |
+| AC-6: bundles rebuilt and full suite passes | Met | `npm run build` passed; `npm test` passed (2322 passed, 1 skipped, 0 failed). |
 
 ## Edge Cases Considered
 
-- ...
+- A metrics fragment with no `| Timestamp |` header is appended to without rewriting its existing content.
+- Equal-width/current headers are not rewritten; only narrower headers are widened.
+- Staged mode changes already have a porcelain status other than `' M'` and continue to abort through the existing classifier branch.
+- Mode probe failures or malformed raw records classify every dirty shared doc as unknown and abort. `core.fileMode=false` remains out of scope as specified.
+- The real-git mode test skips on Windows, where POSIX mode changes are unavailable.
 
 ## Blockers
 
-- (none / list blockers — if an AC is infeasible, note it here rather than silently skipping)
-- Label ambiguous ACs with `[ambiguity]` and document the interpretation you chose
-- Label a red-first test that cannot be made to fail for the stated reason `[wrong-premise]` and describe what you observed instead of implementing on an unconfirmed premise
+- None.
 
 ## Red-First Evidence
 
-> Record one row per red-first AC. “Ran against” is the commit of the pre-fix code. In place of a pre-fix failure excerpt, the only alternatives are a reference to a `[wrong-premise]` Blocker, or (for an environment-bound escape) the named alternative's outcome or a statement that it was not executable and why. If the task has no red-first ACs, leave the “none” placeholder row.
-
 | AC | Command | Ran against | Pre-fix failure | Post-fix result |
 |---|---|---|---|---|
-| _(none — no red-first ACs / one row per red-first AC)_ | | | | |
+| AC-1 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='widens a legacy' tests/metrics.test.ts` | `7ad13834614962ca70bf59a62b082e78c51e8d82` | With baseline `src/orchestrator/metrics.ts`, assertion showed the actual 9-column header instead of `METRICS_SKELETON` through its 10-column separator. | Same targeted test passed after fix; full `npm test` passed. |
+| AC-4 | `node --test --import ./tests/md-loader-register.mjs --import tsx --test-name-pattern='mode-only telemetry' tests/run-task-ship-docs-fold.test.ts` | `7ad13834614962ca70bf59a62b082e78c51e8d82` | With baseline `src/orchestrator/main.ts`, the process exited 0 after chmod-only change; assertion expected non-zero. | Same targeted test passed after fix; full `npm test` passed. |
 
 ## Self-Check
 
-> One row per pre-handoff self-check, each with evidence a reviewer can check against the diff. **Test integrity:** each behavioral test added or changed, the assertion that pins its failure reason, and how you know it fails without the change (a Red-First Evidence row counts; regenerated snapshots and fixture-only edits are exempt and can be summarized in one line). **Restatement sweep:** the search pattern(s) you ran for each changed contract, and every hit outside Affected Files with how it was handled — updated, or recorded as a Blocker. **Sibling parity:** the parallel paths you examined for each added guard or branch, and whether each got the same treatment, or why not. A row may read `N/A — <reason>`. Write a literal pipe inside a cell as `\|`. Cite paths by the same file-citation rule as the rest of this handoff (full repository-root paths; the markdown-link form for a file that does not exist).
-
 | Check | Evidence |
 |---|---|
-| Test integrity | _(tests added or changed → the assertion that pins each failure reason → how you know it fails without the change)_ |
-| Restatement sweep | _(search pattern(s) run per changed contract → hits outside Affected Files and how each was handled)_ |
-| Sibling parity | _(parallel paths examined per added guard or branch → same treatment, or why not)_ |
+| Test integrity | `tests/metrics.test.ts`: exact header, old-row bytes and new-row cells; AC-1 baseline run failed because the 9-column header remained. `tests/run-task-validation.test.ts`: exact mode abort reasons and unchanged preserve verdict; existing default-argument tests cover unchanged legacy calls. `tests/run-task-ship-docs-fold.test.ts`: exit status, message, bytes and mode; AC-4 baseline run exited 0. Both red-first commands and post-fix outcomes are recorded above. |
+| Restatement sweep | Searched `Shared-doc dirt at`, `uncommitted file-mode`, `file mode could not be checked`, `mergeHeaderOnly`, `classifySharedDocDirtFromData`, and `classifyAndPreserveSharedDocDirt`. Updated the two in-scope pipeline docs. `docs/BACKLOG.md` only names the existing helper/flow and does not state the changed contract. `tests/cli.test.ts` exercises the moved helper through the preserved `src/cli/commands/upgrade.ts` re-export; its existing tests passed in the full suite. |
+| Sibling parity | Checked telemetry and configured/managed docs through `classifySharedDocSetFromData`; both get the mode state. Non-plain porcelain codes still abort through the existing status branch, including staged mode changes. `canon upgrade` retains its existing `mergeHeaderOnly` entry point through re-export. The mode probe applies to every dirty shared doc in the existing shared-doc gate. |
 
 ## Validation Outcomes
 
-> All applicable checks must record a result before submitting for review. Result values:
->
-> | Value | Use when |
-> |---|---|
-> | `Pass` | Agent ran the check; it passed. |
-> | `Fail` | Agent ran the check; it failed. Move unresolved failures to Blockers. |
-> | `not_configured` | Check doesn't apply to this task type. Only valid for non-required checks. |
-> | `N/A` | Legacy synonym for `not_configured`. Prefer `not_configured` going forward. |
-> | `human_pending` | Only a human can run this (OAuth, cross-browser, deployed-only smoke). Required checks may use this state; the `human_review` gate will refuse to close the task until the human resolves it OR writes an explicit waiver in done.md. |
-> | `deferred_by_spec` | Explicitly out of scope per spec. Requires a spec citation in Notes (e.g., `Spec: §Non-Goals — explicitly defers this`). |
-> | `blocked` | Check would have run but infrastructure was unavailable (CI down, network out). Triage required — distinct from `Fail`. |
->
-> A `Fail` row whose cause lies outside this task's diff: name the result `Fail – unrelated` explicitly, and Notes must cite a specific file reference outside this task's affected files (a sibling worktree path, a fixed-port test's own file, an unrelated spec's path) — the code reviewer only accepts `Fail – unrelated` when Notes names such a reference credibly. Pre-flight's own check is textual — naming a changed file in that row, even to say it passed, can reclassify the whole row as task-owned and reject the handoff. Don't rely on an unqualified filename escaping the check; keep Notes free of any path from this task's diff.
-> Record every check in spec.md's Validation Required section here, plus any extra checks you ran. Required checks should not be marked `N/A` or `not_configured` — run the check or adjust the spec; the code reviewer verifies coverage against the spec. The `Check` cell is for human readability (the pre-flight gate no longer string-matches it against the spec), so write whatever names the check clearly — but keep a check's label identical across a baseline row and any later `### Re-run validation` row so its result updates in place.
-
 | Check | Result | Notes |
 |---|---|---|
-| _(name each check you ran — e.g. `` `lint` (`npm run lint`) ``)_ | Pass / Fail / not_configured / human_pending / deferred_by_spec / blocked | |
+| `npm run build` | Pass | Rebuilt `dist/cli/index.js` and `dist/orchestrator/run-task.js`. |
+| `npm run lint` | Pass | Required check. |
+| `npm run type-check` | Pass | Required check. |
+| `npm test` | Pass | 2322 passed, 1 skipped, 0 failed. |
+| `npm run docs-refs-check` | Pass | All refs OK. |
+| `npm run sync-templates:check` | Pass | All canon-managed files in sync. |
 
 ## Ready for Review
 
-- [ ] All spec ACs met (see AC Coverage table above)
-- [ ] All applicable validation checks pass (no failures)
-- [ ] All deviations from plan documented with rationale
-
----
-
-<!--
-On revision rounds, append below this line:
-
-## Iteration N — addressing review round N-1
-
-### Changes
-
-> One row per file changed in this iteration, or a comma-separated list when files are tightly coupled — see the baseline Changes note above for the grouping guidance and token format. No wildcards, no unfilled `<placeholder>` text, and no prose-embedded paths. (Deleted files: `[path](path)` markdown-link form only — see the baseline Changes note.)
-
-| File | What Changed |
-|---|---|
-
-> **Reverting a file?** Perfect revert (no longer in `git diff base...HEAD`): delete it from all prior Changes tables and omit it here. Imperfect revert (still in diff, e.g. trailing newline): add it here as "Reverted to original (describe residual diff)".
-
-### Findings addressed
-
-- _correctness bug:_ "<one-line summary>" → fixed at file:line
-- _risk/guardrail:_ ... → ...
-- _spec gap:_ ... → ...
-- _optional cleanup/nit:_ ... → addressed / deferred (rationale)
-
-### AC deltas (if any)
-
-- AC-N: was Partial → now Met (file:line)
-
-### Red-First Evidence
-
-_Include only when this round adds or changes a red-first test or adds missing evidence._
-
-| AC | Command | Ran against | Pre-fix failure | Post-fix result |
-|---|---|---|---|---|
-
-### Self-Check
-
-_Include only when this round makes an earlier Self-Check row incomplete or untrue, and include only the rows it updates. Each row restates that check's evidence for all work on the branch, not only this round, and supersedes every earlier version of that row (earlier rows stay in place as history). This subsection never replaces the baseline `## Self-Check` section._
-
-| Check | Evidence |
-|---|---|
-
-### Re-run validation (only checks that re-ran)
-
-| Check | Result | Notes |
-|---|---|---|
-| `<lint>` | Pass | |
--->
+- [x] All spec ACs met (see AC Coverage table above)
+- [x] All applicable validation checks pass (no failures)
+- [x] All deviations from plan documented with rationale

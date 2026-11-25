@@ -43,6 +43,36 @@ void test('metrics use per-task fragments, preserve shared docs, and retain bund
     assert.ok(!fs.existsSync(path.join(root, 'tasks/b')));
 }));
 
+void test('recordMetric widens a legacy metrics header without changing old rows', () => fixture(root => {
+    const fragment = path.join(root, 'tasks/example-task/metrics.md');
+    fs.mkdirSync(path.dirname(fragment), { recursive: true });
+    const legacyHeader = '| Timestamp | Task | Phase | Agent | Model | Iter | Duration | Tokens | Status |\n|---|---|---|---|---|---|---|---|---|';
+    const oldRow = '| 2025-01-01T00:00:00.000Z | example-task | spec | codex | old | - | 1.0s | 5 | ok |';
+    fs.writeFileSync(fragment, `${legacyHeader}\n${oldRow}\n`);
+    recordMetric(entry(root));
+    const result = fs.readFileSync(fragment, 'utf8');
+    const separatorEnd = METRICS_SKELETON.indexOf('\n', METRICS_SKELETON.indexOf('|---|'));
+    const expectedHeader = METRICS_SKELETON.slice(0, separatorEnd);
+    assert.equal(result.slice(0, result.indexOf(`\n${oldRow}`)), expectedHeader);
+    assert.ok(result.includes(`\n${oldRow}\n`));
+    const rows = result.split('\n').filter(line => line.startsWith('| 20'));
+    assert.equal(rows.at(-1)!.split('|').length - 2, 10);
+}));
+
+void test('recordMetric preserves current headers and hand-edited fragments without a table', () => fixture(root => {
+    const fragment = path.join(root, 'tasks/example-task/metrics.md');
+    fs.mkdirSync(path.dirname(fragment), { recursive: true });
+    const prefix = METRICS_SKELETON + 'existing row\n';
+    fs.writeFileSync(fragment, prefix);
+    recordMetric(entry(root));
+    assert.ok(fs.readFileSync(fragment, 'utf8').startsWith(prefix));
+    const noTable = path.join(root, 'tasks/no-table/metrics.md');
+    fs.mkdirSync(path.dirname(noTable), { recursive: true });
+    fs.writeFileSync(noTable, '# Hand edited fragment\nkeep this\n');
+    recordMetric(entry(root, 'no-table'));
+    assert.ok(fs.readFileSync(noTable, 'utf8').startsWith('# Hand edited fragment\nkeep this\n'));
+}));
+
 void test('metrics overrides resolve at call time, with file override taking precedence', () => fixture(root => {
     process.env.CANON_TASKS_DIR_OVERRIDE = path.join(root, 'custom');
     recordMetric(entry(root));

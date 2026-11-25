@@ -6354,6 +6354,17 @@ var CANON_OWNED = [
 ];
 var DELIMITED = [];
 
+// src/lib/markdown-table.ts
+var TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
+function mergeHeaderOnly(templateContent, projectContent) {
+  const projectMatch = TABLE_SEPARATOR_RE.exec(projectContent);
+  const templateMatch = TABLE_SEPARATOR_RE.exec(templateContent);
+  if (!projectMatch || !templateMatch) return null;
+  const templateSepEnd = (templateMatch.index ?? 0) + templateMatch[0].length;
+  const projectSepEnd = (projectMatch.index ?? 0) + projectMatch[0].length;
+  return templateContent.slice(0, templateSepEnd) + projectContent.slice(projectSepEnd);
+}
+
 // src/cli/commands/upgrade.ts
 var packageDir4 = join5(dirname5(fileURLToPath5(import.meta.url)), "../..");
 var UPGRADE_USAGE = [
@@ -6386,17 +6397,6 @@ function mergeDelimited(templateContent, projectContent) {
   const projectEnd = projectContent.indexOf(CANON_END);
   if (templateEnd === -1 || projectEnd === -1) return null;
   return templateContent.slice(0, templateEnd + CANON_END.length) + projectContent.slice(projectEnd + CANON_END.length);
-}
-var TABLE_SEPARATOR_RE = /^[^\S\r\n]*\|[-:|\s]+\|[^\S\r\n]*(?=\r?\n|$)/m;
-function mergeHeaderOnly(templateContent, projectContent) {
-  const projectMatch = TABLE_SEPARATOR_RE.exec(projectContent);
-  const templateMatch = TABLE_SEPARATOR_RE.exec(templateContent);
-  if (!projectMatch || !templateMatch) return null;
-  const templateSepEnd = (templateMatch.index ?? 0) + templateMatch[0].length;
-  const projectSepEnd = (projectMatch.index ?? 0) + projectMatch[0].length;
-  const templateHeader = templateContent.slice(0, templateSepEnd);
-  const projectTail = projectContent.slice(projectSepEnd);
-  return templateHeader + projectTail;
 }
 function printDocsRefsCutoverWarning(cutoverWarnings, check) {
   if (cutoverWarnings.length === 0) return;
