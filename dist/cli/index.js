@@ -139,7 +139,8 @@ var RUN_USAGE = [
   "  --force             Acknowledge high-commitment combinations and bypass",
   "                      explicit safety gates where documented (currently:",
   "                      --full-send on delicate tasks, reroute amendment gate,",
-  "                      base-drift gate, dirty REPO_ROOT worktree-start gate,",
+  "                      base-drift gate, docs-refs check at --pr/--push,",
+  "                      dirty REPO_ROOT worktree-start gate,",
   "                      and spec manifest pre-flight before plan/implement).",
   "  --allow-divergent-base",
   "                      At --push, --pr, and --ship: bypass only the commit-divergence",
@@ -1751,7 +1752,7 @@ function hardDeps(provider) {
   ];
 }
 var SOFT_DEPS = [
-  { cmd: "gh", installHint: "brew install gh && gh auth login  (required for --pr / --push)" }
+  { cmd: "gh", installHint: "brew install gh && gh auth login  (required for --pr / --ship)" }
 ];
 function isAvailable(cmd) {
   const result = spawnSync4("which", [cmd], { stdio: "ignore" });
@@ -2473,7 +2474,7 @@ function doctorCmd(args2) {
     ...requiredAgents.has("claude") ? [checkBinary("claude", true, "npm install -g @anthropic-ai/claude-code")] : [],
     ...requiredAgents.has("claude") && isAvailable("claude") ? [checkClaudeVersion()] : [],
     ...requiredAgents.has("codex") ? [checkBinary("codex", true, "npm install -g @openai/codex")] : [],
-    checkBinary("gh", false, "brew install gh && gh auth login  (required for --pr / --push)")
+    checkBinary("gh", false, "brew install gh && gh auth login  (required for --pr / --ship)")
   ];
   const codexDeprecated = checkCodexMdDeprecated(cwd);
   const canonChecks = [

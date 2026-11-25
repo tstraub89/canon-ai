@@ -46,8 +46,8 @@ Canon talks to GitHub for PR operations **only through `gh api` REST calls**, ne
 
 | Call | Chosen | Strongest alternative | Why | Decided by |
 |---|---|---|---|---|
-| REST always vs fallback | Always REST | Porcelain first, REST fallback on a GraphQL error | One code path and one test surface. A fallback would recognise the proxy's 403 text, double the tested paths, and leave the GraphQL path untested in REST-only environments. `gh api` uses the same auth and host resolution as porcelain | `Author` |
-| Repo addressing | gh's `{owner}/{repo}` placeholders, resolved by `gh api` from the checkout's remote. They're used in the path and in the head filter (`head={owner}:<branch>`), so there's no separate owner lookup | Parse the slug from `git remote get-url origin` | The placeholders follow gh's own host and remote resolution, including Enterprise hosts and `gh repo set-default`, which matches what porcelain does today. Origin parsing would add host-specific regexes | `Author` |
+| REST always vs fallback | Always REST | Porcelain first, REST fallback on a GraphQL error | One code path and one test surface. A fallback would recognise the proxy's 403 text, double the tested paths, and leave the GraphQL path untested in REST-only environments. `gh api` uses the same auth as porcelain; its host is set explicitly from `origin` (Amendment Round 1) | `Author` |
+| Repo addressing | gh's `{owner}/{repo}` placeholders, resolved by `gh api` from the checkout's remote. They're used in the path and in the head filter (`head={owner}:<branch>`), so there's no separate owner lookup | Parse the slug from `git remote get-url origin` | The placeholders follow gh's own repo resolution, including `gh repo set-default`, which matches porcelain for the repo slug. The API host is not taken from it; see Amendment Round 1, which sets `--hostname` from `origin` | `Author` |
 | `--fill` replacement | When no canon body, QA body or PR template is available, the body lists the branch's commit subjects (`origin/<base>..<branch>`, the remote base as `--fill` uses), one per line | Empty body | Closest to `--fill`'s commit-derived body. An empty body hides what the PR contains | `Author` |
 | Size / delicate | M, not delicate | Delicate, because `--ship`'s merge proof gates branch deletion and archive | The merge-proof logic (which fields are compared, fail-closed rules, per-number confirmation) is unchanged; only its data source moves. AC-4 and AC-5 pin each mapped field. `docs/product-context.md`'s delicate list doesn't name forge calls | `Author` |
 | Guard hook in scope | Fix the guard's PR-head lookup in this task | Separate follow-up task | Same root cause, and a sibling implementation; leaving it would ship a silently disabled safety check in exactly the environments this task targets. The change is one lookup function in a self-contained script. Moved into scope at the human's question | `Author` |
@@ -154,7 +154,7 @@ E2E: N/A. canon has no end-to-end suite; Problem records the live run against PR
 - **Missing merge-settings fields for low-permission tokens.** If GitHub omits the `allow_*` fields for a token, `--ship` fails closed with the existing message, the same as a malformed gh response today. This is observed with admin permission only.
 - **A fake gh can't validate real `gh api` flags.** Every automated test runs against an argv-matching fake, so a wrong flag (`-f` vs `-F`, a missing `-X GET`, unflattened `--slurp` output) could pass tests and fail live. Mitigations: the Implementation Notes pin the flag rules, forge unit tests assert the exact argv for each call, and the Human Test Plan runs `--pr` and `--ship` against real GitHub in a GraphQL-blocked environment.
 - **Guard false negatives.** If the guard's REST read fails (auth, network, wrong repo), it fails open, as today. AC-12's fail-open case pins that this stays the behavior, rather than the guard blocking every merge.
-- **Multiple remotes.** gh's `{owner}/{repo}` follows `gh repo set-default`, as porcelain does today, so behavior is unchanged.
+- **Multiple remotes.** gh's `{owner}/{repo}` follows `gh repo set-default` for the repo slug, as porcelain does today. The host comes from `origin` (Amendment Round 1); a `set-default` repo on a different host than `origin` is unsupported.
 
 ## Human Test Plan
 
@@ -177,3 +177,104 @@ E2E: N/A. canon has no end-to-end suite; Problem records the live run against PR
 - [x] Symbols named in ACs actually exist in the codebase (grep-verified)
 - [x] Known Risks covers failure modes for the trickiest ACs
 - [x] Human Test Plan uses product language only (no code, no file names)
+
+## Amendment Round 1 — API host follows `origin`; guard `-R` parsing (code_review round 2, S1 + N1)
+
+**Why.** Code review found that the *Repo addressing* judgment call was wrong about the host. `gh api` fills `{owner}/{repo}` from gh's own base-repo resolution (remotes, `gh repo set-default`), the same as `gh pr`. It does **not** take the API host from that repo: `--hostname` defaults to `GH_HOST`, or to gh's default host (`github.com` when the user is logged in there). `gh pr` sends calls to the host of the resolved repo. So an adopter whose `origin` is a GitHub Enterprise host, and who is also logged in to `github.com`, would have every forge call sent to the wrong host. The guard's cwd fallback (`repos/{owner}/{repo}` with no `--hostname`) has the same flaw. Round 2 also found that the guard handles some `-R` values gh accepts badly, and falls back to the cwd repo when it can't parse one (N1).
+
+**Confirmation (executed, gh 2.89.0).** In a throwaway repo whose `origin` is `https://ghe.example/o/r.git`, with gh logged in to both `github.com` and `ghe.example` (temp `GH_CONFIG_DIR`, `GH_DEBUG=api`):
+- `gh api repos/{owner}/{repo}` logged `Request to https://api.github.com/repos/o/r`. The slug came from the Enterprise remote, but the request went to github.com.
+- `gh pr view 1` logged `Request to https://ghe.example/api/graphql`, so porcelain follows the remote's host.
+
+The mismatch is therefore real and deterministic.
+
+**Trace of the guard `-R` handling** (current `lookupPRHead`, deterministic):
+- `-R https://ghe.example/o/r.git` strips the scheme to `ghe.example/o/r.git`, which splits into 3 parts. The endpoint becomes `repos/o/r.git/pulls/12`, the wrong repo name.
+- `-R git@ghe.example:o/r` has no `://` to strip. It splits on `/` into `['git@ghe.example:o','r']`, 2 parts, giving the endpoint `repos/git@ghe.example:o/r/pulls/12`.
+- `-R a/b/c/d` gives 4 parts, which matches neither branch. It falls back to `repos/{owner}/{repo}` and so reads PR 12 of the local repo.
+
+**Change to the Decision.** Every forge `gh api` call, and the guard's cwd-repo lookup, passes `--hostname <host>`, where `<host>` is the host of the `origin` remote URL. The `https://`/`http://`, `ssh://` and scp-style `user@host:owner/repo` forms are all accepted. Userinfo and port are dropped, and the host is lowercased. When `origin` is missing or its URL can't be parsed, no `--hostname` is passed (gh's default applies, as in the current code). `{owner}/{repo}` placeholders stay as they are.
+
+**Superseded judgment calls.** The *REST always vs fallback* and *Repo addressing* rows, and the *Multiple remotes* risk, are edited in place so they no longer claim shared host resolution. The host decision is this row:
+
+| Call | Chosen | Strongest alternative | Why | Decided by |
+|---|---|---|---|---|
+| API host source | Host of `origin`, passed as `--hostname`; omitted when it can't be derived | Also derive owner/repo from `origin` and drop the placeholders | Canon pushes task branches to `origin`, so its host is the forge canon talks to. Keeping the placeholders preserves gh's `set-default` and fork resolution for the repo slug. Deriving the slug too would change which repo a fork-workflow PR targets | `Author` |
+
+**Known Risks (*Multiple remotes*, as edited).** If `gh repo set-default` points at a repo on a different host from `origin`, the host follows `origin`. This combination isn't supported; canon pushes to `origin` in any case.
+
+### Acceptance Criteria
+
+- **AC-13 — forge host.** Every `gh api` argv the forge module builds carries `--hostname <origin host>` when `origin` parses. Forge unit tests pin the argv for each case:
+  - an `https://github.com/o/r.git` origin → `--hostname github.com`;
+  - a scp-form `git@ghe.example:o/r.git` origin → `--hostname ghe.example`;
+  - an `ssh://git@ghe.example:2222/o/r` origin → `--hostname ghe.example`;
+  - no `origin` remote → no `--hostname` flag.
+
+  The suites that use the existing fake gh keep passing; the fake tolerates `--hostname`.
+- **AC-14 — guard host and `-R` parsing.** In `.claude/hooks/canon-guard.mjs` and its mirror:
+  - The cwd fallback (a number ref with no `-R`) passes `--hostname <origin host>` by the same rules as AC-13.
+  - A `-R` value is parsed case-insensitively for the scheme. A trailing `/` and a trailing `.git` are stripped. The scp form `git@host:owner/repo` and the `ssh://` form are accepted.
+  - A non-empty `-R` that still doesn't resolve to `OWNER/REPO` or `HOST/OWNER/REPO` makes the guard skip the lookup. This fails open, with no cwd fallback.
+
+  `tests/canon-guard.test.ts` covers each of these and asserts the logged endpoint and `--hostname`.
+- **AC-15 — red-first.** Run the AC-13 Enterprise-origin cases and the AC-14 cases (the Enterprise-origin cwd fallback, `.git`, scp form, and unparseable `-R` with no cwd read) against the pre-amendment implementation, i.e. the task branch HEAD before this amendment's fix. They must fail for the stated reason: a missing or wrong `--hostname`, a wrong endpoint, or a cwd fallback. They pass after the fix. Record both runs in the handoff's Red-First Evidence.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `src/orchestrator/forge.ts` | Derive the `origin` host once per call and add `--hostname` to every `gh api` argv |
+| `tests/forge-rest.test.ts` | AC-13 argv cases (needs a git-remote seam or a temp repo) |
+| `.claude/hooks/canon-guard.mjs`, `templates/.claude/hooks/canon-guard.mjs` | AC-14: origin host on the cwd fallback; `-R` parsing; no cwd fallback for unparseable `-R`; mirror synced |
+| `tests/canon-guard.test.ts` | AC-14 cases with endpoint and `--hostname` assertions |
+| `dist/` | Rebuild |
+
+`GH_REPO`/`GH_HOST` env-prefix handling in the guard (round 2, N2) predates this task and stays a Non-Goal.
+
+## Amendment Round 2 — only pass a host gh knows (code_review round 2, SG1)
+
+**Why.** Amendment Round 1 passes `origin`'s host to `gh api --hostname` as written. Two common setups that work on `main` break as a result:
+- An SSH host alias such as `git@github-work:o/r.git`: `gh` resolves aliases for its own remote matching, but `github-work` isn't an API host.
+- The SSH-over-443 host `ssh.github.com`.
+
+**Confirmation (executed, gh 2.89.0, same throwaway config as Amendment Round 1).**
+- `gh api --hostname ssh.github.com repos/o/r` logged `Request to https://api.ssh.github.com/repos/o/r`. `gh api` does no host normalisation.
+- `gh api --hostname GitHub.com …` logged `https://api.GitHub.com/…`, so the case isn't normalised either.
+- `gh auth token --hostname` exits 0 for `ghe.example` (logged in) and for `ssh.github.com` (gh normalises it to `github.com` for auth). It exits 1 for `github-work`.
+
+These cases fail deterministically under Amendment Round 1's rule.
+
+**Change to Amendment Round 1's rule** (it replaces "passes `--hostname <host>` where `<host>` is the host of the `origin` remote URL"):
+1. Parse `origin`'s host as in Amendment Round 1, including the lowercasing.
+2. **Normalise** it: `github.com` and any host ending in `.github.com` become `github.com`.
+3. Pass `--hostname <normalised host>` **only when** `gh auth token --hostname <normalised host>` exits 0. Its stdout is discarded and never logged. Otherwise pass no `--hostname`, and gh's default host applies, as on `main` for `gh api`.
+
+The result may be cached for the process. The guard's cwd fallback follows the same rule. An explicit host from `-R HOST/OWNER/REPO` or a PR URL is normalised by step 2 but not gated by step 3, because the user named it.
+
+| Call | Chosen | Strongest alternative | Why | Decided by |
+|---|---|---|---|---|
+| Host gating | Normalise `*.github.com`, then pass the host only if gh is logged in to it | Resolve SSH aliases with `ssh -G` | Aliases resolve to hosts gh has no login for, or to `github.com`, which is the default anyway. One offline `gh auth token` check covers aliases, typos and hosts gh doesn't know, with no ssh dependency. An Enterprise host reached through an SSH alias, with a multi-host login, falls back to gh's default host. That's a Known Risk | `Author` |
+
+**Known Risk.** An Enterprise `origin` that's written as an SSH alias, combined with a gh login on more than one host, falls back to gh's default host. Workaround: set `GH_HOST`.
+
+### Acceptance Criteria
+
+- **AC-16 — host gating.** The forge unit tests pin the argv for each case below, and the guard tests pin the same rule for the cwd fallback:
+  - `git@github-work:o/r.git` with `gh auth token` failing → no `--hostname`;
+  - `ssh://git@ssh.github.com:443/o/r.git` → `--hostname github.com`;
+  - an Enterprise origin with `gh auth token` succeeding → `--hostname ghe.example`;
+  - an Enterprise origin with `gh auth token` failing → no `--hostname`.
+
+  AC-13's cases still hold with gh logged in. The token is never written to any log, test output or error message.
+- **AC-17 — red-first.** The alias and `ssh.github.com` cases fail against the current branch HEAD, before this amendment, because of the wrong `--hostname`, and pass after. Record both runs in the handoff's Red-First Evidence.
+
+### Affected Files
+
+| File | Change |
+|---|---|
+| `src/orchestrator/forge.ts` | Host normalisation and `gh auth token` gating |
+| `tests/forge-rest.test.ts` | AC-16 cases |
+| `.claude/hooks/canon-guard.mjs`, `templates/.claude/hooks/canon-guard.mjs` | The same rule on the cwd fallback; normalise explicit hosts; mirror synced |
+| `tests/canon-guard.test.ts` | AC-16 guard cases |
+| `dist/` | Rebuild |

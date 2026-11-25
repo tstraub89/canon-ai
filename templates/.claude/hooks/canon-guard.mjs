@@ -631,10 +631,93 @@ function findPRReference(args, initialRepo = null) {
 }
 
 function lookupPRHead(ref, repo, cwd) {
+    if (ref.includes('://')) {
+        const match = ref.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/);
+        if (!match) return null;
+        const [, host, owner, name, number] = match;
+        return readPRHead(`repos/${owner}/${name}/pulls/${number}`, cwd, normaliseGhHost(host));
+    }
+    if (ref.includes(':')) return ref.slice(ref.indexOf(':') + 1);
+    if (!/^#?\d+$/.test(ref)) return ref;
+    const number = ref.replace(/^#/, '');
+    if (typeof repo === 'string' && repo.trim() !== '') {
+        const parsed = parseRepoValue(repo);
+        if (!parsed) return null;
+        return readPRHead(`repos/${parsed.owner}/${parsed.name}/pulls/${number}`, cwd, parsed.host ? normaliseGhHost(parsed.host) : null);
+    }
+    const origin = lookupOriginHost(cwd);
+    const host = origin ? normaliseGhHost(origin) : null;
+    return readPRHead(`repos/{owner}/{repo}/pulls/${number}`, cwd, host && ghKnowsHost(host, cwd) ? host : null);
+}
+
+// Host normalization mirrors canon's forge behavior; this hook stays standalone.
+function normaliseGhHost(host) {
+    const value = host.toLowerCase();
+    return value === 'github.com' || value.endsWith('.github.com') ? 'github.com' : value;
+}
+
+// Parse supported HTTP, SSH, and scp-style remote URLs for the guard's cwd fallback.
+function parseRemoteHost(url) {
+    const value = url.trim();
+    if (!value) return null;
+    const scheme = value.match(/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:?#]+)(?::\d*)?(?:[/?#]|$)/i);
+    if (scheme?.[1]) return scheme[1].toLowerCase();
+    if (value.includes('://')) return null;
+    const scp = value.match(/^(?:[^@/:]+@)?([^/:]+):(?!\/)/);
+    return scp?.[1] ? scp[1].toLowerCase() : null;
+}
+
+function lookupOriginHost(cwd) {
+    const result = spawnSync('git', ['remote', 'get-url', 'origin'], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 3000,
+    });
+    if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
+    return parseRemoteHost(result.stdout);
+}
+
+function ghKnowsHost(host, cwd) {
+    const result = spawnSync('gh', ['auth', 'token', '--hostname', host], {
+        cwd,
+        stdio: 'ignore',
+        timeout: GH_TIMEOUT_MS,
+    });
+    return !result.error && result.status === 0;
+}
+
+function parseRepoValue(value) {
+    const source = value.trim();
+    if (!source) return null;
+    let host = null;
+    let rest = source;
+    if (source.includes('://')) {
+        const match = source.match(/^(?:https?|ssh):\/\/(?:[^@/]*@)?([^/:]+)(?::\d*)?\/(.*)$/i);
+        if (!match) return null;
+        host = match[1].toLowerCase();
+        rest = match[2];
+    } else {
+        const scp = source.match(/^(?:[^@/:]+@)?([^/:]+):([^/].*)$/);
+        if (scp) {
+            host = scp[1].toLowerCase();
+            rest = scp[2];
+        }
+    }
+    rest = rest.replace(/\/+$/, '').replace(/\.git$/, '');
+    const parts = rest.split('/');
+    if (parts.some(part => part === '')) return null;
+    if (host !== null) {
+        return parts.length === 2 ? { host, owner: parts[0], name: parts[1] } : null;
+    }
+    if (parts.length === 2) return { host: null, owner: parts[0], name: parts[1] };
+    if (parts.length === 3) return { host: parts[0].toLowerCase(), owner: parts[1], name: parts[2] };
+    return null;
+}
+
+function readPRHead(endpoint, cwd, host) {
     const result = spawnSync('gh', [
-        'pr', 'view', ref,
-        ...(repo ? ['-R', repo] : []),
-        '--json', 'headRefName', '--jq', '.headRefName',
+        'api', '-X', 'GET', ...(host ? ['--hostname', host] : []), endpoint,
     ], {
         cwd,
         encoding: 'utf8',
@@ -642,8 +725,10 @@ function lookupPRHead(ref, repo, cwd) {
         timeout: GH_TIMEOUT_MS,
     });
     if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
-    const head = result.stdout.trim();
-    return head || null;
+    try {
+        const data = JSON.parse(result.stdout);
+        return typeof data?.head?.ref === 'string' && data.head.ref ? data.head.ref : null;
+    } catch { return null; }
 }
 
 function lookupCurrentBranch(cwd) {
